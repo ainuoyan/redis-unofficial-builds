@@ -1,6 +1,30 @@
 name: Build Linux binaries
 
 on:
+  workflow_call:
+    inputs:
+      redis_version:
+        description: Exact official Redis version
+        required: true
+        type: string
+      source_sha256:
+        description: Expected official Redis source SHA-256
+        required: true
+        type: string
+      package_arch:
+        description: Package architecture
+        required: true
+        type: string
+      publish_release:
+        description: Publish the packages to GitHub Releases
+        required: false
+        default: false
+        type: boolean
+      force_rebuild:
+        description: Rebuild even if the release already exists
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       redis_version:
@@ -8,36 +32,40 @@ on:
         required: true
         default: 7.4.11
         type: string
+      source_sha256:
+        description: Optional official source SHA-256 cross-check
+        required: false
+        type: string
+      package_arch:
+        description: Package architecture
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - x64
+          - arm64
       publish_release:
         description: Publish the packages to GitHub Releases
         required: true
-        default: true
+        default: false
         type: boolean
       force_rebuild:
         description: Rebuild even if the release already exists
         required: true
         default: false
         type: boolean
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/build-linux.yml
-      - scripts/linux/**
-  schedule:
-    - cron: "17 1 * * *"
-
 permissions:
   contents: read
 
 concurrency:
-  group: redis-linux-${{ github.event_name }}-${{ inputs.redis_version || 'tracked-7.4' }}
+  group: redis-linux-${{ inputs.redis_version }}
   cancel-in-progress: false
 
 env:
-  TRACK_SERIES: "7.4"
   HASHES_URL: https://raw.githubusercontent.com/redis/redis-hashes/master/README
   PACKAGE_VARIANT: linux-glibc2.28
+  GLIBC_BASELINE: "2.28"
 
 jobs:
   prepare:
@@ -48,13 +76,16 @@ jobs:
       source_sha256: ${{ steps.resolve.outputs.source_sha256 }}
       should_build: ${{ steps.resolve.outputs.should_build }}
       release_exists: ${{ steps.resolve.outputs.release_exists }}
-      is_latest_track: ${{ steps.resolve.outputs.is_latest_track }}
+      arch_matrix: ${{ steps.resolve.outputs.arch_matrix }}
     steps:
       - name: Resolve Redis version and official checksum
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.redis_version }}
+          PROVIDED_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          REQUESTED_PACKAGE_ARCH: ${{ inputs.package_arch }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
           FORCE_REBUILD: ${{ inputs.force_rebuild }}
         shell: bash
         run: |
@@ -64,23 +95,31 @@ jobs:
             --proto '=https' --tlsv1.2 \
             "$HASHES_URL" --output redis-hashes.txt
 
-          series_regex="${TRACK_SERIES//./\\.}"
-          latest_track_version="$({
-            grep -E "^hash redis-${series_regex}\\.[0-9]+\\.tar\\.gz sha256 " redis-hashes.txt || true
-          } | awk '{print $2}' \
-            | sed -E 's/^redis-//; s/\.tar\.gz$//' \
-            | sort -V \
-            | tail -n 1)"
+          version="$REQUESTED_VERSION"
 
-          if [[ -z "$latest_track_version" ]]; then
-            echo "No Redis ${TRACK_SERIES}.x release found in redis-hashes." >&2
+          requested_arch="${REQUESTED_PACKAGE_ARCH:-all}"
+          case "$requested_arch" in
+            all)
+              selected_arches=(x64 arm64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04","machine_arch":"x86_64","package_arch":"x64"},{"runner":"ubuntu-24.04-arm","machine_arch":"aarch64","package_arch":"arm64"}]}'
+              ;;
+            x64)
+              selected_arches=(x64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04","machine_arch":"x86_64","package_arch":"x64"}]}'
+              ;;
+            arm64)
+              selected_arches=(arm64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04-arm","machine_arch":"aarch64","package_arch":"arm64"}]}'
+              ;;
+            *)
+              echo "Unsupported package architecture: $requested_arch" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "${PUBLISH_RELEASE:-false}" == true && "$requested_arch" != all ]]; then
+            echo "Direct Release publication requires package_arch=all." >&2
             exit 1
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            version="$REQUESTED_VERSION"
-          else
-            version="$latest_track_version"
           fi
 
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -103,29 +142,36 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if [[ -n "${PROVIDED_SOURCE_SHA256:-}" && \
+                "$PROVIDED_SOURCE_SHA256" != "$source_sha256" ]]; then
+            echo "Provided SHA256 does not match the official Redis hash." >&2
+            exit 1
+          fi
+
+          if existing_assets="$(gh release view "$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[].name' 2>/dev/null)"; then
             release_exists=true
           else
             release_exists=false
+            existing_assets=""
           fi
 
-          force_rebuild=false
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            force_rebuild="${FORCE_REBUILD:-false}"
-          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            force_rebuild=true
-          fi
+          force_rebuild="${FORCE_REBUILD:-false}"
+          release_complete=true
+          for package_arch in "${selected_arches[@]}"; do
+            archive="Redis-${version}-${PACKAGE_VARIANT}-${package_arch}.tar.gz"
+            if ! grep -Fqx "$archive" <<<"$existing_assets" || \
+               ! grep -Fqx "${archive}.sha256" <<<"$existing_assets"; then
+              release_complete=false
+            fi
+          done
 
-          if [[ "$release_exists" == true && "$force_rebuild" != true ]]; then
+          if [[ "$release_complete" == true && "$force_rebuild" != true ]]; then
             should_build=false
           else
             should_build=true
-          fi
-
-          if [[ "$version" == "$latest_track_version" ]]; then
-            is_latest_track=true
-          else
-            is_latest_track=false
           fi
 
           {
@@ -133,12 +179,13 @@ jobs:
             echo "source_sha256=$source_sha256"
             echo "should_build=$should_build"
             echo "release_exists=$release_exists"
-            echo "is_latest_track=$is_latest_track"
+            echo "arch_matrix=$arch_matrix"
           } >>"$GITHUB_OUTPUT"
 
           echo "Redis version: $version"
           echo "Official SHA256: $source_sha256"
           echo "Existing release: $release_exists"
+          echo "Selected assets complete: $release_complete"
           echo "Build required: $should_build"
 
   build:
@@ -147,14 +194,7 @@ jobs:
     if: needs.prepare.outputs.should_build == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            machine_arch: x86_64
-            package_arch: x64
-          - runner: ubuntu-24.04-arm
-            machine_arch: aarch64
-            package_arch: arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
@@ -205,12 +245,132 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  service_test:
+    name: Test service scripts ${{ matrix.package_arch }}
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.arch_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Redis-${{ needs.prepare.outputs.version }}-${{ env.PACKAGE_VARIANT }}-${{ matrix.package_arch }}
+          path: package-artifact
+
+      - name: Verify and extract package
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd package-artifact
+          package="Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-${PACKAGE_ARCH}.tar.gz"
+          sha256sum --check "${package}.sha256"
+          mkdir "$GITHUB_WORKSPACE/package-root"
+          tar -xzf "$package" -C "$GITHUB_WORKSPACE/package-root"
+
+      - name: Test installation and service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REDIS_INSTALL_LANG=en ./package-root/redis/scripts/install.sh --help | grep -Fq 'Usage:'
+          REDIS_INSTALL_LANG=zh_CN ./package-root/redis/scripts/install.sh --help | grep -Fq '用法：'
+
+          cp -a package-root incompatible-package
+          case "${{ matrix.package_arch }}" in
+            x64) incompatible_arch=arm64 ;;
+            arm64) incompatible_arch=x64 ;;
+          esac
+          sed -i "s/^PACKAGE_ARCH=.*/PACKAGE_ARCH=${incompatible_arch}/" \
+            incompatible-package/redis/PACKAGE-INFO
+          if sudo ./incompatible-package/redis/scripts/install.sh --no-service; then
+            echo "Architecture preflight unexpectedly accepted an incompatible package." >&2
+            exit 1
+          fi
+          [[ ! -e /usr/local/redis ]]
+
+          sudo ./package-root/redis/scripts/install.sh
+          sudo systemctl is-enabled --quiet redis.service
+          sudo systemctl is-active --quiet redis.service
+          sudo grep -Fqx 'PACKAGE_ID=redis-unofficial-builds' \
+            /usr/local/redis/.redis-package-state
+          sudo grep -Fqx 'SERVICE_MANAGER=systemd' \
+            /usr/local/redis/.redis-package-state
+          sudo grep -Fqx 'dir /usr/local/redis/data' \
+            /usr/local/redis/conf/redis.conf
+          [[ "$(/usr/local/redis/bin/redis-cli ping)" == "PONG" ]]
+          /usr/local/redis/bin/redis-cli set redis-unofficial-service-test preserved >/dev/null
+          [[ "$(/usr/local/redis/bin/redis-cli save)" == "OK" ]]
+
+          sudo install -d -o redis -g redis -m 0750 /usr/local/redis/custom-data
+          sudo cp /usr/local/redis/data/dump.rdb /usr/local/redis/custom-data/dump.rdb
+          sudo chown redis:redis /usr/local/redis/custom-data/dump.rdb
+          sudo sed -i \
+            's|^dir /usr/local/redis/data$|dir /usr/local/redis/custom-data|' \
+            /usr/local/redis/conf/redis.conf
+
+      - name: Test update and data preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo ./package-root/redis/scripts/update.sh
+          sudo systemctl is-active --quiet redis.service
+          [[ "$(/usr/local/redis/bin/redis-cli get redis-unofficial-service-test)" == "preserved" ]]
+          sudo grep -Fqx 'dir /usr/local/redis/custom-data' \
+            /usr/local/redis/conf/redis.conf
+
+      - name: Test uninstall, reinstall, and purge
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/local/redis/scripts/uninstall.sh
+          [[ ! -e /usr/local/redis/bin/redis-server ]]
+          [[ -f /usr/local/redis/conf/redis.conf ]]
+          [[ -f /usr/local/redis/custom-data/dump.rdb ]]
+          [[ -f /usr/local/redis/.redis-package-state ]]
+          if systemctl cat redis.service >/dev/null 2>&1; then
+            echo "redis.service still exists after uninstall." >&2
+            exit 1
+          fi
+
+          sudo ./package-root/redis/scripts/install.sh
+          [[ "$(/usr/local/redis/bin/redis-cli get redis-unofficial-service-test)" == "preserved" ]]
+
+          created_user="$(sudo awk -F= '$1 == "CREATED_USER" { print $2 }' \
+            /usr/local/redis/.redis-package-state)"
+          sudo /usr/local/redis/scripts/uninstall.sh --purge
+          [[ ! -e /usr/local/redis ]]
+          if [[ "$created_user" == "1" ]]; then
+            if id redis >/dev/null 2>&1; then
+              echo "A project-created redis user still exists after purge." >&2
+              exit 1
+            fi
+          elif ! id redis >/dev/null 2>&1; then
+            echo "A pre-existing redis user was removed by purge." >&2
+            exit 1
+          fi
+
+          sudo ./package-root/redis/scripts/install.sh --no-service
+          sudo grep -Fqx 'SERVICE_MANAGER=none' \
+            /usr/local/redis/.redis-package-state
+          if systemctl cat redis.service >/dev/null 2>&1; then
+            echo "--no-service unexpectedly installed redis.service." >&2
+            exit 1
+          fi
+          sudo /usr/local/redis/scripts/uninstall.sh --purge
+
   release:
     name: Publish GitHub Release
-    needs: [prepare, build]
+    needs: [prepare, build, service_test]
     if: >-
       needs.prepare.outputs.should_build == 'true' &&
-      (github.event_name != 'workflow_dispatch' || inputs.publish_release == true)
+      inputs.publish_release == true
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -238,26 +398,63 @@ jobs:
         run: |
           cat >release-notes.md <<EOF
           Redis ${REDIS_VERSION} unofficial binary builds.
+          Redis ${REDIS_VERSION} 非官方二进制构建。
 
-          Linux assets in this release:
+          Linux assets in this release / 本次 Release 的 Linux 安装包：
 
           - Architectures: x64 and ARM64
+          - 架构：x64、ARM64
           - Install prefix: \`/usr/local/redis\`
+          - 安装目录：\`/usr/local/redis\`
           - Archive root: \`redis/\`
           - Compatibility baseline: Rocky Linux 8 / glibc 2.28
+          - 兼容基线：Rocky Linux 8 / glibc 2.28；通常可在 glibc 2.28 及以上系统运行
+          - Required service manager: systemd, unless \`--no-service\` is used
+          - 服务管理器：默认需要 systemd；可使用 \`--no-service\` 仅安装程序
           - TLS support: disabled, matching a default \`make\` build
+          - TLS：未启用，与默认 \`make\` 构建一致
+          - Install, update, and uninstall scripts select Chinese or English from the system locale
+          - 安装、更新和卸载脚本根据系统 locale 自动选择中文或英文
           - Redis source: https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz
           - Redis source SHA256: \`${REDIS_SOURCE_SHA256}\`
 
-          Verify and install x64:
+          Verify and install x64 as a systemd service / 校验并安装 x64 systemd 服务：
 
           \`\`\`bash
           sha256sum -c Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz.sha256
-          sudo tar -xzf Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz -C /usr/local
-          /usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf
+          mkdir redis-install
+          tar -xzf Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz -C redis-install
+          sudo ./redis-install/redis/scripts/install.sh
+          systemctl status redis.service
           \`\`\`
 
-          These are unofficial builds. Redis remains subject to its upstream license included in each archive.
+          Update a managed installation while preserving configuration and data
+          / 更新本项目管理的安装并保留配置和数据：
+
+          \`\`\`bash
+          mkdir redis-update
+          tar -xzf Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz -C redis-update
+          sudo ./redis-update/redis/scripts/update.sh
+          \`\`\`
+
+          The automatic update backup does not copy the Redis data directory.
+          Take a storage snapshot before a production version upgrade.
+
+          自动更新备份不会复制 Redis 数据目录；生产版本升级前请另外创建存储快照。
+
+          For an existing manual installation, review its configuration and run
+          \`update.sh --adopt\`. The base systemd unit respects configured data and
+          log paths. Optional strict hardening is included as an example but is not
+          enabled automatically.
+
+          对于原有手工安装，请先检查配置，再运行 \`update.sh --adopt\`。基础
+          systemd 单元会遵循配置中的数据和日志路径；严格加固配置仅作为示例，
+          不会自动启用。
+
+          These are unofficial builds. Redis remains subject to its upstream license
+          included in each archive.
+
+          这些是非官方构建；Redis 仍遵循每个压缩包中附带的上游许可证。
           EOF
 
       - name: Create or update release
@@ -265,7 +462,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_EXISTS: ${{ needs.prepare.outputs.release_exists }}
-          IS_LATEST_TRACK: ${{ needs.prepare.outputs.is_latest_track }}
         shell: bash
         run: |
           set -euo pipefail
@@ -279,15 +475,9 @@ jobs:
               --title "Redis ${REDIS_VERSION} unofficial builds" \
               --notes-file release-notes.md
           else
-            latest_args=()
-            if [[ "$IS_LATEST_TRACK" == true ]]; then
-              latest_args+=(--latest)
-            fi
-
             gh release create "$REDIS_VERSION" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Redis ${REDIS_VERSION} unofficial builds" \
-              --notes-file release-notes.md \
-              "${latest_args[@]}"
+              --notes-file release-notes.md
           fi

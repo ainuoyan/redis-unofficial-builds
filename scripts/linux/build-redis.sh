@@ -3,12 +3,14 @@ set -euo pipefail
 
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/dist}"
+readonly PACKAGE_ASSETS_ROOT="${PROJECT_ROOT}/packaging/linux"
 readonly INSTALL_PREFIX="/usr/local/redis"
 readonly REDIS_VERSION="${REDIS_VERSION:?REDIS_VERSION is required}"
 readonly REDIS_SOURCE_SHA256="${REDIS_SOURCE_SHA256:?REDIS_SOURCE_SHA256 is required}"
 readonly EXPECTED_MACHINE_ARCH="${EXPECTED_MACHINE_ARCH:?EXPECTED_MACHINE_ARCH is required}"
 readonly PACKAGE_ARCH="${PACKAGE_ARCH:?PACKAGE_ARCH is required}"
 readonly PACKAGE_VARIANT="${PACKAGE_VARIANT:-linux-glibc2.28}"
+readonly GLIBC_BASELINE="${GLIBC_BASELINE:-2.28}"
 readonly BUILD_IMAGE="${BUILD_IMAGE:-unknown}"
 readonly SOURCE_ARCHIVE="redis-${REDIS_VERSION}.tar.gz"
 readonly SOURCE_URL="https://download.redis.io/releases/${SOURCE_ARCHIVE}"
@@ -16,6 +18,11 @@ readonly PACKAGE_NAME="Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-${PACKAGE_ARCH}
 
 if [[ ! "$PACKAGE_VARIANT" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
   echo "Invalid package variant: $PACKAGE_VARIANT" >&2
+  exit 1
+fi
+
+if [[ ! "$GLIBC_BASELINE" =~ ^[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid glibc baseline: $GLIBC_BASELINE" >&2
   exit 1
 fi
 
@@ -109,6 +116,30 @@ install -m 0644 redis.conf "$INSTALL_PREFIX/conf/redis.conf"
 install -m 0644 sentinel.conf "$INSTALL_PREFIX/conf/sentinel.conf"
 install -m 0644 LICENSE.txt "$INSTALL_PREFIX/LICENSE.txt"
 
+for package_script in "$PACKAGE_ASSETS_ROOT"/scripts/*.sh; do
+  bash -n "$package_script"
+done
+grep -Fqx '# Managed by redis-unofficial-builds' \
+  "$PACKAGE_ASSETS_ROOT/systemd/redis.service"
+grep -Eq '^ExecStart=/usr/local/redis/bin/redis-server .+ --daemonize no$' \
+  "$PACKAGE_ASSETS_ROOT/systemd/redis.service"
+if grep -Eq -- '--dir|--logfile' "$PACKAGE_ASSETS_ROOT/systemd/redis.service"; then
+  echo "The base systemd unit must not override user data or log paths." >&2
+  exit 1
+fi
+
+install -d -m 0755 "$INSTALL_PREFIX/scripts"
+install -m 0755 \
+  "$PACKAGE_ASSETS_ROOT/scripts/common.sh" \
+  "$PACKAGE_ASSETS_ROOT/scripts/install.sh" \
+  "$PACKAGE_ASSETS_ROOT/scripts/update.sh" \
+  "$PACKAGE_ASSETS_ROOT/scripts/uninstall.sh" \
+  "$INSTALL_PREFIX/scripts/"
+install -d -m 0755 "$INSTALL_PREFIX/systemd"
+for systemd_asset in "$PACKAGE_ASSETS_ROOT"/systemd/*; do
+  install -m 0644 "$systemd_asset" "$INSTALL_PREFIX/systemd/"
+done
+
 for binary in "$INSTALL_PREFIX"/bin/redis-*; do
   if ! file -L "$binary" | grep -qE 'ELF 64-bit.*(x86-64|ARM aarch64)'; then
     echo "Unexpected binary format: $(file -L "$binary")" >&2
@@ -135,10 +166,24 @@ if [[ -z "$max_glibc" ]]; then
 fi
 
 max_glibc_number="${max_glibc#GLIBC_}"
-if [[ "$(printf '%s\n' "$max_glibc_number" '2.28' | sort -V | tail -n 1)" != "2.28" ]]; then
-  echo "The package requires $max_glibc, which is newer than GLIBC_2.28." >&2
+if [[ "$(printf '%s\n' "$max_glibc_number" "$GLIBC_BASELINE" | sort -V | tail -n 1)" != "$GLIBC_BASELINE" ]]; then
+  echo "The package requires $max_glibc, which is newer than the GLIBC_${GLIBC_BASELINE} baseline." >&2
   exit 1
 fi
+
+cat >"$INSTALL_PREFIX/PACKAGE-INFO" <<EOF
+PACKAGE_FORMAT=1
+PACKAGE_ID=redis-unofficial-builds
+REDIS_VERSION=${REDIS_VERSION}
+PACKAGE_VARIANT=${PACKAGE_VARIANT}
+PACKAGE_ARCH=${PACKAGE_ARCH}
+OS=linux
+LIBC=glibc
+MIN_GLIBC=${GLIBC_BASELINE}
+MAX_GLIBC_SYMBOL=${max_glibc_number}
+SERVICE_BACKEND=systemd
+INSTALL_PREFIX=/usr/local/redis
+EOF
 
 {
   echo "Redis version: $REDIS_VERSION"
@@ -150,8 +195,10 @@ fi
   echo "Build OS: $(. /etc/os-release && printf '%s %s' "$NAME" "$VERSION_ID")"
   echo "Compiler: $(gcc --version | head -n 1)"
   echo "glibc: $(ldd --version | head -n 1)"
+  echo "Supported glibc baseline: $GLIBC_BASELINE"
   echo "Maximum required glibc symbol: $max_glibc"
   echo "TLS support: disabled"
+  echo "Service installer: included"
   echo "Redis source: $SOURCE_URL"
   echo "Redis source SHA256: $REDIS_SOURCE_SHA256"
   if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
@@ -161,15 +208,53 @@ fi
 
 cat >"$INSTALL_PREFIX/README.txt" <<EOF
 Redis ${REDIS_VERSION} unofficial Linux binary package
+Redis ${REDIS_VERSION} 非官方 Linux 二进制安装包
 
 Package variant: ${PACKAGE_VARIANT}
 Package architecture: ${PACKAGE_ARCH}
 Install location: /usr/local/redis
-Start command:
-  /usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf
+Compatibility: Linux ${PACKAGE_ARCH}, glibc ${GLIBC_BASELINE} or newer
+
+安装包类型：${PACKAGE_VARIANT}
+CPU 架构：${PACKAGE_ARCH}
+安装目录：/usr/local/redis
+兼容要求：Linux ${PACKAGE_ARCH}，glibc ${GLIBC_BASELINE} 或更高版本
+
+New installation (run from an archive extracted to a temporary directory):
+新安装（从解压到临时目录的安装包运行）：
+  sudo ./redis/scripts/install.sh
+
+Update an existing installation while preserving conf/ and data/:
+更新现有安装并保留 conf/ 和 data/：
+  sudo ./redis/scripts/update.sh
+
+The automatic update backup does not copy data/. Take a storage snapshot before
+a production upgrade.
+自动更新备份不会复制 data/；生产升级前请另外创建存储快照。
+
+Adopt an existing unmanaged installation only after reviewing its configuration:
+确认现有配置允许被接管后，迁移未由本项目管理的安装：
+  sudo ./redis/scripts/update.sh --adopt
+
+Service commands:
+服务命令：
+  systemctl status redis.service
+  journalctl -u redis.service
+
+Uninstall but preserve configuration and data:
+卸载程序但保留配置和数据：
+  sudo /usr/local/redis/scripts/uninstall.sh
+
+Use REDIS_INSTALL_LANG=en or REDIS_INSTALL_LANG=zh_CN to override the
+installer language. Strict systemd hardening is provided as an optional
+example under systemd/ and is not enabled automatically.
+
+可使用 REDIS_INSTALL_LANG=en 或 REDIS_INSTALL_LANG=zh_CN 指定安装脚本语言。
+严格的 systemd 加固配置位于 systemd/ 目录，仅作为可选示例，不会自动启用。
 
 This build does not enable Redis TLS support.
 Redis remains subject to the upstream license in LICENSE.txt.
+此构建未启用 Redis TLS；Redis 仍遵循 LICENSE.txt 中的上游许可证。
 EOF
 
 package_path="${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"

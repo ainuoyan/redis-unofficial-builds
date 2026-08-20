@@ -1,0 +1,24 @@
+# Managed by redis-unofficial-builds
+[Unit]
+Description=Redis in-memory data store
+Documentation=https://redis.io/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=redis
+Group=redis
+WorkingDirectory=/usr/local/redis
+ExecStart=/usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf --daemonize no
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=120s
+KillSignal=SIGTERM
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

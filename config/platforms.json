@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "package_name_prefix": "Redis",
+  "platforms": [
+    {
+      "id": "linux-glibc2.28-x64",
+      "variant": "linux-glibc2.28",
+      "os": "linux",
+      "arch": "x64",
+      "archive_extension": "tar.gz",
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
+    },
+    {
+      "id": "linux-glibc2.28-arm64",
+      "variant": "linux-glibc2.28",
+      "os": "linux",
+      "arch": "arm64",
+      "archive_extension": "tar.gz",
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
+    },
+    {
+      "id": "linux-glibc2.17-legacy-x64",
+      "variant": "linux-glibc2.17-legacy",
+      "os": "linux",
+      "arch": "x64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "linux-glibc2.17-legacy-arm64",
+      "variant": "linux-glibc2.17-legacy",
+      "os": "linux",
+      "arch": "arm64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "linux-musl1.2-x64",
+      "variant": "linux-musl1.2",
+      "os": "linux",
+      "arch": "x64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "linux-musl1.2-arm64",
+      "variant": "linux-musl1.2",
+      "os": "linux",
+      "arch": "arm64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "macos12-x64",
+      "variant": "macos12",
+      "os": "macos",
+      "arch": "x64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "macos12-arm64",
+      "variant": "macos12",
+      "os": "macos",
+      "arch": "arm64",
+      "archive_extension": "tar.gz",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "windows-msys2-x64",
+      "variant": "windows-msys2",
+      "os": "windows",
+      "arch": "x64",
+      "archive_extension": "zip",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    },
+    {
+      "id": "windows-cygwin-x64",
+      "variant": "windows-cygwin",
+      "os": "windows",
+      "arch": "x64",
+      "archive_extension": "zip",
+      "status": "designed",
+      "controller_enabled": false,
+      "build_workflow": null
+    }
+  ]
+}
