@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       redis_series:
-        description: Optional tracked series, for example 7.4
+        description: Optional tracked series (do not combine with exact version)
         required: false
         type: string
       redis_version:
-        description: Optional exact official version, for example 7.4.11
+        description: Optional exact official version (do not combine with series)
         required: false
         type: string
   push:
@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: redis-release-plan-${{ github.event_name }}-${{ inputs.redis_version || inputs.redis_series || 'all' }}
+  group: redis-release-plan-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,20 +40,54 @@ jobs:
       version_matrix: ${{ steps.resolve.outputs.version_matrix }}
       build_matrix: ${{ steps.resolve.outputs.build_matrix }}
       new_series_count: ${{ steps.resolve.outputs.new_series_count }}
+      blocked_release_count: ${{ steps.resolve.outputs.blocked_release_count }}
+      hashes_commit: ${{ steps.resolve.outputs.hashes_commit }}
     steps:
       - name: Checkout release controller
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - name: Download official Redis hashes
+      - name: Validate reviewed controller configuration
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 \
-            "https://raw.githubusercontent.com/redis/redis-hashes/master/README" \
-            --output redis-hashes.txt
+          python3 scripts/release/validate_configs.py \
+            --release-config config/release-lines.json \
+            --platform-config config/platforms.json \
+            --workflows-dir .github/workflows
+
+      - name: Download an immutable official Redis hashes snapshot
+        id: hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          hashes_repository="$(jq -er '.upstream.hashes_repository' config/release-lines.json)"
+          hashes_ref="$(jq -er '.upstream.hashes_ref' config/release-lines.json)"
+          hashes_path="$(jq -er '.upstream.hashes_path' config/release-lines.json)"
+          hashes_commit="$(
+            gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${hashes_repository}/commits/${hashes_ref}" \
+              --jq '.sha'
+          )"
+          if [[ ! "$hashes_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid Redis hashes snapshot Git OID." >&2
+            exit 1
+          fi
+          gh api \
+            -H 'Accept: application/vnd.github.raw+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${hashes_repository}/contents/${hashes_path}?ref=${hashes_commit}" \
+            >redis-hashes.txt
+          hashes_size="$(wc -c <redis-hashes.txt)"
+          if ((hashes_size == 0 || hashes_size > 16777216)); then
+            echo "Redis hashes snapshot has an invalid size: $hashes_size" >&2
+            exit 1
+          fi
+          echo "commit=$hashes_commit" >>"$GITHUB_OUTPUT"
 
       - name: Read existing GitHub Release assets
         env:
@@ -64,11 +98,17 @@ jobs:
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             >release-pages.json
-          jq 'add // []' release-pages.json >github-releases.json
+          jq '[ (add // [])[] | {
+            tag_name,
+            draft,
+            prerelease,
+            assets: [.assets[] | {name}]
+          } ]' release-pages.json >github-releases.json
 
       - name: Generate plan-only matrices
         id: resolve
         env:
+          HASHES_COMMIT: ${{ steps.hashes.outputs.commit }}
           REQUESTED_SERIES: ${{ inputs.redis_series }}
           REQUESTED_VERSION: ${{ inputs.redis_version }}
         shell: bash
@@ -82,6 +122,7 @@ jobs:
             --output-dir release-plan
             --github-output "$GITHUB_OUTPUT"
             --as-of "$(date -u +%F)"
+            --hashes-commit "$HASHES_COMMIT"
           )
           if [[ -n "${REQUESTED_SERIES:-}" ]]; then
             args+=(--series "$REQUESTED_SERIES")
