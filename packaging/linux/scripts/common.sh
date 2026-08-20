@@ -1,5 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset CDPATH ENV BASH_ENV
+umask 077
 
 readonly REDIS_INSTALL_PREFIX="/usr/local/redis"
 readonly REDIS_BACKUP_ROOT="/usr/local/redis-backups"
@@ -9,7 +14,11 @@ readonly REDIS_USER="redis"
 readonly REDIS_GROUP="redis"
 readonly REDIS_PACKAGE_ID="redis-unofficial-builds"
 readonly REDIS_STATE_FILE="$REDIS_INSTALL_PREFIX/.redis-package-state"
+readonly REDIS_LOCAL_SOCKET="$REDIS_INSTALL_PREFIX/data/redis.sock"
 readonly REDIS_UNIT_MARKER="# Managed by redis-unofficial-builds"
+readonly REDIS_LIFECYCLE_LOCK="/run/redis-unofficial-builds.lock"
+readonly MAX_DEPENDENCY_NOTICES_BYTES=10485760
+readonly MAX_CONTRIBUTOR_LICENSE_BYTES=1048576
 
 detect_ui_language() {
   local requested_locale
@@ -21,6 +30,12 @@ detect_ui_language() {
 }
 
 readonly REDIS_UI_LANGUAGE="$(detect_ui_language)"
+
+# Preserve the already-selected UI language, then make every machine-readable
+# command and parser deterministic regardless of the invoking sudo locale.
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
 
 message() {
   local key="$1"
@@ -45,15 +60,21 @@ message() {
       binary_failed) format='新 redis-server 无法在当前系统运行：%s' ;;
       version_unreadable) format='无法读取新 redis-server 的版本。' ;;
       version_mismatch) format='PACKAGE-INFO 声明 Redis %s，但二进制报告 %s。' ;;
-      systemd_unavailable) format='systemd 未运行。可在启用了 systemd 的主机上安装，或使用 --no-service 仅安装程序。' ;;
+      systemd_unavailable) format='systemd 未运行。可在启用了 systemd 的主机上安装，或使用 --no-service 安装完整包布局但不注册或要求 systemd。' ;;
       unit_replace) format='由于指定了 --force-service，将替换现有服务单元：%s' ;;
       unit_conflict) format='%s 已由其他安装管理。确认允许替换时使用 --force-service。' ;;
       group_created) format='已创建系统用户组 %s。' ;;
       user_created) format='已创建系统用户 %s。' ;;
       service_failed) format='%s 未能保持运行状态，请检查：journalctl -u %s' ;;
+      service_unready) format='%s 未能通过 Redis PING 就绪检查，请检查：journalctl -u %s' ;;
+      operation_locked) format='另一个 Redis 安装、更新或卸载操作正在运行。' ;;
       state_invalid) format='安装状态文件无效：%s' ;;
       unmanaged_install) format='发现未由本项目管理的 Redis 安装。确认迁移时重新运行并添加 --adopt。' ;;
+      account_invalid) format='拒绝使用 UID 0、GID 0 或无效的 Redis 服务账号：%s' ;;
       unexpected_path) format='拒绝操作非预期路径：%s' ;;
+      unsafe_path) format='路径不是由 root 安全控制的普通文件或目录：%s' ;;
+      unsafe_config_reference) format='Redis 配置引用了不安全或不受支持的外部文件：%s' ;;
+      active_foreign_service) format='拒绝自动替换正在运行的第三方服务 %s；请先由管理员手动停止并检查该服务。' ;;
       unknown_option) format='未知选项：%s' ;;
       *) format="$key" ;;
     esac
@@ -75,15 +96,21 @@ message() {
       binary_failed) format='The new redis-server cannot run on this system: %s' ;;
       version_unreadable) format='Unable to read the version from the new redis-server binary.' ;;
       version_mismatch) format='PACKAGE-INFO declares Redis %s, but the binary reports %s.' ;;
-      systemd_unavailable) format='systemd is not running. Install on a systemd host or use --no-service for a binary-only installation.' ;;
+      systemd_unavailable) format='systemd is not running. Install on a systemd host or use --no-service to install the complete package layout without registering or requiring systemd.' ;;
       unit_replace) format='Replacing the existing service unit because --force-service was supplied: %s' ;;
       unit_conflict) format='%s is managed by another installation. Re-run with --force-service only if it may be replaced.' ;;
       group_created) format='Created system group %s.' ;;
       user_created) format='Created system user %s.' ;;
       service_failed) format='%s did not remain active. Check: journalctl -u %s' ;;
+      service_unready) format='%s did not pass the Redis PING readiness check. Check: journalctl -u %s' ;;
+      operation_locked) format='Another Redis install, update, or uninstall operation is running.' ;;
       state_invalid) format='Invalid installation state file: %s' ;;
       unmanaged_install) format='An unmanaged Redis installation was found. Re-run with --adopt only after confirming that it may be migrated.' ;;
+      account_invalid) format='Refusing to use a UID 0, GID 0, or invalid Redis service account: %s' ;;
       unexpected_path) format='Refusing to operate on an unexpected path: %s' ;;
+      unsafe_path) format='Path is not a root-controlled regular file or directory: %s' ;;
+      unsafe_config_reference) format='Redis configuration references an unsafe or unsupported external file: %s' ;;
+      active_foreign_service) format='Refusing to replace active third-party service %s; stop and inspect it manually first.' ;;
       unknown_option) format='Unknown option: %s' ;;
       *) format="$key" ;;
     esac
@@ -131,6 +158,15 @@ require_commands() {
   done
 }
 
+acquire_lifecycle_lock() {
+  if [[ -e "$REDIS_LIFECYCLE_LOCK" || -L "$REDIS_LIFECYCLE_LOCK" ]]; then
+    assert_root_owned_regular_file "$REDIS_LIFECYCLE_LOCK"
+  fi
+  exec 9>"$REDIS_LIFECYCLE_LOCK"
+  chmod 0600 "$REDIS_LIFECYCLE_LOCK"
+  flock --nonblock 9 || die_message operation_locked
+}
+
 metadata_value() {
   local file="$1"
   local key="$2"
@@ -155,17 +191,370 @@ managed_install_exists() {
 }
 
 validate_state_file() {
-  [[ -f "$REDIS_STATE_FILE" ]] || return 0
-  managed_install_exists || die_message state_invalid "$REDIS_STATE_FILE"
-  [[ "$(state_value STATE_FORMAT)" == "1" ]] \
+  local state_format required_state_keys contributor_license_sha256
+  local redis_home redis_shell
+  [[ -e "$REDIS_STATE_FILE" || -L "$REDIS_STATE_FILE" ]] || return 0
+  [[ -f "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" ]] \
     || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(stat -c '%u:%g:%a:%h' -- "$REDIS_STATE_FILE")" == "0:0:600:1" ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  state_format="$(state_value STATE_FORMAT)"
+  required_state_keys="STATE_FORMAT PACKAGE_ID INSTALL_PREFIX REDIS_VERSION PACKAGE_VARIANT PACKAGE_ARCH SERVICE_MANAGER CREATED_USER CREATED_GROUP REDIS_UID REDIS_GID INSTALLED_AT UPDATED_AT"
+  case "$state_format" in
+    1) ;;
+    2)
+      required_state_keys+=" UPSTREAM_CONTRIBUTOR_LICENSE_SHA256 UPSTREAM_DEPENDENCY_NOTICES_SHA256"
+      ;;
+    3)
+      required_state_keys+=" UPSTREAM_CONTRIBUTOR_LICENSE_SHA256 UPSTREAM_DEPENDENCY_NOTICES_SHA256 REDIS_HOME REDIS_SHELL"
+      ;;
+    *) die_message state_invalid "$REDIS_STATE_FILE" ;;
+  esac
+  awk -F= -v required="$required_state_keys" '
+    BEGIN {
+      split(required, keys, " ")
+      for (i in keys) allowed[keys[i]] = 1
+    }
+    !/^[A-Z][A-Z0-9_]*=[^[:cntrl:]]*$/ { bad = 1; next }
+    !($1 in allowed) || ++seen[$1] != 1 { bad = 1 }
+    END {
+      for (key in allowed) if (seen[key] != 1) bad = 1
+      exit bad
+    }
+  ' "$REDIS_STATE_FILE" || die_message state_invalid "$REDIS_STATE_FILE"
+  managed_install_exists || die_message state_invalid "$REDIS_STATE_FILE"
   [[ "$(state_value INSTALL_PREFIX)" == "$REDIS_INSTALL_PREFIX" ]] \
     || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value REDIS_VERSION)" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value PACKAGE_VARIANT)" =~ ^[a-z0-9][a-z0-9._-]*$ ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value PACKAGE_ARCH)" == "x64" \
+    || "$(state_value PACKAGE_ARCH)" == "arm64" ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value SERVICE_MANAGER)" == "systemd" \
+    || "$(state_value SERVICE_MANAGER)" == "none" ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value CREATED_USER)" =~ ^[01]$ \
+    && "$(state_value CREATED_GROUP)" =~ ^[01]$ ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value REDIS_UID)" =~ ^[1-9][0-9]*$ \
+    && "$(state_value REDIS_GID)" =~ ^[1-9][0-9]*$ ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  [[ "$(state_value INSTALLED_AT)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ \
+    && "$(state_value UPDATED_AT)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+    || die_message state_invalid "$REDIS_STATE_FILE"
+  if [[ "$state_format" == 2 || "$state_format" == 3 ]]; then
+    contributor_license_sha256="$(state_value UPSTREAM_CONTRIBUTOR_LICENSE_SHA256)"
+    [[ "$contributor_license_sha256" == absent \
+      || "$contributor_license_sha256" =~ ^[0-9a-f]{64}$ ]] \
+      || die_message state_invalid "$REDIS_STATE_FILE"
+    [[ "$(state_value UPSTREAM_DEPENDENCY_NOTICES_SHA256)" =~ ^[0-9a-f]{64}$ ]] \
+      || die_message state_invalid "$REDIS_STATE_FILE"
+    if redis_version_is_at_least "$(state_value REDIS_VERSION)" 7.4.0; then
+      [[ "$contributor_license_sha256" != absent ]] \
+        || die_message state_invalid "$REDIS_STATE_FILE"
+    fi
+  fi
+  if [[ "$state_format" == 3 ]]; then
+    redis_home="$(state_value REDIS_HOME)"
+    redis_shell="$(state_value REDIS_SHELL)"
+    [[ "$redis_home" =~ ^/[A-Za-z0-9._/-]+$ \
+      && "$redis_home" != *//* \
+      && "$redis_home" != */./* \
+      && "$redis_home" != */../* \
+      && "$redis_home" != */. \
+      && "$redis_home" != */.. ]] \
+      || die_message state_invalid "$REDIS_STATE_FILE"
+    case "$redis_shell" in
+      /sbin/nologin|/usr/sbin/nologin|/usr/bin/nologin|/bin/false|/usr/bin/false) ;;
+      *) die_message state_invalid "$REDIS_STATE_FILE" ;;
+    esac
+  fi
+}
+
+assert_no_extended_acl() {
+  local path="$1" listing permissions
+  listing="$(LC_ALL=C ls -ld --color=never -- "$path")" \
+    || die_message unsafe_path "$path"
+  permissions="${listing%% *}"
+  [[ "${#permissions}" == 10 \
+    || ( "${#permissions}" == 11 && "${permissions: -1}" == . ) ]] \
+    || die_message unsafe_path "$path"
+}
+
+assert_root_owned_directory() {
+  local path="$1"
+  local owner mode mode_value
+  [[ -d "$path" && ! -L "$path" ]] || die_message unsafe_path "$path"
+  owner="$(stat -c '%u' -- "$path")"
+  mode="$(stat -c '%a' -- "$path")"
+  [[ "$owner" == "0" && "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || die_message unsafe_path "$path"
+  mode_value=$((8#$mode))
+  (( (mode_value & 0022) == 0 )) || die_message unsafe_path "$path"
+  assert_no_extended_acl "$path"
+}
+
+assert_root_owned_regular_file() {
+  local path="$1"
+  local owner mode links mode_value metadata
+  [[ -f "$path" && ! -L "$path" ]] || die_message unsafe_path "$path"
+  metadata="$(stat -c '%u %a %h' -- "$path")"
+  read -r owner mode links <<<"$metadata"
+  [[ "$owner" == "0" && "$links" == "1" && "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || die_message unsafe_path "$path"
+  mode_value=$((8#$mode))
+  (( (mode_value & 0022) == 0 && (mode_value & 07000) == 0 )) \
+    || die_message unsafe_path "$path"
+  assert_no_extended_acl "$path"
+}
+
+validate_package_root_security() {
+  local package_root="$1"
+  local directory entry file link_target
+  for directory in "$package_root" bin conf scripts systemd; do
+    if [[ "$directory" != /* ]]; then
+      directory="$package_root/$directory"
+    fi
+    assert_root_owned_directory "$directory"
+  done
+  for file in \
+    bin/redis-server bin/redis-cli \
+    conf/redis.conf conf/sentinel.conf \
+    scripts/common.sh scripts/install.sh scripts/update.sh scripts/uninstall.sh \
+    systemd/redis.service \
+    PACKAGE-INFO BUILD-INFO LICENSE.txt README.txt THIRD_PARTY_NOTICES.md \
+    UPSTREAM-DEPENDENCY-NOTICES.txt; do
+    assert_root_owned_regular_file "$package_root/$file"
+  done
+
+  while IFS= read -r -d '' entry; do
+    if [[ -L "$entry" ]]; then
+      case "${entry#"$package_root"/}" in
+        bin/redis-check-aof|bin/redis-check-rdb|bin/redis-sentinel)
+          link_target="$(readlink -- "$entry")"
+          [[ "$link_target" == "redis-server" ]] \
+            || die_message unsafe_path "$entry"
+          [[ "$(stat -c '%u:%g' -h -- "$entry")" == "0:0" ]] \
+            || die_message unsafe_path "$entry"
+          ;;
+        *) die_message unsafe_path "$entry" ;;
+      esac
+    elif [[ -d "$entry" ]]; then
+      assert_root_owned_directory "$entry"
+    elif [[ -f "$entry" ]]; then
+      assert_root_owned_regular_file "$entry"
+    else
+      die_message unsafe_path "$entry"
+    fi
+  done < <(find -P "$package_root" -mindepth 1 -print0)
+}
+
+validate_install_prefix_parent() {
+  assert_root_owned_directory /usr
+  assert_root_owned_directory /usr/local
+}
+
+validate_existing_prefix_paths() {
+  local component config_file metadata_file
+  validate_install_prefix_parent
+  assert_root_owned_directory "$REDIS_INSTALL_PREFIX"
+  for component in bin conf data scripts systemd; do
+    if [[ -e "$REDIS_INSTALL_PREFIX/$component" || -L "$REDIS_INSTALL_PREFIX/$component" ]]; then
+      [[ -d "$REDIS_INSTALL_PREFIX/$component" && ! -L "$REDIS_INSTALL_PREFIX/$component" ]] \
+        || die_message unsafe_path "$REDIS_INSTALL_PREFIX/$component"
+    fi
+  done
+  if [[ -d "$REDIS_INSTALL_PREFIX/conf" ]]; then
+    assert_root_owned_directory "$REDIS_INSTALL_PREFIX/conf"
+    for config_file in redis.conf sentinel.conf; do
+      if [[ -e "$REDIS_INSTALL_PREFIX/conf/$config_file" \
+        || -L "$REDIS_INSTALL_PREFIX/conf/$config_file" ]]; then
+        assert_root_owned_regular_file "$REDIS_INSTALL_PREFIX/conf/$config_file"
+      fi
+    done
+  fi
+  for component in bin scripts systemd; do
+    if [[ -d "$REDIS_INSTALL_PREFIX/$component" ]]; then
+      assert_root_owned_directory "$REDIS_INSTALL_PREFIX/$component"
+    fi
+  done
+  for metadata_file in \
+    PACKAGE-INFO BUILD-INFO LICENSE.txt README.txt THIRD_PARTY_NOTICES.md \
+    UPSTREAM-CONTRIBUTOR-LICENSE.txt UPSTREAM-DEPENDENCY-NOTICES.txt; do
+    if [[ -e "$REDIS_INSTALL_PREFIX/$metadata_file" \
+      || -L "$REDIS_INSTALL_PREFIX/$metadata_file" ]]; then
+      assert_root_owned_regular_file "$REDIS_INSTALL_PREFIX/$metadata_file"
+    fi
+  done
+}
+
+validate_destructive_targets() {
+  local path encoded_mount mount_path
+  [[ -r /proc/self/mountinfo ]] || die_message unsafe_path /proc/self/mountinfo
+  while IFS= read -r encoded_mount; do
+    printf -v mount_path '%b' "$encoded_mount"
+    for path in "$@"; do
+      path="${path%/}"
+      case "$mount_path" in
+        "$path"|"$path"/*) die_message unsafe_path "$mount_path" ;;
+      esac
+    done
+  done < <(awk '{ print $5 }' /proc/self/mountinfo)
+}
+
+live_install_redis_server_pids() {
+  local install_prefix="${1:-$REDIS_INSTALL_PREFIX}"
+  local expected_executable="$install_prefix/bin/redis-server"
+  local process_path executable pid
+  local -a process_paths=(/proc/[0-9]*)
+
+  [[ -d /proc && "$(readlink -- /proc/self/exe 2>/dev/null || true)" == /* ]] \
+    || die_message unsafe_path /proc
+  for process_path in "${process_paths[@]}"; do
+    [[ "$process_path" =~ ^/proc/[1-9][0-9]*$ ]] || continue
+    executable="$(readlink -- "$process_path/exe" 2>/dev/null || true)"
+    executable="${executable% (deleted)}"
+    if [[ "$executable" == "$expected_executable" ]]; then
+      pid="${process_path#/proc/}"
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+assert_no_live_install_redis_server() {
+  local pids
+  pids="$(live_install_redis_server_pids)"
+  if [[ -n "$pids" ]]; then
+    printf '[redis-package] ERROR: Redis processes from %s are still running (PID(s): %s). Stop them before changing or deleting the installation. / 仍有来自 %s 的 Redis 进程正在运行（PID：%s）；请先停止进程，再修改或删除安装。\n' \
+      "$REDIS_INSTALL_PREFIX" "${pids//$'\n'/, }" \
+      "$REDIS_INSTALL_PREFIX" "${pids//$'\n'/, }" >&2
+    return 1
+  fi
+}
+
+validate_existing_install_layout() {
+  validate_existing_prefix_paths
+  assert_root_owned_directory "$REDIS_INSTALL_PREFIX/bin"
+  assert_root_owned_regular_file "$REDIS_INSTALL_PREFIX/bin/redis-server"
+  [[ -x "$REDIS_INSTALL_PREFIX/bin/redis-server" ]] \
+    || die_message unsafe_path "$REDIS_INSTALL_PREFIX/bin/redis-server"
+  if [[ -e "$REDIS_INSTALL_PREFIX/bin/redis-cli" \
+    || -L "$REDIS_INSTALL_PREFIX/bin/redis-cli" ]]; then
+    assert_root_owned_regular_file "$REDIS_INSTALL_PREFIX/bin/redis-cli"
+    [[ -x "$REDIS_INSTALL_PREFIX/bin/redis-cli" ]] \
+      || die_message unsafe_path "$REDIS_INSTALL_PREFIX/bin/redis-cli"
+  fi
+}
+
+unit_file_matches_contract() {
+  local unit_file="$1"
+  [[ -f "$unit_file" && ! -L "$unit_file" ]] \
+    && [[ "$(grep -Fxc "$REDIS_UNIT_MARKER" "$unit_file")" == 1 ]] \
+    && [[ "$(grep -Ec '^[[:space:]]*User[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'User=redis' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*Group[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'Group=redis' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*WorkingDirectory[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'WorkingDirectory=/usr/local/redis' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*ExecStart[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx \
+      'ExecStart=/usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf --daemonize no' \
+      "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*Type[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'Type=simple' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*KillSignal[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'KillSignal=SIGTERM' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*KillMode[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'KillMode=control-group' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*SendSIGKILL[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'SendSIGKILL=yes' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*RemainAfterExit[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'RemainAfterExit=no' "$unit_file" \
+    && [[ "$(grep -Ec '^[[:space:]]*NoNewPrivileges[[:space:]]*=' "$unit_file")" == 1 ]] \
+    && grep -Fqx 'NoNewPrivileges=true' "$unit_file"
+}
+
+validate_upstream_notice_files() {
+  local package_root="$1"
+  local package_version="$2"
+  local contributor_license_sha256="$3"
+  local dependency_notices_sha256="$4"
+  local contributor_path="$package_root/UPSTREAM-CONTRIBUTOR-LICENSE.txt"
+  local dependency_path="$package_root/UPSTREAM-DEPENDENCY-NOTICES.txt"
+  local size links actual_sha256 begin_count end_count
+
+  [[ "$dependency_notices_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || die_message package_info_invalid "$package_root/PACKAGE-INFO"
+  [[ -f "$dependency_path" && ! -L "$dependency_path" ]] \
+    || die_message package_info_invalid "$dependency_path"
+  read -r size links <<<"$(stat -c '%s %h' -- "$dependency_path")"
+  [[ "$size" =~ ^[1-9][0-9]*$ && "$links" == 1 \
+    && "$size" -le "$MAX_DEPENDENCY_NOTICES_BYTES" ]] \
+    || die_message package_info_invalid "$dependency_path"
+  grep -Iq . -- "$dependency_path" \
+    || die_message package_info_invalid "$dependency_path"
+  [[ "$(sed -n '1p' "$dependency_path")" \
+      == "UPSTREAM_DEPENDENCY_NOTICES_FORMAT=1" \
+    && "$(sed -n '2p' "$dependency_path")" \
+      == "REDIS_VERSION=$package_version" \
+    && "$(sed -n '3p' "$dependency_path")" == "SOURCE_SUBTREE=deps" \
+    && -z "$(sed -n '4p' "$dependency_path")" ]] \
+    || die_message package_info_invalid "$dependency_path"
+  begin_count="$(grep -Ec \
+    '^===== BEGIN deps/[A-Za-z0-9._/@:+-]+ \([1-9][0-9]* bytes\) =====$' \
+    "$dependency_path")"
+  end_count="$(grep -Ec \
+    '^===== END deps/[A-Za-z0-9._/@:+-]+ =====$' "$dependency_path")"
+  [[ "$begin_count" =~ ^[1-9][0-9]*$ && "$begin_count" == "$end_count" \
+    && "$begin_count" -le 256 ]] \
+    || die_message package_info_invalid "$dependency_path"
+  awk '
+    /^===== BEGIN deps\// {
+      size = $0
+      sub(/^.* \(/, "", size)
+      sub(/ bytes\) =====$/, "", size)
+      if (size !~ /^[1-9][0-9]*$/ || size + 0 > 1048576) bad = 1
+    }
+    END { exit bad }
+  ' "$dependency_path" || die_message package_info_invalid "$dependency_path"
+  actual_sha256="$(sha256sum "$dependency_path" | awk '{print $1}')"
+  [[ "$actual_sha256" == "$dependency_notices_sha256" ]] \
+    || die_message package_info_invalid "$dependency_path"
+
+  [[ "$contributor_license_sha256" == absent \
+    || "$contributor_license_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || die_message package_info_invalid "$package_root/PACKAGE-INFO"
+  if redis_version_is_at_least "$package_version" 7.4.0; then
+    [[ "$contributor_license_sha256" != absent ]] \
+      || die_message package_info_invalid "$contributor_path"
+  fi
+  if [[ -e "$contributor_path" || -L "$contributor_path" ]]; then
+    [[ -f "$contributor_path" && ! -L "$contributor_path" \
+      && "$contributor_license_sha256" != absent ]] \
+      || die_message package_info_invalid "$contributor_path"
+    read -r size links <<<"$(stat -c '%s %h' -- "$contributor_path")"
+    [[ "$size" =~ ^[1-9][0-9]*$ && "$links" == 1 \
+      && "$size" -le "$MAX_CONTRIBUTOR_LICENSE_BYTES" ]] \
+      || die_message package_info_invalid "$contributor_path"
+    grep -Iq . -- "$contributor_path" \
+      || die_message package_info_invalid "$contributor_path"
+    actual_sha256="$(sha256sum "$contributor_path" | awk '{print $1}')"
+    [[ "$actual_sha256" == "$contributor_license_sha256" ]] \
+      || die_message package_info_invalid "$contributor_path"
+  else
+    [[ "$contributor_license_sha256" == absent ]] \
+      || die_message package_info_invalid "$contributor_path"
+  fi
 }
 
 validate_package_root() {
   local package_root="$1"
   local package_info="$package_root/PACKAGE-INFO"
+  local package_version package_series package_variant package_arch
+  local min_glibc max_glibc source_sha256 patchset_sha256
+  local contributor_license_sha256 dependency_notices_sha256
 
   [[ -x "$package_root/bin/redis-server" ]] \
     || die_message package_server_missing "$package_root"
@@ -177,14 +566,73 @@ validate_package_root() {
     || die_message package_unit_missing "$package_root"
   [[ -f "$package_info" ]] \
     || die_message package_info_missing "$package_root"
+  [[ -f "$package_root/THIRD_PARTY_NOTICES.md" ]] \
+    || die_message package_info_invalid "$package_root/THIRD_PARTY_NOTICES.md"
+  [[ -f "$package_root/UPSTREAM-DEPENDENCY-NOTICES.txt" ]] \
+    || die_message package_info_invalid "$package_root/UPSTREAM-DEPENDENCY-NOTICES.txt"
+  awk -F= '
+    BEGIN {
+      required = "PACKAGE_FORMAT PACKAGE_ID REDIS_VERSION REDIS_SERIES BUILD_PROFILE PACKAGE_VARIANT PACKAGE_ARCH OS LIBC MIN_GLIBC MAX_GLIBC_SYMBOL SERVICE_BACKEND INSTALL_PREFIX UPSTREAM_SOURCE_SHA256 UPSTREAM_CONTRIBUTOR_LICENSE_SHA256 UPSTREAM_DEPENDENCY_NOTICES_SHA256 PATCHSET_SHA256"
+      split(required, keys, " ")
+      for (i in keys) allowed[keys[i]] = 1
+    }
+    !/^[A-Z][A-Z0-9_]*=[^[:cntrl:]]*$/ { bad = 1; next }
+    !($1 in allowed) || ++seen[$1] != 1 { bad = 1 }
+    END {
+      for (key in allowed) if (seen[key] != 1) bad = 1
+      exit bad
+    }
+  ' "$package_info" || die_message package_info_invalid "$package_info"
   [[ "$(package_info_value "$package_root" PACKAGE_ID)" == "$REDIS_PACKAGE_ID" ]] \
     || die_message package_info_invalid "$package_info"
-  [[ "$(package_info_value "$package_root" PACKAGE_FORMAT)" == "1" ]] \
+  [[ "$(package_info_value "$package_root" PACKAGE_FORMAT)" == "2" ]] \
     || die_message package_info_invalid "$package_info"
   [[ "$(package_info_value "$package_root" OS)" == "linux" ]] \
     || die_message package_info_invalid "$package_info"
   [[ "$(package_info_value "$package_root" INSTALL_PREFIX)" == "$REDIS_INSTALL_PREFIX" ]] \
     || die_message package_prefix_invalid "$REDIS_INSTALL_PREFIX"
+  [[ "$(package_info_value "$package_root" LIBC)" == "glibc" ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$(package_info_value "$package_root" SERVICE_BACKEND)" == "systemd" ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$(package_info_value "$package_root" BUILD_PROFILE)" == "core" ]] \
+    || die_message package_info_invalid "$package_info"
+  unit_file_matches_contract "$package_root/systemd/redis.service" \
+    || die_message package_info_invalid "$package_root/systemd/redis.service"
+
+  package_version="$(package_info_value "$package_root" REDIS_VERSION)"
+  package_series="$(package_info_value "$package_root" REDIS_SERIES)"
+  package_variant="$(package_info_value "$package_root" PACKAGE_VARIANT)"
+  package_arch="$(package_info_value "$package_root" PACKAGE_ARCH)"
+  min_glibc="$(package_info_value "$package_root" MIN_GLIBC)"
+  max_glibc="$(package_info_value "$package_root" MAX_GLIBC_SYMBOL)"
+  source_sha256="$(package_info_value "$package_root" UPSTREAM_SOURCE_SHA256)"
+  contributor_license_sha256="$(package_info_value \
+    "$package_root" UPSTREAM_CONTRIBUTOR_LICENSE_SHA256)"
+  dependency_notices_sha256="$(package_info_value \
+    "$package_root" UPSTREAM_DEPENDENCY_NOTICES_SHA256)"
+  patchset_sha256="$(package_info_value "$package_root" PATCHSET_SHA256)"
+
+  [[ "$package_version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$package_series" == "${package_version%.*}" ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$package_variant" =~ ^[a-z0-9][a-z0-9._-]*$ ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$package_arch" == "x64" || "$package_arch" == "arm64" ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$min_glibc" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$max_glibc" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    && version_is_at_least "$min_glibc" "$max_glibc" \
+    || die_message package_info_invalid "$package_info"
+  [[ "$source_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || die_message package_info_invalid "$package_info"
+  [[ "$patchset_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || die_message package_info_invalid "$package_info"
+  validate_upstream_notice_files \
+    "$package_root" "$package_version" \
+    "$contributor_license_sha256" "$dependency_notices_sha256"
 }
 
 native_package_arch() {
@@ -200,27 +648,63 @@ version_is_at_least() {
   local required="$2"
   local actual_major actual_minor required_major required_minor
 
-  IFS=. read -r actual_major actual_minor _ <<<"$actual"
-  IFS=. read -r required_major required_minor _ <<<"$required"
-  [[ "$actual_major" =~ ^[0-9]+$ && "$actual_minor" =~ ^[0-9]+$ ]] || return 1
-  [[ "$required_major" =~ ^[0-9]+$ && "$required_minor" =~ ^[0-9]+$ ]] || return 1
+  [[ "$actual" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ \
+    && "$required" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    || return 1
+  IFS=. read -r actual_major actual_minor <<<"$actual"
+  IFS=. read -r required_major required_minor <<<"$required"
   ((actual_major > required_major)) \
     || ((actual_major == required_major && actual_minor >= required_minor))
+}
+
+redis_version_is_at_least() {
+  local actual="$1" required="$2"
+  local actual_major actual_minor actual_patch
+  local required_major required_minor required_patch
+
+  [[ "$actual" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ \
+    && "$required" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
+    || return 1
+  IFS=. read -r actual_major actual_minor actual_patch <<<"$actual"
+  IFS=. read -r required_major required_minor required_patch <<<"$required"
+  ((actual_major > required_major)) \
+    || ((actual_major == required_major && actual_minor > required_minor)) \
+    || ((actual_major == required_major && actual_minor == required_minor \
+      && actual_patch >= required_patch))
 }
 
 runtime_glibc_version() {
   local version_output
   command -v getconf >/dev/null 2>&1 || return 0
   version_output="$(LC_ALL=C getconf GNU_LIBC_VERSION 2>/dev/null || true)"
-  sed -nE 's/^glibc[[:space:]]+([0-9]+\.[0-9]+).*$/\1/p' <<<"$version_output"
+  sed -nE 's/^glibc[[:space:]]+([0-9]{1,6}\.[0-9]{1,6})([^0-9].*)?$/\1/p' \
+    <<<"$version_output"
 }
 
-redis_version_from_binary() {
-  local binary="$1"
-  LC_ALL=C "$binary" --version \
-    | sed -nE 's/^Redis server v=([^ ]+).*/\1/p' \
-    | head -n 1
-}
+run_unprivileged() (
+  cd / || return 1
+  exec setpriv \
+    --reuid 65534 --regid 65534 --clear-groups --no-new-privs \
+    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+    env -i \
+      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+      HOME=/nonexistent LANG=C LC_ALL=C USER=nobody LOGNAME=nobody \
+      "$@"
+)
+
+run_as_redis_user() (
+  local uid gid
+  uid="$(id -u "$REDIS_USER")"
+  gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
+  cd / || return 1
+  exec setpriv \
+    --reuid "$uid" --regid "$gid" --clear-groups --no-new-privs \
+    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+    env -i \
+      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+      HOME=/usr/local/redis/data LANG=C LC_ALL=C USER=redis LOGNAME=redis \
+      "$@"
+)
 
 preflight_package_compatibility() {
   local package_root="$1"
@@ -245,7 +729,8 @@ preflight_package_compatibility() {
     fi
   fi
 
-  if ! binary_output="$(LC_ALL=C "$package_root/bin/redis-server" --version 2>&1)"; then
+  if ! binary_output="$(LC_ALL=C run_unprivileged \
+    "$package_root/bin/redis-server" --version 2>&1)"; then
     die_message binary_failed "$binary_output"
   fi
   binary_version="$(sed -nE 's/^Redis server v=([^ ]+).*/\1/p' <<<"$binary_output" | head -n 1)"
@@ -263,20 +748,39 @@ require_systemd_runtime() {
 }
 
 service_fragment_path() {
-  systemctl show --property=FragmentPath --value "$REDIS_SERVICE_NAME" 2>/dev/null || true
+  local load_state fragment listed_units
+  if ! load_state="$(systemctl show \
+    --property=LoadState --value "$REDIS_SERVICE_NAME" 2>/dev/null)"; then
+    [[ "$load_state" == "not-found" ]] && return 0
+    listed_units="$(LC_ALL=C systemctl list-unit-files \
+      --no-legend --no-pager "$REDIS_SERVICE_NAME" 2>/dev/null)" || return 1
+    [[ -z "$listed_units" ]] && return 0
+    return 1
+  fi
+  [[ "$load_state" == "not-found" ]] && return 0
+  [[ "$load_state" == "loaded" ]] || return 1
+  fragment="$(systemctl show \
+    --property=FragmentPath --value "$REDIS_SERVICE_NAME")"
+  [[ -n "$fragment" ]] || return 1
+  printf '%s\n' "$fragment"
 }
 
 unit_file_is_managed() {
   local unit_file="$1"
-  [[ -f "$unit_file" ]] \
-    && grep -Fqx "$REDIS_UNIT_MARKER" "$unit_file" \
-    && grep -Eq '^ExecStart=/usr/local/redis/bin/redis-server([[:space:]]|$)' "$unit_file"
+  unit_file_matches_contract "$unit_file"
+}
+
+validate_service_override_path() {
+  if [[ -e "$REDIS_SERVICE_UNIT" || -L "$REDIS_SERVICE_UNIT" ]]; then
+    assert_root_owned_regular_file "$REDIS_SERVICE_UNIT"
+  fi
 }
 
 assert_service_slot_available() {
   local force_service="$1"
   local fragment_path
 
+  validate_service_override_path
   if [[ -f "$REDIS_SERVICE_UNIT" ]] \
     && ! unit_file_is_managed "$REDIS_SERVICE_UNIT"; then
     if [[ "$force_service" == true ]]; then
@@ -304,33 +808,35 @@ ACCOUNT_CREATED_USER=false
 ACCOUNT_CREATED_GROUP=false
 
 load_account_ownership_from_state() {
-  local recorded_uid recorded_gid current_uid current_gid
+  local state_format recorded_uid recorded_gid recorded_home recorded_shell
+  local current_uid current_gid
 
   if managed_install_exists; then
-    if [[ "$(state_value CREATED_USER)" == "1" ]]; then
-      recorded_uid="$(state_value REDIS_UID)"
-      if id "$REDIS_USER" >/dev/null 2>&1; then
-        current_uid="$(id -u "$REDIS_USER")"
-        if [[ -n "$recorded_uid" && "$current_uid" == "$recorded_uid" ]]; then
-          ACCOUNT_CREATED_USER=true
-        else
-          warn "The redis user UID changed; package ownership was cleared. / redis 用户 UID 已变化，不再视为本项目创建。"
-        fi
-      else
+    state_format="$(state_value STATE_FORMAT)"
+    recorded_uid="$(state_value REDIS_UID)"
+    recorded_gid="$(state_value REDIS_GID)"
+    id "$REDIS_USER" >/dev/null 2>&1 \
+      || die_message account_invalid "$REDIS_USER (recorded UID $recorded_uid)"
+    getent group "$REDIS_GROUP" >/dev/null 2>&1 \
+      || die_message account_invalid "$REDIS_GROUP (recorded GID $recorded_gid)"
+    current_uid="$(id -u "$REDIS_USER")"
+    current_gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
+    [[ "$current_uid" == "$recorded_uid" && "$current_gid" == "$recorded_gid" ]] \
+      || die_message account_invalid \
+        "$REDIS_USER:$REDIS_GROUP (expected $recorded_uid:$recorded_gid, found $current_uid:$current_gid)"
+    validate_redis_account_security
+
+    if [[ "$state_format" == 3 ]]; then
+      recorded_home="$(state_value REDIS_HOME)"
+      recorded_shell="$(state_value REDIS_SHELL)"
+      redis_account_matches_recorded_identity \
+        "$recorded_uid" "$recorded_gid" "$recorded_home" "$recorded_shell" \
+        || die_message account_invalid \
+          "$REDIS_USER (recorded home, shell, or supplementary groups changed)"
+      if [[ "$(state_value CREATED_USER)" == "1" ]]; then
         ACCOUNT_CREATED_USER=true
       fi
-    fi
-
-    if [[ "$(state_value CREATED_GROUP)" == "1" ]]; then
-      recorded_gid="$(state_value REDIS_GID)"
-      if getent group "$REDIS_GROUP" >/dev/null 2>&1; then
-        current_gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
-        if [[ -n "$recorded_gid" && "$current_gid" == "$recorded_gid" ]]; then
-          ACCOUNT_CREATED_GROUP=true
-        else
-          warn "The redis group GID changed; package ownership was cleared. / redis 用户组 GID 已变化，不再视为本项目创建。"
-        fi
-      else
+      if [[ "$(state_value CREATED_GROUP)" == "1" ]]; then
         ACCOUNT_CREATED_GROUP=true
       fi
     fi
@@ -338,14 +844,102 @@ load_account_ownership_from_state() {
   return 0
 }
 
+validate_redis_account_security() {
+  local passwd_entry account_name account_password account_uid account_gid
+  local account_gecos account_home account_shell redis_gid membership_gid
+  local membership_output
+  local -a membership_gids=()
+
+  passwd_entry="$(getent passwd "$REDIS_USER")" \
+    || die_message account_invalid "$REDIS_USER"
+  [[ "$passwd_entry" != *$'\n'* ]] \
+    || die_message account_invalid "$REDIS_USER"
+  IFS=: read -r \
+    account_name account_password account_uid account_gid \
+    account_gecos account_home account_shell <<<"$passwd_entry"
+  redis_gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
+
+  [[ "$account_name" == "$REDIS_USER" \
+    && "$account_uid" =~ ^[1-9][0-9]*$ \
+    && "$account_gid" == "$redis_gid" \
+    && "$redis_gid" =~ ^[1-9][0-9]*$ ]] \
+    || die_message account_invalid "$REDIS_USER"
+  [[ "$account_home" =~ ^/[A-Za-z0-9._/-]+$ \
+    && "$account_home" != *//* \
+    && "$account_home" != */./* \
+    && "$account_home" != */../* \
+    && "$account_home" != */. \
+    && "$account_home" != */.. ]] \
+    || die_message account_invalid "$REDIS_USER"
+  case "$account_shell" in
+    /sbin/nologin|/usr/sbin/nologin|/usr/bin/nologin|/bin/false|/usr/bin/false) ;;
+    *) die_message account_invalid "$REDIS_USER" ;;
+  esac
+  membership_output="$(id -G "$REDIS_USER")" \
+    || die_message account_invalid "$REDIS_USER"
+  read -r -a membership_gids <<<"$membership_output"
+  ((${#membership_gids[@]} > 0)) \
+    || die_message account_invalid "$REDIS_USER"
+  for membership_gid in "${membership_gids[@]}"; do
+    [[ "$membership_gid" == "$redis_gid" ]] \
+      || die_message account_invalid "$REDIS_USER"
+  done
+}
+
+redis_account_matches_recorded_identity() {
+  local expected_uid="$1" expected_gid="$2"
+  local expected_home="$3" expected_shell="$4"
+  local passwd_entry account_name account_password account_uid account_gid
+  local account_gecos account_home account_shell extra membership_output
+  local -a membership_gids=()
+
+  [[ "$expected_uid" =~ ^[1-9][0-9]*$ \
+    && "$expected_gid" =~ ^[1-9][0-9]*$ \
+    && -n "$expected_home" && -n "$expected_shell" ]] || return 1
+  case "$expected_shell" in
+    /sbin/nologin|/usr/sbin/nologin|/usr/bin/nologin|/bin/false|/usr/bin/false) ;;
+    *) return 1 ;;
+  esac
+  passwd_entry="$(getent passwd "$REDIS_USER")" || return 1
+  [[ -n "$passwd_entry" && "$passwd_entry" != *$'\n'* ]] || return 1
+  IFS=: read -r \
+    account_name account_password account_uid account_gid \
+    account_gecos account_home account_shell extra <<<"$passwd_entry"
+  [[ -z "$extra" && "$account_name" == "$REDIS_USER" \
+    && "$account_uid" == "$expected_uid" \
+    && "$account_gid" == "$expected_gid" \
+    && "$account_home" == "$expected_home" \
+    && "$account_shell" == "$expected_shell" ]] || return 1
+  membership_output="$(id -G "$REDIS_USER")" || return 1
+  read -r -a membership_gids <<<"$membership_output"
+  [[ ${#membership_gids[@]} -eq 1 \
+    && "${membership_gids[0]}" == "$expected_gid" ]]
+}
+
+redis_group_matches_recorded_identity() {
+  local expected_gid="$1"
+  local group_entry group_name group_password group_gid group_members extra
+
+  [[ "$expected_gid" =~ ^[1-9][0-9]*$ ]] || return 1
+  group_entry="$(getent group "$REDIS_GROUP")" || return 1
+  [[ -n "$group_entry" && "$group_entry" != *$'\n'* ]] || return 1
+  IFS=: read -r \
+    group_name group_password group_gid group_members extra <<<"$group_entry"
+  [[ -z "$extra" && "$group_name" == "$REDIS_GROUP" \
+    && "$group_gid" == "$expected_gid" \
+    && ( -z "$group_members" || "$group_members" == "$REDIS_USER" ) ]]
+}
+
 ensure_redis_account() {
-  local nologin_shell
+  local nologin_shell uid gid
 
   if ! getent group "$REDIS_GROUP" >/dev/null 2>&1; then
     groupadd --system "$REDIS_GROUP"
     ACCOUNT_CREATED_GROUP=true
     info_message group_created "$REDIS_GROUP"
   fi
+  gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
+  [[ "$gid" =~ ^[1-9][0-9]*$ ]] || die_message account_invalid "$REDIS_GROUP"
 
   if ! id "$REDIS_USER" >/dev/null 2>&1; then
     nologin_shell="$(command -v nologin || true)"
@@ -360,10 +954,13 @@ ensure_redis_account() {
     ACCOUNT_CREATED_USER=true
     info_message user_created "$REDIS_USER"
   fi
+  uid="$(id -u "$REDIS_USER")"
+  [[ "$uid" =~ ^[1-9][0-9]*$ ]] || die_message account_invalid "$REDIS_USER"
+  validate_redis_account_security
 }
 
 prepare_runtime_layout() {
-  install -d -m 0755 "$REDIS_INSTALL_PREFIX"
+  install -d -o root -g root -m 0755 "$REDIS_INSTALL_PREFIX"
   install -d -o "$REDIS_USER" -g "$REDIS_GROUP" -m 0750 \
     "$REDIS_INSTALL_PREFIX/data"
   chown "$REDIS_USER:$REDIS_GROUP" "$REDIS_INSTALL_PREFIX/data"
@@ -380,7 +977,7 @@ prepare_runtime_layout() {
 
 install_default_configs() {
   local package_root="$1"
-  local config_file
+  local config_file redis_config_created=false temporary_config
 
   install -d -o root -g "$REDIS_GROUP" -m 0750 "$REDIS_INSTALL_PREFIX/conf"
   for config_file in redis.conf sentinel.conf; do
@@ -389,16 +986,48 @@ install_default_configs() {
         "$package_root/conf/$config_file" \
         "$REDIS_INSTALL_PREFIX/conf/$config_file"
       if [[ "$config_file" == "redis.conf" ]]; then
-        if grep -Eq '^dir[[:space:]]+' "$REDIS_INSTALL_PREFIX/conf/redis.conf"; then
-          sed -i -E 's|^dir[[:space:]]+.*$|dir /usr/local/redis/data|' \
-            "$REDIS_INSTALL_PREFIX/conf/redis.conf"
-        else
-          printf '\ndir /usr/local/redis/data\n' \
-            >>"$REDIS_INSTALL_PREFIX/conf/redis.conf"
-        fi
+        redis_config_created=true
       fi
     fi
   done
+
+  if [[ "$redis_config_created" == true ]]; then
+    temporary_config="$(mktemp \
+      "$REDIS_INSTALL_PREFIX/conf/.redis.conf.tmp.XXXXXX")"
+    awk -v data_dir="$REDIS_INSTALL_PREFIX/data" -v socket="$REDIS_LOCAL_SOCKET" '
+      BEGIN { port_seen = socket_seen = socket_mode_seen = data_seen = 0 }
+      /^[[:space:]]*#/ { print; next }
+      {
+        key = tolower($1)
+        if (key == "port") {
+          if (!port_seen++) print "port 0"
+          next
+        }
+        if (key == "unixsocket") {
+          if (!socket_seen++) print "unixsocket " socket
+          next
+        }
+        if (key == "unixsocketperm") {
+          if (!socket_mode_seen++) print "unixsocketperm 0770"
+          next
+        }
+        if (key == "dir") {
+          if (!data_seen++) print "dir " data_dir
+          next
+        }
+        print
+      }
+      END {
+        if (!port_seen) print "port 0"
+        if (!socket_seen) print "unixsocket " socket
+        if (!socket_mode_seen) print "unixsocketperm 0770"
+        if (!data_seen) print "dir " data_dir
+      }
+    ' "$REDIS_INSTALL_PREFIX/conf/redis.conf" >"$temporary_config"
+    chown root:"$REDIS_GROUP" "$temporary_config"
+    chmod 0640 "$temporary_config"
+    mv -fT "$temporary_config" "$REDIS_INSTALL_PREFIX/conf/redis.conf"
+  fi
 }
 
 install_service_unit() {
@@ -409,21 +1038,497 @@ install_service_unit() {
   systemctl daemon-reload
 }
 
-wait_for_service() {
-  local attempt
-  for attempt in {1..15}; do
-    if systemctl is-active --quiet "$REDIS_SERVICE_NAME"; then
+effective_unit_text_matches_contract() {
+  local effective_unit="$1"
+  local expected_exec_start expected_lifecycle_line lifecycle_directive
+  local unsafe_context_pattern
+
+  expected_exec_start='ExecStart=/usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf --daemonize no'
+  unsafe_context_pattern='^[[:space:]]*(Environment|EnvironmentFile|PassEnvironment|RootDirectory|RootDirectoryStartOnly|RootImage|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|MountImages|ExtensionImages|StandardInput|StandardInputText|StandardInputData|StandardOutput|StandardError|OpenFile|LoadCredential|LoadCredentialEncrypted|ImportCredential|SetCredential|SetCredentialEncrypted)[[:space:]]*='
+
+  [[ "$(grep -Ec \
+    '^[[:space:]]*ExecStart[[:space:]]*=' <<<"$effective_unit")" == "1" ]] \
+    || return 1
+  [[ "$(grep -Fxc "$expected_exec_start" <<<"$effective_unit")" == "1" ]] \
+    || return 1
+  for expected_lifecycle_line in \
+    Type=simple \
+    KillSignal=SIGTERM \
+    KillMode=control-group \
+    SendSIGKILL=yes \
+    RemainAfterExit=no; do
+    lifecycle_directive="${expected_lifecycle_line%%=*}"
+    [[ "$(grep -Ec \
+      "^[[:space:]]*${lifecycle_directive}[[:space:]]*=" \
+      <<<"$effective_unit")" == 1 ]] || return 1
+    [[ "$(grep -Fxc "$expected_lifecycle_line" <<<"$effective_unit")" == 1 ]] \
+      || return 1
+  done
+  ! grep -Eq "$unsafe_context_pattern" <<<"$effective_unit"
+}
+
+service_enablement_link_targets_unit() {
+  local link_path="$1" expected_unit="$2" link_target normalized_target
+  [[ -L "$link_path" ]] || return 1
+  link_target="$(readlink -- "$link_path")" || return 1
+  if [[ "$link_target" == /* ]]; then
+    normalized_target="$(realpath -m -- "$link_target")" || return 1
+  else
+    normalized_target="$(realpath -m -- \
+      "$(dirname -- "$link_path")/$link_target")" || return 1
+  fi
+  [[ "$normalized_target" == "$expected_unit" ]]
+}
+
+remove_stale_managed_service_enablement_links() {
+  local link_path link_directory directory_name
+
+  assert_no_symlink_path_components /etc/systemd/system
+  assert_strict_root_path_chain /etc/systemd/system
+  while IFS= read -r -d '' link_path; do
+    link_directory="$(dirname -- "$link_path")"
+    directory_name="${link_directory##*/}"
+    case "$directory_name" in
+      *.wants|*.requires) ;;
+      *) continue ;;
+    esac
+    assert_no_symlink_path_components "$link_directory"
+    assert_strict_root_path_chain "$link_directory"
+    if [[ "$(stat -c '%u:%g' -h -- "$link_path")" != "0:0" ]]; then
+      warn "Preserving non-root service enablement link: $link_path"
+      continue
+    fi
+    if service_enablement_link_targets_unit \
+      "$link_path" "$REDIS_SERVICE_UNIT"; then
+      rm -f -- "$link_path"
+    else
+      warn "Preserving third-party service enablement link: $link_path"
+    fi
+  done < <(find -P /etc/systemd/system -xdev -mindepth 2 -maxdepth 2 \
+    -type l -name "$REDIS_SERVICE_NAME" -print0)
+}
+
+validate_effective_service_contract() {
+  local fragment user group working_directory no_new_privileges exec_start
+  local exec_condition exec_reload exec_start_pre exec_start_post
+  local exec_stop exec_stop_post ambient_capabilities supplementary_groups dynamic_user
+  local expected_argv path_count exec_path exec_argv
+  local effective_unit effective_unit_safe=false drop_in_paths drop_in_path
+  local root_directory root_image bind_paths bind_read_only_paths
+  local temporary_file_system environment environment_files pass_environment
+  local standard_input standard_output standard_error umask_value
+  local service_type kill_mode kill_signal send_sigkill remain_after_exit
+  local -a effective_drop_in_paths=()
+
+  fragment="$(systemctl show --property=FragmentPath --value "$REDIS_SERVICE_NAME")"
+  [[ "$fragment" == "$REDIS_SERVICE_UNIT" ]] \
+    || die_message unit_conflict "$REDIS_SERVICE_NAME effective unit"
+  assert_no_symlink_path_components "$fragment"
+  assert_strict_root_path_chain "$(dirname -- "$fragment")"
+  assert_root_owned_regular_file "$fragment"
+  user="$(systemctl show --property=User --value "$REDIS_SERVICE_NAME")"
+  group="$(systemctl show --property=Group --value "$REDIS_SERVICE_NAME")"
+  working_directory="$(systemctl show --property=WorkingDirectory --value "$REDIS_SERVICE_NAME")"
+  no_new_privileges="$(systemctl show --property=NoNewPrivileges --value "$REDIS_SERVICE_NAME")"
+  exec_start="$(systemctl show --property=ExecStart --value "$REDIS_SERVICE_NAME")"
+  exec_condition="$(systemctl show --property=ExecCondition --value "$REDIS_SERVICE_NAME")"
+  exec_reload="$(systemctl show --property=ExecReload --value "$REDIS_SERVICE_NAME")"
+  exec_start_pre="$(systemctl show --property=ExecStartPre --value "$REDIS_SERVICE_NAME")"
+  exec_start_post="$(systemctl show --property=ExecStartPost --value "$REDIS_SERVICE_NAME")"
+  exec_stop="$(systemctl show --property=ExecStop --value "$REDIS_SERVICE_NAME")"
+  exec_stop_post="$(systemctl show --property=ExecStopPost --value "$REDIS_SERVICE_NAME")"
+  ambient_capabilities="$(systemctl show \
+    --property=AmbientCapabilities --value "$REDIS_SERVICE_NAME")"
+  supplementary_groups="$(systemctl show \
+    --property=SupplementaryGroups --value "$REDIS_SERVICE_NAME")"
+  dynamic_user="$(systemctl show --property=DynamicUser --value "$REDIS_SERVICE_NAME")"
+  root_directory="$(systemctl show \
+    --property=RootDirectory --value "$REDIS_SERVICE_NAME")"
+  root_image="$(systemctl show --property=RootImage --value "$REDIS_SERVICE_NAME")"
+  bind_paths="$(systemctl show --property=BindPaths --value "$REDIS_SERVICE_NAME")"
+  bind_read_only_paths="$(systemctl show \
+    --property=BindReadOnlyPaths --value "$REDIS_SERVICE_NAME")"
+  temporary_file_system="$(systemctl show \
+    --property=TemporaryFileSystem --value "$REDIS_SERVICE_NAME")"
+  environment="$(systemctl show --property=Environment --value "$REDIS_SERVICE_NAME")"
+  environment_files="$(systemctl show \
+    --property=EnvironmentFiles --value "$REDIS_SERVICE_NAME")"
+  pass_environment="$(systemctl show \
+    --property=PassEnvironment --value "$REDIS_SERVICE_NAME")"
+  standard_input="$(systemctl show \
+    --property=StandardInput --value "$REDIS_SERVICE_NAME")"
+  standard_output="$(systemctl show \
+    --property=StandardOutput --value "$REDIS_SERVICE_NAME")"
+  standard_error="$(systemctl show \
+    --property=StandardError --value "$REDIS_SERVICE_NAME")"
+  umask_value="$(systemctl show --property=UMask --value "$REDIS_SERVICE_NAME")"
+  service_type="$(systemctl show --property=Type --value "$REDIS_SERVICE_NAME")"
+  kill_mode="$(systemctl show --property=KillMode --value "$REDIS_SERVICE_NAME")"
+  kill_signal="$(systemctl show --property=KillSignal --value "$REDIS_SERVICE_NAME")"
+  send_sigkill="$(systemctl show --property=SendSIGKILL --value "$REDIS_SERVICE_NAME")"
+  remain_after_exit="$(systemctl show \
+    --property=RemainAfterExit --value "$REDIS_SERVICE_NAME")"
+  expected_argv="/usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf --daemonize no"
+  effective_unit="$(LC_ALL=C systemctl cat "$REDIS_SERVICE_NAME")"
+  if effective_unit_text_matches_contract "$effective_unit"; then
+    effective_unit_safe=true
+  fi
+  path_count="$(grep -o 'path=' <<<"$exec_start" | wc -l)"
+  exec_path="$(sed -nE \
+    's/^[[:space:]]*\{ path=([^ ;]+) ; argv\[\]=.*$/\1/p' <<<"$exec_start")"
+  exec_argv="$(sed -nE \
+    's/^[[:space:]]*\{ path=[^;]+ ; argv\[\]=([^;]*) ;.*$/\1/p' <<<"$exec_start")"
+  exec_argv="${exec_argv%"${exec_argv##*[![:space:]]}"}"
+
+  # ExecStart's D-Bus representation does not expose every command prefix on
+  # older systemd releases.  Requiring exactly the package's one source-level
+  # definition also rejects drop-in resets using '+', '!', '@', or extra
+  # arguments.  Reject execution-context directives that can remap the
+  # absolute binary/config paths, inject code or credentials, or make PID 1
+  # open attacker-selected files for the service.
+  drop_in_paths="$(systemctl show \
+    --property=DropInPaths --value "$REDIS_SERVICE_NAME")"
+  read -r -a effective_drop_in_paths <<<"$drop_in_paths"
+  for drop_in_path in "${effective_drop_in_paths[@]}"; do
+    assert_no_symlink_path_components "$drop_in_path"
+    assert_strict_root_path_chain "$(dirname -- "$drop_in_path")"
+    assert_root_owned_regular_file "$drop_in_path"
+  done
+
+  [[ "$fragment" == "$REDIS_SERVICE_UNIT" \
+    && "$user" == "$REDIS_USER" \
+    && "$group" == "$REDIS_GROUP" \
+    && "$working_directory" == "$REDIS_INSTALL_PREFIX" \
+    && ( "$no_new_privileges" == "yes" || "$no_new_privileges" == "true" ) \
+    && "$path_count" == "1" \
+    && "$exec_path" == "/usr/local/redis/bin/redis-server" \
+    && "$exec_argv" == "$expected_argv" \
+    && "$effective_unit_safe" == true \
+    && -z "$exec_condition" \
+    && -z "$exec_reload" \
+    && -z "$exec_start_pre" \
+    && -z "$exec_start_post" \
+    && -z "$exec_stop" \
+    && -z "$exec_stop_post" \
+    && -z "$ambient_capabilities" \
+    && -z "$supplementary_groups" \
+    && ( "$dynamic_user" == "no" || "$dynamic_user" == "false" ) \
+    && -z "$root_directory" \
+    && -z "$root_image" \
+    && -z "$bind_paths" \
+    && -z "$bind_read_only_paths" \
+    && -z "$temporary_file_system" \
+    && -z "$environment" \
+    && -z "$environment_files" \
+    && -z "$pass_environment" \
+    && "$standard_input" == "null" \
+    && "$standard_output" == "journal" \
+    && ( "$standard_error" == "inherit" || "$standard_error" == "journal" ) \
+    && "$umask_value" == "0077" \
+    && "$service_type" == simple \
+    && "$kill_mode" == control-group \
+    && ( "$kill_signal" == SIGTERM || "$kill_signal" == 15 ) \
+    && ( "$send_sigkill" == yes || "$send_sigkill" == true ) \
+    && ( "$remain_after_exit" == no || "$remain_after_exit" == false ) ]] \
+    || die_message unit_conflict "$REDIS_SERVICE_NAME effective unit"
+}
+
+assert_strict_root_path_chain() {
+  local current="$1" owner mode mode_value metadata
+  while :; do
+    [[ -d "$current" && ! -L "$current" ]] \
+      || die_message unsafe_path "$current"
+    metadata="$(stat -c '%u %a' -- "$current")"
+    read -r owner mode <<<"$metadata"
+    [[ "$owner" == "0" && "$mode" =~ ^[0-7]{3,4}$ ]] \
+      || die_message unsafe_path "$current"
+    mode_value=$((8#$mode))
+    (( (mode_value & 0022) == 0 )) || die_message unsafe_path "$current"
+    assert_no_extended_acl "$current"
+    [[ "$current" == / ]] && break
+    current="$(dirname -- "$current")"
+  done
+}
+
+assert_no_symlink_path_components() {
+  local path="$1" component current=""
+  local -a components=()
+
+  [[ "$path" == /* \
+    && "$path" != / \
+    && "$path" != */ \
+    && "$path" != *//* \
+    && "$path" != */./* \
+    && "$path" != */../* \
+    && "$path" != */. \
+    && "$path" != */.. ]] \
+    || die_message unsafe_path "$path"
+
+  IFS=/ read -r -a components <<<"${path#/}"
+  for component in "${components[@]}"; do
+    [[ -n "$component" && "$component" != . && "$component" != .. ]] \
+      || die_message unsafe_path "$path"
+    current="$current/$component"
+    [[ ! -L "$current" ]] || die_message unsafe_path "$current"
+  done
+}
+
+resolve_trusted_config_file() {
+  local reference="$1" base_root="${2:-$REDIS_INSTALL_PREFIX}" candidate resolved
+  [[ -n "$reference" \
+    && "$reference" != *[[:space:]]* \
+    && "$reference" != *'*'* \
+    && "$reference" != *'?'* \
+    && "$reference" != *'['* \
+    && "$reference" != *'\\'* ]] \
+    || die_message unsafe_config_reference "$reference"
+  if [[ "$reference" == /* ]]; then
+    candidate="$reference"
+  else
+    candidate="$base_root/$reference"
+  fi
+  assert_no_symlink_path_components "$candidate"
+  assert_strict_root_path_chain "$(dirname -- "$candidate")"
+  assert_root_owned_regular_file "$candidate"
+  resolved="$(realpath -e -- "$candidate" 2>/dev/null)" \
+    || die_message unsafe_config_reference "$reference"
+  [[ "$resolved" == "$candidate" ]] \
+    || die_message unsafe_config_reference "$reference"
+  printf '%s\n' "$resolved"
+}
+
+validate_redis_config_trust() {
+  local initial_config="$1" config line directive reference remainder resolved quote
+  local inspected=0
+  local -a pending=("$initial_config")
+  declare -A visited=()
+
+  while ((${#pending[@]} > 0)); do
+    config="${pending[0]}"
+    pending=("${pending[@]:1}")
+    resolved="$(resolve_trusted_config_file "$config")"
+    [[ -z "${visited[$resolved]:-}" ]] || continue
+    visited[$resolved]=1
+    ((++inspected <= 64)) || die_message unsafe_config_reference "$resolved"
+
+    while IFS= read -r line; do
+      read -r directive reference remainder <<<"$line"
+      [[ -n "${reference:-}" ]] \
+        || die_message unsafe_config_reference "$resolved"
+      if [[ "${reference:0:1}" == '"' || "${reference:0:1}" == "'" ]]; then
+        quote="${reference:0:1}"
+        [[ "${reference: -1}" == "$quote" && "${#reference}" -ge 2 ]] \
+          || die_message unsafe_config_reference "$reference"
+        reference="${reference:1:${#reference}-2}"
+      elif [[ "$reference" == *'"'* || "$reference" == *"'"* ]]; then
+        die_message unsafe_config_reference "$reference"
+      fi
+      case "$directive" in
+        include)
+          [[ -z "${remainder:-}" ]] \
+            || die_message unsafe_config_reference "$reference"
+          pending+=("$(resolve_trusted_config_file "$reference")")
+          ;;
+        loadmodule)
+          resolve_trusted_config_file "$reference" >/dev/null
+          ;;
+        aclfile)
+          [[ -z "${remainder:-}" ]] \
+            || die_message unsafe_config_reference "$reference"
+          resolve_trusted_config_file "$reference" >/dev/null
+          ;;
+      esac
+    done < <(awk '
+      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+      {
+        directive = tolower($1)
+        if (directive == "include" || directive == "loadmodule" || directive == "aclfile") {
+          $1 = ""
+          sub(/^[[:space:]]+/, "")
+          print directive " " $0
+        }
+      }
+    ' "$resolved")
+  done
+}
+
+redis_config_value() {
+  local config_file="$1"
+  local key="$2"
+  awk -v wanted="$key" '
+    /^[[:space:]]*#/ { next }
+    tolower($1) == wanted {
+      $1 = ""
+      sub(/^[[:space:]]+/, "")
+      value = $0
+    }
+    END { print value }
+  ' "$config_file"
+}
+
+_redis_effective_config_walk() {
+  local config_file="$1" wanted="$2" base_root="$3"
+  local resolved record record_type payload reference remainder quote records_text
+  local -a config_records=()
+
+  resolved="$(resolve_trusted_config_file "$config_file" "$base_root")"
+  [[ -z "${effective_config_active[$resolved]:-}" ]] \
+    || die_message unsafe_config_reference "$resolved"
+  ((++effective_config_inspected <= 64)) \
+    || die_message unsafe_config_reference "$resolved"
+  effective_config_active[$resolved]=1
+
+  records_text="$(awk -v wanted="$wanted" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      directive = tolower($1)
+      if (directive == "include") {
+        $1 = ""
+        sub(/^[[:space:]]+/, "")
+        print "include\t" $0
+      } else if (directive == wanted) {
+        $1 = ""
+        sub(/^[[:space:]]+/, "")
+        print "value\t" $0
+      }
+    }
+  ' "$resolved")"
+  if [[ -n "$records_text" ]]; then
+    mapfile -t config_records <<<"$records_text"
+  fi
+  for record in "${config_records[@]}"; do
+    record_type="${record%%$'\t'*}"
+    payload="${record#*$'\t'}"
+    if [[ "$record_type" == include ]]; then
+      read -r reference remainder <<<"$payload"
+      [[ -n "${reference:-}" && -z "${remainder:-}" ]] \
+        || die_message unsafe_config_reference "$payload"
+      if [[ "${reference:0:1}" == '"' || "${reference:0:1}" == "'" ]]; then
+        quote="${reference:0:1}"
+        [[ "${reference: -1}" == "$quote" && "${#reference}" -ge 2 ]] \
+          || die_message unsafe_config_reference "$reference"
+        reference="${reference:1:${#reference}-2}"
+      elif [[ "$reference" == *'"'* || "$reference" == *"'"* ]]; then
+        die_message unsafe_config_reference "$reference"
+      fi
+      _redis_effective_config_walk "$reference" "$wanted" "$base_root"
+    else
+      effective_config_value="$payload"
+    fi
+  done
+  unset 'effective_config_active[$resolved]'
+}
+
+redis_effective_config_value() {
+  local config_file="$1" wanted="$2"
+  local base_root="${3:-$REDIS_INSTALL_PREFIX}"
+  local effective_config_value="" effective_config_inspected=0
+  local -A effective_config_active=()
+
+  _redis_effective_config_walk "$config_file" "$wanted" "$base_root"
+  printf '%s\n' "$effective_config_value"
+}
+
+normalize_config_scalar() {
+  local value="$1"
+  if ((${#value} >= 2)) \
+    && [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s\n' "$value"
+}
+
+redis_protocol_ready() {
+  local redis_root="${1:-$REDIS_INSTALL_PREFIX}"
+  local config_file="$redis_root/conf/redis.conf"
+  local unix_socket port bind_value candidate output
+  local -a bind_targets cli configured_bind_targets
+
+  [[ -x "$redis_root/bin/redis-cli" && -f "$config_file" ]] || return 1
+  unix_socket="$(normalize_config_scalar "$(
+    redis_effective_config_value "$config_file" unixsocket "$redis_root"
+  )")"
+  if [[ -n "$unix_socket" ]]; then
+    if [[ "$unix_socket" != /* ]]; then
+      unix_socket="$redis_root/$unix_socket"
+    fi
+    cli=("$redis_root/bin/redis-cli" -s "$unix_socket")
+    output="$(LC_ALL=C run_as_redis_user timeout 3 "${cli[@]}" PING 2>&1 || true)"
+    [[ "$output" == "PONG" || "$output" == *NOAUTH* || "$output" == *NOPERM* ]]
+    return
+  fi
+
+  read -r port _ <<<"$(
+    redis_effective_config_value "$config_file" port "$redis_root"
+  )"
+  [[ -n "${port:-}" ]] || port=6379
+  [[ "$port" =~ ^[0-9]+$ && "$port" -gt 0 && "$port" -le 65535 ]] || return 1
+
+  bind_targets=()
+  bind_value="$(redis_effective_config_value "$config_file" bind "$redis_root")"
+  read -r -a configured_bind_targets <<<"$bind_value"
+  if ((${#configured_bind_targets[@]} == 0)); then
+    configured_bind_targets=(127.0.0.1)
+  fi
+  for candidate in "${configured_bind_targets[@]}"; do
+    candidate="${candidate#-}"
+    case "$candidate" in
+      "") ;;
+      127.0.0.1) bind_targets+=(127.0.0.1) ;;
+      "*"|0.0.0.0) bind_targets+=(127.0.0.1) ;;
+      "::*"|::) bind_targets+=(::1) ;;
+      *) bind_targets+=("$candidate") ;;
+    esac
+  done
+
+  for candidate in "${bind_targets[@]}"; do
+    cli=("$redis_root/bin/redis-cli" -h "$candidate" -p "$port")
+    output="$(LC_ALL=C run_as_redis_user timeout 3 "${cli[@]}" PING 2>&1 || true)"
+    if [[ "$output" == "PONG" || "$output" == *NOAUTH* || "$output" == *NOPERM* ]]; then
       return 0
+    fi
+  done
+  return 1
+}
+
+wait_for_service() {
+  local attempt active_seen=false main_pid confirmed_pid
+  for attempt in {1..30}; do
+    if systemctl is-active --quiet "$REDIS_SERVICE_NAME"; then
+      active_seen=true
+      main_pid="$(systemctl show --property=MainPID --value "$REDIS_SERVICE_NAME")"
+      if [[ "$main_pid" =~ ^[1-9][0-9]*$ \
+        && "$(readlink -f -- "/proc/$main_pid/exe" 2>/dev/null || true)" \
+          == "$REDIS_INSTALL_PREFIX/bin/redis-server" ]] \
+        && redis_protocol_ready; then
+        confirmed_pid="$main_pid"
+        sleep 1
+        main_pid="$(systemctl show --property=MainPID --value "$REDIS_SERVICE_NAME")"
+        if [[ "$main_pid" == "$confirmed_pid" ]] \
+          && systemctl is-active --quiet "$REDIS_SERVICE_NAME" \
+          && redis_protocol_ready; then
+          return 0
+        fi
+      fi
     fi
     sleep 1
   done
-  die_message service_failed "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME"
+  if [[ "$active_seen" == true ]]; then
+    printf '[redis-package] ERROR: %s\n' \
+      "$(message service_unready "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
+    return 1
+  fi
+  printf '[redis-package] ERROR: %s\n' \
+    "$(message service_failed "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
+  return 1
 }
 
 write_install_state() {
   local package_root="$1"
   local service_manager="$2"
   local temporary_state installed_at created_user created_group uid_value gid_value
+  local passwd_entry account_name account_password account_uid account_gid
+  local account_gecos account_home account_shell
 
   installed_at="$(state_value INSTALLED_AT)"
   [[ -n "$installed_at" ]] || installed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -433,27 +1538,42 @@ write_install_state() {
   [[ "$ACCOUNT_CREATED_GROUP" == true ]] && created_group=1
   uid_value="$(id -u "$REDIS_USER")"
   gid_value="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
-  temporary_state="$REDIS_INSTALL_PREFIX/.redis-package-state.tmp.$$"
+  passwd_entry="$(getent passwd "$REDIS_USER")" \
+    || die_message account_invalid "$REDIS_USER"
+  IFS=: read -r \
+    account_name account_password account_uid account_gid \
+    account_gecos account_home account_shell <<<"$passwd_entry"
+  [[ "$account_name" == "$REDIS_USER" \
+    && "$account_uid" == "$uid_value" \
+    && "$account_gid" == "$gid_value" ]] \
+    || die_message account_invalid "$REDIS_USER"
+  temporary_state="$(mktemp "$REDIS_INSTALL_PREFIX/.redis-package-state.tmp.XXXXXX")"
 
   (
     umask 077
     {
-      printf 'STATE_FORMAT=1\n'
+      printf 'STATE_FORMAT=3\n'
       printf 'PACKAGE_ID=%s\n' "$REDIS_PACKAGE_ID"
       printf 'INSTALL_PREFIX=%s\n' "$REDIS_INSTALL_PREFIX"
       printf 'REDIS_VERSION=%s\n' "$(package_info_value "$package_root" REDIS_VERSION)"
       printf 'PACKAGE_VARIANT=%s\n' "$(package_info_value "$package_root" PACKAGE_VARIANT)"
       printf 'PACKAGE_ARCH=%s\n' "$(package_info_value "$package_root" PACKAGE_ARCH)"
+      printf 'UPSTREAM_CONTRIBUTOR_LICENSE_SHA256=%s\n' \
+        "$(package_info_value "$package_root" UPSTREAM_CONTRIBUTOR_LICENSE_SHA256)"
+      printf 'UPSTREAM_DEPENDENCY_NOTICES_SHA256=%s\n' \
+        "$(package_info_value "$package_root" UPSTREAM_DEPENDENCY_NOTICES_SHA256)"
       printf 'SERVICE_MANAGER=%s\n' "$service_manager"
       printf 'CREATED_USER=%s\n' "$created_user"
       printf 'CREATED_GROUP=%s\n' "$created_group"
       printf 'REDIS_UID=%s\n' "$uid_value"
       printf 'REDIS_GID=%s\n' "$gid_value"
+      printf 'REDIS_HOME=%s\n' "$account_home"
+      printf 'REDIS_SHELL=%s\n' "$account_shell"
       printf 'INSTALLED_AT=%s\n' "$installed_at"
       printf 'UPDATED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } >"$temporary_state"
   )
   chown root:root "$temporary_state"
   chmod 0600 "$temporary_state"
-  mv "$temporary_state" "$REDIS_STATE_FILE"
+  mv -fT "$temporary_state" "$REDIS_STATE_FILE"
 }

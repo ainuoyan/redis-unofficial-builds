@@ -1,0 +1,39 @@
+name: Validate repository
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Syntax and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate JSON, Python, shell, and controller behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m json.tool config/release-lines.json >/dev/null
+          python3 -m json.tool config/platforms.json >/dev/null
+          python3 -m py_compile scripts/release/*.py
+          python3 scripts/release/validate_configs.py \
+            --release-config config/release-lines.json \
+            --platform-config config/platforms.json \
+            --workflows-dir .github/workflows
+          bash -n scripts/linux/build-redis.sh packaging/linux/scripts/*.sh
+          python3 -m unittest discover -s tests -v

@@ -2,209 +2,308 @@
 
 [English](PLATFORM-DESIGN.md)
 
-本文描述目标架构。标记为“已设计”的平台不代表二进制包已经发布。当前已经实现的
-仍是 `linux-glibc2.28`；其他后端必须通过本文的发布门禁后，才能标记为稳定版。
+本文明确区分已实现的发布能力和后端设计。“已实现”表示代码、CI、校验和发布策略
+均已存在；“仅设计”不代表存在可下载或受支持的包。
 
-## Redis 版本范围
+## Redis 发布系列
 
-“官方所有大版本”按 Redis Open Source 官方版本管理页中的全部 GA `X.Y` 系列
-解释，不是把下载目录里的所有历史源码都重新发布。2026-08-20 检查到的首批版本为：
+跟踪的 `X.Y` 系列声明在
+[`config/release-lines.json`](../config/release-lines.json)。控制器为每个已登记系列
+选择存在官方 SHA-256 记录的最高稳定 `X.Y.Z`，不会重新构建所有历史源码包。当前
+配置登记 `6.2`、`7.2`、`7.4`、`8.0`、`8.2`、`8.4`、`8.6`、`8.8`、
+`8.10`；最终以配置文件为准。
 
-| 系列 | 官方最新补丁版 | 发布类型 |
-| --- | --- | --- |
-| 6.2 | 6.2.24 | Extended |
-| 7.2 | 7.2.16 | Extended |
-| 7.4 | 7.4.11 | Extended |
-| 8.0 | 8.0.6 | Standard |
-| 8.2 | 8.2.9 | Extended |
-| 8.4 | 8.4.6 | Standard |
-| 8.6 | 8.6.6 | Standard |
-| 8.8 | 8.8.2 | Standard |
-| 8.10 | 8.10.1 | Standard |
+系列登记依据 Redis
+[官方版本管理策略](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/)。
+已登记系列超过配置的 EOL 日期后停止自动计划。高于 `new_series_floor` 的新稳定
+系列只会列为候选项，必须经过配置审查后才能进入构建计划。预发布版本不纳入计划。
 
-实际跟踪列表保存在 [`config/release-lines.json`](../config/release-lines.json)，表中的
-具体补丁版本只是当前快照，后续会自动变化。
+许可证审查是系列门禁。根据 Redis 官方
+[许可说明](https://redis.io/legal/licenses/)，7.2.x 及更早版本使用
+BSD-3-Clause，7.4.x 至 7.8.x 使用 RSALv2/SSPLv1，Redis 8 及以上可选择
+RSALv2、SSPLv1 或 AGPLv3。包必须保留已校验版本的准确许可证和 notices。
+Redis 名称与标识仍受官方
+[商标政策](https://redis.io/legal/trademark-policy/)约束。
 
-Redis 6.0、7.0 及更早版本虽然还能下载，但已不在官方当前 GA 列表中，不进入
-自动稳定发布。仍可手工构建一次性 EOL 包，但必须标记为不受支持，也不能覆盖
-仍在维护的 Release。
+## 平台矩阵
 
-## 打包矩阵
+| 包变体 | 架构 | 构建基线 | 服务后端 | 状态 |
+| --- | --- | --- | --- | --- |
+| `linux-glibc2.28` | x64、ARM64 | 按摘要固定的 Rocky Linux 8 用户态 | systemd | **已实现** |
+| `linux-glibc2.17-legacy` | x64、ARM64 | 经审查的 glibc 2.17 兼容工具链/sysroot | systemd | 仅设计 |
+| `linux-musl1.2` | x64、ARM64 | 固定的受支持 Alpine 基线 | OpenRC | 仅设计 |
+| `macos12` | x64、ARM64 | 原生 Runner、部署目标 12.0 | launchd | 仅设计 |
+| `windows-msys2` | x64 | 固定 MSYS2 工具链/运行库 | Windows SCM | 仅设计；Windows 主后端 |
+| `windows-cygwin` | x64 | 固定 Cygwin 工具链/运行库 | Windows SCM | 仅设计；兼容后端 |
 
-Linux 统一发布 `.tar.gz`，不依赖 RPM、DEB、Snap 或 APK，默认安装位置均为
-`/usr/local/redis`。
+只有 `linux-glibc2.28` 行已启用控制器。所有 Linux 方案均使用 `.tar.gz`，不依赖
+RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。Windows 方案使用 `.zip`
+和独立 Windows 目录布局。
 
-| 包类型 | 架构 | 受控编译基线 | 服务后端 | 默认目录 | 目标状态 |
-| --- | --- | --- | --- | --- | --- |
-| `linux-glibc2.28` | x64、arm64 | Rocky Linux 8 用户态 | systemd | `/usr/local/redis` | 已实现 |
-| `linux-glibc2.17-legacy` | x64、arm64 | manylinux2014 兼容的 glibc 2.17 sysroot | systemd | `/usr/local/redis` | 已设计，旧系统专用 |
-| `linux-musl1.2` | x64、arm64 | 当前仍受支持的最老 Alpine，首期 3.21 | OpenRC | `/usr/local/redis` | 已设计 |
-| `macos12` | x64、arm64 | 原生 Runner，部署目标 12.0 | launchd | `/usr/local/redis` | 已设计 |
-| `windows-msys2` | x64 | 固定版本的 MSYS2 工具链和运行库 | Windows SCM | `C:\Program Files\Redis` | 已设计，Windows 主包 |
-| `windows-cygwin` | x64 | 固定版本的 Cygwin 工具链和运行库 | Windows SCM | `C:\Program Files\Redis` | 已设计，兼容包 |
+### ABI 原则
 
-暂不发布“原生 Windows ARM64”。参考项目和两套 POSIX 兼容运行时目前都以 x64
-为主；把能在 ARM64 模拟层运行的 x64 包改名为 ARM64 会误导用户。等到具备可用
-工具链，并在真实 ARM64 Windows 上通过服务、持久化和压力测试后再加入。
+- glibc 2.28 二进制不能假定可在 glibc 2.17 上运行。legacy 包必须单独构建，并
+  扫描每个 ELF 的最高 `GLIBC_*` 符号。
+- 兼容旧 libc 不代表已停止维护的操作系统安全或受支持。
+- musl 与 glibc 是不同 ABI，不能共用包。musl 后端需要原生依赖检查和真实 OpenRC
+  生命周期测试。
+- 禁止 `-march=native`。除非增加独立命名的优化变体，否则 x64 与 ARM64 使用保守
+  指令集基线。
+- macOS 每个架构分别原生构建和测试。部署目标是 ABI 下限，不是安全维护承诺。
+- 在模拟层运行的 x64 Windows 包不能标记为 ARM64。原生 Windows ARM64 必须具备
+  兼容原生工具链，并在 ARM64 Windows 上完成服务、持久化及负载测试。
 
-### ABI 规则
+## 已实现 Linux 包约定
 
-- glibc 2.28 与 glibc 2.17 必须分包。二进制一旦引用较新的版本化 glibc 符号，便
-  无法在旧 glibc 上运行。发布前扫描每个 ELF 的最高 `GLIBC_*` 依赖。
-- 2.17 包明确标记为 **legacy**。能够兼容旧 libc，不代表已经停止维护的操作系统
-  会因此安全或得到支持。
-- musl 与 glibc 完全不同，必须单独构建。采用仍受安全维护的最老 Alpine 分支，
-  在该分支 EOL 前主动抬升基线；使用 `scanelf`、`ldd` 和 OpenRC 集成测试验收。
-- 禁止 `-march=native`。x64 使用保守的 x86-64 基线，arm64 使用基础 AArch64 ISA；
-  如需 CPU 优化包，必须使用不同包名。
-- macOS 分别在原生 x64 和 arm64 Runner 构建，不合并未经分别测试的 universal 包；
-  使用 `MACOSX_DEPLOYMENT_TARGET=12.0`、`otool` 和架构检查作为门禁。
+当前使用 `core` 配置：包含 Redis 服务端和命令行程序，不包含 Redis 8 捆绑模块。
+模块版必须使用独立变体，并设置独立编译器、依赖、许可证、持久化和升级门禁。
+TLS 未启用。
 
-## 压缩包约定
+每个包以 `redis/` 为顶层，并包含：
 
-每个包都包含机器可读的 `PACKAGE-INFO`、`BUILD-INFO`、Redis 上游许可证、本项目
-引用说明、安装/更新/卸载脚本、服务定义和配置样例。清单格式升级到第 2 版，例如：
+- 第 2 版 `PACKAGE-INFO` 和 `BUILD-INFO`；
+- Redis 二进制及配置样例；
+- 安装、更新和卸载脚本；
+- systemd 单元和可选加固样例；
+- 上游 `LICENSE.txt`；
+- Redis 7.4 及以上版本必有 `UPSTREAM-CONTRIBUTOR-LICENSE.txt`；更早版本仅在
+  源码确有 `REDISCONTRIBUTIONS.txt` 时包含；
+- 从已校验源码树 `deps/` 中识别的 notices 确定性生成
+  `UPSTREAM-DEPENDENCY-NOTICES.txt`；
+- 项目 `THIRD_PARTY_NOTICES.md` 和包内 `README.txt`。
+
+更早源码缺少贡献者文件时不会生成占位许可。依赖 notices 按路径确定排序，并使用
+路径/长度 framing，限制文件数和大小；它保留上游文本，但不宣称已完成法律分类。
+元数据会记录这些文件的哈希；贡献者文件合法缺失时记录明确的 absent 状态。
+
+`PACKAGE-INFO` 关键字段示例：
 
 ```text
 PACKAGE_FORMAT=2
 PACKAGE_ID=redis-unofficial-builds
 REDIS_VERSION=7.4.11
 REDIS_SERIES=7.4
-PACKAGE_VARIANT=linux-glibc2.17-legacy
+BUILD_PROFILE=core
+PACKAGE_VARIANT=linux-glibc2.28
 PACKAGE_ARCH=x64
 OS=linux
 LIBC=glibc
-MIN_GLIBC=2.17
+MIN_GLIBC=2.28
 SERVICE_BACKEND=systemd
 INSTALL_PREFIX=/usr/local/redis
 UPSTREAM_SOURCE_SHA256=...
+UPSTREAM_CONTRIBUTOR_LICENSE_SHA256=...
+UPSTREAM_DEPENDENCY_NOTICES_SHA256=...
 PATCHSET_SHA256=...
 ```
 
-产物名称固定为：
+CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官方源码，在解压前校验
+计划中的 SHA-256，执行上游构建/测试代码，并只从私有暂存树打包。脚本拒绝 UID 0
+以及存在生产 `/usr/local/redis` 的主机。打包仓库快照由 root 所有且对构建账号
+只读。DNF 依赖从 Rocky 软件源动态解析，因此记录编译器/运行库信息，但不宣称
+逐字节可复现。
+
+## 当前 GitHub Release 约定
+
+一个纯数字 Redis `X.Y.Z` Tag 对应一个 Release。当前 Linux 发布器只接受以下
+精确 7 个产物：
 
 ```text
-Redis-Rzon-{version}-{variant}-{arch}.tar.gz
-Redis-Rzon-{version}-{variant}-{arch}.tar.gz.sha256
-Redis-Rzon-{version}-{variant}-{arch}.zip
-Redis-Rzon-{version}-{variant}-{arch}.zip.sha256
+Redis-Rzon-{version}-linux-glibc2.28-x64.tar.gz
+Redis-Rzon-{version}-linux-glibc2.28-x64.tar.gz.sha256
+Redis-Rzon-{version}-linux-glibc2.28-arm64.tar.gz
+Redis-Rzon-{version}-linux-glibc2.28-arm64.tar.gz.sha256
+SHA256SUMS
+manifest.json
+redis-unofficial-builds-{version}.spdx.json
 ```
 
-每个 Redis 补丁版本对应一个 GitHub Release，其中放入所有通过稳定门禁的平台包。
-禁止静默覆盖已有产物。Release 同时包含 `manifest.json`、`SHA256SUMS`、SPDX SBOM
-和构建来源证明，明确哪些矩阵成功、哪些平台有意不支持。
+缺少或多出任何产物都会失败。`SHA256SUMS` 校验其余 6 个文件。
+`manifest.json` 绑定源码 URL/SHA-256、不可变 `redis-hashes` 提交、打包提交、
+补丁集校验和、工作流、构建配置、架构、ABI、大小和压缩包摘要。
 
-## 安装、更新与卸载约定
+SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个压缩包，其范围
+明确为 `release-package-level`，不能宣传为完整文件级或传递依赖 SBOM。
 
-所有后端保持相同的用户可见行为：
+工作流为 7 个产物生成 SLSA 来源证明，并为两个压缩包生成 SPDX 证明。发布前会验证
+准确工作流身份、签名者/源码提交、受保护默认分支 ref、predicate 类型，并拒绝
+自托管 Runner 证明。
 
-1. 修改系统前检查操作系统、架构、ABI、包元数据、二进制版本、服务管理器、目标
-   所有权和配置。
-2. 程序、配置、数据、日志和安装状态相互分离。
-3. 更新时保留配置和数据，备份程序与服务定义，采用原子替换或可回滚替换。
-4. 只有服务启动且 Redis 实际响应 PING 才算更新成功，不能只看服务状态为 started。
-5. 普通卸载保留配置和数据；`--purge` 只能删除安装状态能够证明由本项目创建的对象。
-6. 未显式使用接管/强制选项时，不覆盖其他来源的 Redis 服务或系统账号。
+### 只发布全新 Release
 
-Linux 与 macOS 脚本只依赖稳定、与语言无关的系统接口，同时提供简体中文和英文
-消息。Windows PowerShell 脚本和服务帮助也提供两种语言。自动化只读取退出码、
-JSON 或键值状态，不解析翻译后的服务输出。
+发布器只在 Tag 和 Release 均不存在时工作：
 
-| 服务后端 | 程序位置 | 可变数据 | 关键要求 |
-| --- | --- | --- | --- |
-| systemd | `/usr/local/redis` | 目录内 `conf/`、`data/`、`logs/` | 前台运行 Redis，尊重配置路径 |
-| OpenRC | `/usr/local/redis` | 目录内 `conf/`、`data/`、`logs/` | 使用 POSIX `sh`，不依赖 Bash/systemd |
-| launchd | `/usr/local/redis` | 目录内 `conf/`、`data/`、`logs/` | LaunchDaemon 使用安装状态记录的 `_redis` 账号 |
-| Windows SCM | `C:\Program Files\Redis` | `C:\ProgramData\Redis` | 服务命令不放可变路径覆盖参数和密码 |
+1. 两个架构构建及服务测试全部通过；
+2. 创建并按语义校验 7 个文件；
+3. 生成并验证证明；
+4. 一次创建包含所有 7 个文件的草稿 Release；
+5. 通过 REST 回读草稿的 `target_commitish`、状态和精确产物清单；
+6. 把每个远端产物的数字 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，
+   再下载全部产物并重复语义校验和证明验证；
+7. 临发布前再次回读并核对同一草稿身份、草稿/预发布状态、Tag OID、产物 ID、
+   字节数、摘要和精确清单；
+8. 按数字 Release ID 正式发布并设置 `latest=false`，随后回读正式发布身份，
+   再次下载全部产物并重复语义及证明校验。
 
-## Windows 后端
+自动化绝不向已有 Release 添加、覆盖、删除产物，也不会补全它。已有草稿、预发布、
+残缺、旧约定或额外产物 Release 都会阻塞自动化并要求维护者审查。已有精确 Release
+会被下载、按语义校验、检查 Tag 提交并验证证明，然后跳过构建。
+手工指定且不发布的 `force_rebuild` 可在完成校验后生成 Actions 产物，但不能修改
+或重新发布该 Release。
 
-Windows 包使用 Redis 官方源码和独立维护、按版本记录的 Windows 补丁集。方案明确
-参考 Apache-2.0 开源项目
+发布失败可能留下草稿和 Tag；后续运行会拒绝修改，而不会自动回滚或修复。GitHub
+没有覆盖全部草稿字段的原子“比较并发布”操作，因此该项目策略用于补充而不是替代
+仓库级 Immutable Releases 和受限的 Release 写权限。
+
+### 仓库外部保护
+
+工作流 YAML 只能引用，不能创建所需保护。仓库管理员必须：
+
+- 使用分支保护规则或 ruleset 保护默认分支；
+- 为 `release` Environment 设置必需审核人和部署分支限制，只允许受保护默认分支；
+- 生产发布前启用仓库级 Immutable Releases；
+- 把 Release 写权限限制在经审查的工作流和可信维护者。
+
+发布任务在获得受限的 `contents: write`、`id-token: write`、
+`attestations: write`、`artifact-metadata: write` 前，会检查默认分支 ref 和
+`github.ref_protected`。普通计划和构建仍保持只读仓库权限。
+
+## Linux 生命周期约定
+
+已实现脚本依赖 Bash、GNU 常用命令、util-linux 的 `flock`/`setpriv`、账号管理
+工具，以及服务模式下的 systemd。发行版软件包名见主 [README](../README.zh-CN.md)。
+
+### 文件系统与账号信任
+
+- 生命周期脚本以 root 运行，但要求解压后的包树由 root 所有、组和其他用户不可写，
+  没有扩展 ACL、异常符号链接、多硬链接、特殊文件或特殊权限位。
+- 新建 `redis` 账号禁止登录且仅属于 `redis` 组。已有账号仅在 UID/GID 非 0、
+  `redis` 为主组和唯一所属组、Shell 为 `nologin`/`false` 且 home 是规范绝对路径时
+  复用。当前格式状态固定记录 UID、主 GID、home、shell 和附加组集合。旧格式状态
+  迁移时会清除用户/组创建归属，因为旧格式无法证明完整身份。
+- 对当前格式状态，彻底卸载只在项目创建的账号仍精确匹配已记录 UID、主 GID、
+  home、shell 且没有附加组时删除账号；用户组必须保持记录的 GID，且不能出现非
+  预期的显式成员。缺少完整身份记录的旧状态会保守地保留用户和组；系统已有账号
+  始终保留。
+- 递归操作在目标或任一后代是挂载点时拒绝执行。
+- 安装/更新不会从暂存目录保留 SELinux context 或扩展属性；目标主机需要按自身
+  策略应用标签，必要时重标记。
+
+### 配置与服务信任
+
+新配置设置 `port 0`，使用权限 `0770` 的
+`/usr/local/redis/data/redis.sock`，数据目录为 `/usr/local/redis/data`。接管和
+更新保留已有配置及数据。
+
+配置校验递归跟踪最多 64 个唯一 `include` 文件，并检查 `loadmodule`、`aclfile`
+引用。引用可以为绝对路径或相对于 `/usr/local/redis`，但不得包含空白、glob 或
+反斜杠。路径组件不得为符号链接；父目录链和单硬链接普通文件必须由 root 安全控制
+且没有扩展 ACL。已验证模块路径之后可以保留模块参数。
+
+该约定使受管 `aclfile` 由 root 所有且组和其他用户不可写，Redis 服务账号因此不能
+使用 `ACL SAVE` 更新它。管理员必须以 root 离线部署 ACL 变更并重启 Redis，或使用
+等效的站点流程，在任何 root 生命周期操作前恢复可信所有权和权限。为运行时
+`ACL SAVE` 放宽文件权限后再执行包维护，不属于支持的信任约定。
+
+基础 systemd 单元以前台模式运行 Redis。外部 `redis.service` 默认拒绝；
+`--force-service` 也只允许替换 `inactive` 或 `failed` 单元，`active` 或
+`reloading` 外部单元始终拒绝。替换 disabled 外部单元后会启用新的受管单元，回滚
+会恢复其 disabled 状态；enabled 外部单元保持启用。受管服务的有效单元和 drop-in
+会校验准确身份、命令、工作目录、环境/凭据隔离、无执行钩子及
+`NoNewPrivileges` 约定。
+
+`--no-service` 是完整的受管安装模式：仍会管理账号、配置/数据目录、包元数据和
+生命周期状态，但不要求或注册 systemd。由于没有服务管理器负责停止 Redis，更新
+或卸载前必须由管理员停止所有可执行文件精确为
+`/usr/local/redis/bin/redis-server` 的进程；只要仍有此类进程，维护操作就会拒绝。
+
+### 更新与删除
+
+- 安装、更新和卸载共用排他锁。
+- 更新在停止 Redis 前校验新二进制，保留配置/数据，并把程序、配置、单元、notices、
+  元数据和状态备份到 `/usr/local/redis-backups/`。
+- Redis 协议响应是就绪条件；启动失败或收到可处理终止信号会回滚程序和服务状态。
+- 自动备份不包含 Redis 数据；生产维护需要单独的应用一致快照。
+- 默认拒绝降级，只有明确使用 `--allow-downgrade` 才允许。普通卸载保留状态后，
+  使用较旧包重新安装也遵循相同门禁；明确允许任一降级操作前必须另做数据快照。
+- 普通卸载保留配置、数据、状态、账号和备份；`--purge` 在账号和挂载安全检查后
+  删除固定前缀。
+
+## 设计中的后端
+
+### glibc 2.17 legacy
+
+该包是独立命名的兼容变体，不替代已实现基线。验收要求包括：两个架构的固定且可维护
+工具链/sysroot、最高 `GLIBC_2.17` 符号检查、依赖检查、代表性旧用户态执行测试及
+同等 systemd 生命周期测试。说明必须明确旧 ABI 不提供操作系统安全维护。
+
+### musl 与 OpenRC
+
+musl 包必须在固定受支持 Alpine 基线构建，不能带 glibc 标签。需要原生依赖检查、
+Shell/运行环境审查，以及 OpenRC 下的安装、启动、就绪、更新、回滚和卸载测试。
+OpenRC 脚本不得依赖 systemd，并使用独立服务/状态约定。
+
+### macOS
+
+每个架构在原生 Runner 构建并记录部署目标，使用 `file` 和 `otool` 检查。
+launchd 后端需要管理已记录的禁止登录账号，保留配置/数据，验证 PING 就绪，并在
+声明支持的最老 macOS 上测试更新、回滚和卸载。只有两个 slice 分别通过后才能发布
+universal 包。
+
+### Windows
+
+Windows 方案明确参考 Apache-2.0 许可的
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)，
-具体引用和后续复制代码时的合规要求见
-[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)，现有 issue 的处理边界见
+并固定提交
+[`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)，
+以保证设计结论和 issue 映射可复核。已实现 Linux 包未合入该项目源码。
+归属和代码合入要求见
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
+
+MSYS2 是主方案，Cygwin 是独立兼容方案，不能盲目共用路径转换：MSYS2 使用
+`/c/...`，Cygwin 使用 `/cygdrive/c/...`。服务包装器必须以前台模式运行 Redis，
+校验配置路径，把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
+关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在
+`C:\ProgramData\Redis` 保存受保护安装状态。
+
+Windows 稳定验收要求真实测试空格/非 ASCII 路径、错误配置、端口冲突、重启与
+持久化、BGSAVE、认证关闭、子进程异常退出、Sentinel、卸载/升级和有界负载。
+原生 EXE 必须具有 PE VERSIONINFO。发布构建使用优化而非 `-O0`，公布实测限制，
+不承诺 POSIX 兼容层具有 Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
 
-MSYS2 是主后端，Cygwin 是附加兼容后端。两者使用不同路径适配器，绝不混用：
+## 版本解析与构建分离
 
-- MSYS2 将 `C:\x` 转成 `/c/x`；
-- Cygwin 将其转成 `/cygdrive/c/x`；
-- 必须转换时调用对应运行时自带的 `cygpath`；服务安装通常只传绝对配置文件路径，
-  `dir`、`logfile`、TLS、ACL 和模块路径保留在配置文件中。
-
-服务包装器必须做到：
-
-- 注册前校验配置，并创建经允许的数据与日志目录；
-- 强制 `daemonize no`，管理完整子进程树，Redis 启动失败时让 SCM 收到失败状态；
-- 等待真实 PING 就绪，不使用固定 100 ms 延迟；
-- 停止服务时只向 `redis-cli` 传连接参数，等待优雅退出后才使用有时限的进程树兜底；
-  密码不得出现在服务命令行和日志里；
-- Redis 子进程意外退出时同步停止/标记 Windows 服务失败，并设置有限次数的 SCM 恢复；
-- 记录 stdout/stderr 和实际配置路径；
-- 为所有 EXE 写入 Redis 版本和打包修订号的 PE VERSIONINFO；
-- 使用独立服务名称支持 Sentinel 模式；
-- 使用 `C:\ProgramData\Redis\install-state.json` 保护更新、回滚、接管和卸载。
-
-Windows 稳定门禁覆盖：含空格和非 ASCII 路径、服务重启、错误配置的失败透传、优雅
-停止、重启后持久化、BGSAVE、端口占用诊断、Sentinel 和有上限的压力测试。Release
-必须使用优化构建（`-O2`，不沿用参考工作流里的 `-O0`），并公开基准测试结果；不能
-承诺经过 POSIX 兼容层后仍达到 Linux 原生性能。
-
-## 自动发现与发布
+[发布控制器](RELEASE-CONTROLLER.md)受检入仓库的
+`controller_mode=plan_only` 强制限制：
 
 ```mermaid
 flowchart TD
-    A["每日版本解析"] --> B["官方 GA 系列策略"]
-    A --> C["redis-hashes SHA-256"]
-    B --> D["新增版本矩阵"]
-    C --> D
-    D --> E["隔离的平台构建"]
-    E --> F["跨平台发布门禁"]
-    F --> G["不可变 GitHub Release"]
+    A["校验策略"] --> B["固定 redis-hashes 提交"]
+    B --> C["解析 GA 版本"]
+    C --> D["检查 Release 名称"]
+    D --> E["写入计划产物"]
 ```
 
-解析器每日定时运行，也支持手工触发：
-
-1. 读取 `config/release-lines.json`。
-2. 通过 HTTPS 获取 `redis/redis-hashes`，为每个 `X.Y` 选择最高稳定 `X.Y.Z`，忽略
-   RC、beta 和 milestone。
-3. 必须找到官方 SHA-256；下载官方源码包并校验通过后才解压。
-4. 比较期望产物清单和已有 Release，只构建缺少的版本或显式要求重建的版本。
-5. 各构建任务使用只读仓库权限；全部必要门禁通过后，单独的聚合任务才获得
-   `contents: write` 并创建不可变 Release。
-
-已登记系列的每个新补丁版都会自动构建和发布。全新的 `X.Y` 系列可能同时改变
-许可证、组件、编译器或 Windows 补丁，因此先自动构建“不发布候选包”，再创建一
-个小型配置 PR。PR 验证并合并后，该系列后续补丁完全自动化。这样既不用人工盯版本，
-也不会未经审查就发布新的产品线。
-
-定时构建失败时不得删除或覆盖上个 Release。保留日志和候选产物，并按 Redis 版本
-与矩阵项创建或更新唯一的跟踪 issue。
+它不会下载 Redis 源码、执行包代码、调用构建工作流、创建 Tag 或发布 Release。
+Release 名称清单只用于计划；内容和证明由具备发布能力的 Linux 工作流验证。
 
 ## 发布门禁
 
-所有版本和稳定平台均必须通过：
+已实现稳定平台必须具备：
 
-- 官方 SHA-256 与可复现源码 URL 校验；
-- 在 `BUILD-INFO` 中记录编译器、运行库和补丁哈希；
-- 平台允许时执行上游 `make test`；
-- 二进制架构、依赖和 ABI 检查；
-- PING、SET/GET、过期、持久化/重启和正常停止；
-- 全新安装、从同系列上一个补丁更新、失败回滚、保留数据卸载和安全彻底卸载；
-- 含空格和非 ASCII 的自定义配置、数据和日志路径；
-- 中英文帮助与错误流程；
-- 校验和、SBOM 和构建来源证明验证。
+- 与不可变 `redis-hashes` 提交绑定的官方源码 SHA-256；
+- 适用上游许可证、贡献者文本、依赖 notices 和项目 notices；
+- 元数据中的编译器/运行库、打包提交及补丁集哈希；
+- 上游测试、架构/依赖/ABI 检查及冒烟测试；
+- 全新安装、就绪、更新、回滚、持久化、接管、卸载、彻底卸载、账号复用、挂载及
+  外部服务安全测试；
+- 英文和简体中文生命周期路径；
+- 默认仅本地 Socket，且保留接管的监听、认证、持久化、模块和 include 配置；
+- 精确 7 产物元数据和完整 `SHA256SUMS` 校验；
+- Release 包级 SPDX 校验；
+- 来源/SPDX 证明生成及受限验证；
+- 只创建新草稿、回读精确清单、下载验证和单向正式发布；
+- 受保护默认分支和 `release` Environment 审批。
 
-实验平台失败可以不阻塞其他稳定平台，但必须在清单中明确失败。稳定平台的服务或
-数据完整性测试失败时，不能把该产物伪装成成功发布。
-
-## 实施顺序
-
-1. 把固定 7.4 的解析器改为多系列发布控制器和清单聚合，同时保留已工作的 glibc
-   2.28 构建。
-2. 增加 glibc 2.17、musl/OpenRC Linux 构建与服务测试。
-3. 增加 macOS x64/arm64 原生构建和 launchd 生命周期脚本。
-4. 增加 Windows 服务包装器和两种运行时适配器，把 issue 覆盖表变成回归测试；
-   全部门禁完成前仅发布 Windows prerelease。
-5. 开启各系列的自动稳定发布，以及新系列候选 PR。
+仅设计平台不能因为配置中存在产物名称就加入已实现 Release。

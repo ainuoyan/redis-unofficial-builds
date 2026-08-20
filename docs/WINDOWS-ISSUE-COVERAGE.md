@@ -1,48 +1,47 @@
 # Windows issue coverage
 
-This document records how the Windows design uses reports from
+This document records how the design-only Windows backends use reports from
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows).
-It is both an engineering backlog and a guard against claiming that packaging
-alone fixed an upstream/runtime defect.
+No Windows package is currently implemented or published. The table is an
+acceptance specification and prevents a packaging change from being presented
+as proof that an upstream or compatibility-runtime defect is fixed.
 
 Review baseline: upstream commit
-[`17fd667`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)
+[`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)
 and the open issue list observed on 2026-08-20.
 
 ## Findings from the referenced implementation
 
-The current upstream workflow builds both MSYS2 and Cygwin, bundles their
-runtime DLLs, and supplies a .NET Windows service wrapper. Those are useful
-building blocks, but several implementation details map directly to reported
-issues:
+At the audited commit, the upstream workflow builds both MSYS2 and Cygwin,
+bundles their runtime DLLs, and supplies a .NET Windows service wrapper. Those
+are useful building blocks, but several implementation details map directly to
+reported issues:
 
-- The [build workflow](https://github.com/redis-windows/redis-windows/blob/main/.github/workflows/build-redis.yml)
+- The [build workflow](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/.github/workflows/build-redis.yml)
   uses `-O0`, which is unsuitable for a performance release and is a likely
   contributor to performance reports.
-- [RedisConfiguration.cs](https://github.com/redis-windows/redis-windows/blob/main/Service/RedisConfiguration.cs)
+- [RedisConfiguration.cs](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/Service/RedisConfiguration.cs)
   converts Windows paths to `/cygdrive/...` without selecting the actual MSYS2
   or Cygwin backend. It also constructs shutdown CLI arguments from server
   configuration arguments instead of Redis connection arguments.
-- [RedisProcessManager.cs](https://github.com/redis-windows/redis-windows/blob/main/Service/RedisProcessManager.cs)
+- [RedisProcessManager.cs](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/Service/RedisProcessManager.cs)
   waits a fixed 100 ms rather than proving Redis is ready and falls back to
   process-tree termination when graceful shutdown does not work.
-- [Program.cs](https://github.com/redis-windows/redis-windows/blob/main/Program.cs)
+- [Program.cs](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/Program.cs)
   logs a Redis child exit but does not fail/stop the Windows service host.
-- [RedisService.csproj](https://github.com/redis-windows/redis-windows/blob/main/RedisService.csproj)
-  now gives the wrapper a version, but native Redis executables still need PE
-  VERSIONINFO.
+- [RedisService.csproj](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/RedisService.csproj)
+  defines a wrapper version, but native Redis executables lack PE VERSIONINFO.
 
 These are code-reading conclusions, not assertions made by the referenced
 project.
 
-## Planned fixes and regression tests
+## Design requirements and regression tests
 
-The issues below can be addressed substantially by the packaging, service
-wrapper, or documentation in this repository. They are only marked resolved
-after the named regression test passes for both supported Windows artifacts
-where applicable.
+The issues below can be addressed substantially by packaging, a service
+wrapper, or documentation. A row cannot be marked **Verified** until its named
+regression passes on every applicable backend.
 
-| Issues | Planned treatment | Required regression |
+| Issues | Required treatment | Required regression |
 | --- | --- | --- |
 | [#22](https://github.com/redis-windows/redis-windows/issues/22), [#38](https://github.com/redis-windows/redis-windows/issues/38), [#60](https://github.com/redis-windows/redis-windows/issues/60), [#77](https://github.com/redis-windows/redis-windows/issues/77) | Backend-specific MSYS2/Cygwin path adapter; service normally passes only an absolute config path; no blind `/cygdrive` rewrite | Install/restart from paths containing spaces, Chinese text, drive roots, relative config references, and both runtime variants |
 | [#53](https://github.com/redis-windows/redis-windows/issues/53), [#77](https://github.com/redis-windows/redis-windows/issues/77) | Normalize config paths, require/create approved log and data directories, set a deterministic working directory | Relative and absolute `logfile`/`dir`; missing parent; read-only parent; restart persistence |
@@ -52,7 +51,7 @@ where applicable.
 | [#44](https://github.com/redis-windows/redis-windows/issues/44) | Document and enforce that `RedisService.exe`/PowerShell owns service registration; never advertise unsupported `redis-cli --service-install` | Help examples execute successfully; invalid legacy syntax has an actionable error |
 | [#45](https://github.com/redis-windows/redis-windows/issues/45) | Preflight configured ports and surface the owning PID when permitted; never kill an unrelated process | Occupied port blocks installation/start without mutating or terminating the existing listener |
 | [#63](https://github.com/redis-windows/redis-windows/issues/63) | Add PE VERSIONINFO to every native EXE and version the service wrapper from Redis version plus packaging revision | PowerShell version-resource assertions for every EXE and `--version` consistency |
-| [#76](https://github.com/redis-windows/redis-windows/issues/76) | Add a WinGet manifest only after stable immutable ZIPs, checksums, upgrade/uninstall behavior, and signing policy exist | WinGet validation plus clean install, upgrade, repair, and uninstall in a fresh VM |
+| [#76](https://github.com/redis-windows/redis-windows/issues/76) | Add a WinGet manifest only after stable versioned ZIP/checksum pairs, non-overwriting publication, upgrade/uninstall behavior, and a signing policy exist | WinGet validation plus clean install, upgrade, repair, and uninstall in a fresh VM |
 
 ## Investigation required before claiming a fix
 
@@ -73,9 +72,9 @@ Windows backend passes.
 
 | Issues | Decision |
 | --- | --- |
-| [#26](https://github.com/redis-windows/redis-windows/issues/26), [#28](https://github.com/redis-windows/redis-windows/issues/28), [#58](https://github.com/redis-windows/redis-windows/issues/58), [#79](https://github.com/redis-windows/redis-windows/issues/79) | RedisJSON, Bloom, Search/Query, and related commands are a separate modules/Stack edition with separate builds, compatibility tests, and license review. A core Redis ZIP must not pretend those modules are present. |
-| [#39](https://github.com/redis-windows/redis-windows/issues/39), [#62](https://github.com/redis-windows/redis-windows/issues/62) | Valkey is a different upstream project. It may use the same packaging framework later but must have separate source policy, names, releases, and notices. |
-| [#75](https://github.com/redis-windows/redis-windows/issues/75) | Windows 7 is unsupported. The release notes will state the tested minimum Windows client/server versions derived from the pinned MSYS2/Cygwin and service-wrapper runtimes. No package is labelled Win7-compatible without a dedicated supported toolchain and VM gate. |
+| [#26](https://github.com/redis-windows/redis-windows/issues/26), [#28](https://github.com/redis-windows/redis-windows/issues/28), [#58](https://github.com/redis-windows/redis-windows/issues/58), [#79](https://github.com/redis-windows/redis-windows/issues/79) | Redis 8 upstream bundles RedisJSON, Bloom, Search/Query, and related modules, while this repository's package contract is `BUILD_PROFILE=core`. A module-enabled profile requires separate toolchains, assets, compatibility tests, and license review; a core ZIP must not claim those commands are present. |
+| [#39](https://github.com/redis-windows/redis-windows/issues/39), [#62](https://github.com/redis-windows/redis-windows/issues/62) | Valkey is a different upstream project and is outside this repository's Redis package scope. Any Valkey distribution requires separate source policy, names, releases, and notices. |
+| [#75](https://github.com/redis-windows/redis-windows/issues/75) | Windows 7 is unsupported. Release notes must state the tested minimum Windows client/server versions derived from the pinned MSYS2/Cygwin and service-wrapper runtimes. No package is labelled Win7-compatible without a dedicated supported toolchain and VM gate. |
 
 ## Status vocabulary
 
@@ -86,5 +85,5 @@ Windows backend passes.
 - **Separate scope**: belongs to a different edition/upstream and is not a core
   package defect.
 
-Release notes must link to this table and use these terms. They must not say
-"all redis-windows issues fixed".
+Any Windows Release notes must link to this table and use these terms. They
+must not claim that all `redis-windows` issues are fixed.
