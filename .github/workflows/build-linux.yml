@@ -1,0 +1,294 @@
+name: Build Linux binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      redis_version:
+        description: Redis version, for example 7.4.11
+        required: true
+        default: 7.4.11
+        type: string
+      publish_release:
+        description: Publish the packages to GitHub Releases
+        required: true
+        default: true
+        type: boolean
+      force_rebuild:
+        description: Rebuild even if the release already exists
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-linux.yml
+      - scripts/linux/**
+  schedule:
+    - cron: "17 1 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redis-linux-${{ github.event_name }}-${{ inputs.redis_version || 'tracked-7.4' }}
+  cancel-in-progress: false
+
+env:
+  TRACK_SERIES: "7.4"
+  HASHES_URL: https://raw.githubusercontent.com/redis/redis-hashes/master/README
+  PACKAGE_VARIANT: linux-glibc2.28
+
+jobs:
+  prepare:
+    name: Resolve and verify version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      source_sha256: ${{ steps.resolve.outputs.source_sha256 }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+      release_exists: ${{ steps.resolve.outputs.release_exists }}
+      is_latest_track: ${{ steps.resolve.outputs.is_latest_track }}
+    steps:
+      - name: Resolve Redis version and official checksum
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.redis_version }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            "$HASHES_URL" --output redis-hashes.txt
+
+          series_regex="${TRACK_SERIES//./\\.}"
+          latest_track_version="$({
+            grep -E "^hash redis-${series_regex}\\.[0-9]+\\.tar\\.gz sha256 " redis-hashes.txt || true
+          } | awk '{print $2}' \
+            | sed -E 's/^redis-//; s/\.tar\.gz$//' \
+            | sort -V \
+            | tail -n 1)"
+
+          if [[ -z "$latest_track_version" ]]; then
+            echo "No Redis ${TRACK_SERIES}.x release found in redis-hashes." >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$REQUESTED_VERSION"
+          else
+            version="$latest_track_version"
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid Redis version: $version" >&2
+            exit 1
+          fi
+
+          hash_line="$(awk -v file="redis-${version}.tar.gz" \
+            '$1 == "hash" && $2 == file && $3 == "sha256" { print; exit }' \
+            redis-hashes.txt)"
+
+          if [[ -z "$hash_line" ]]; then
+            echo "No official checksum found for Redis $version." >&2
+            exit 1
+          fi
+
+          source_sha256="$(awk '{print $4}' <<<"$hash_line")"
+          if [[ ! "$source_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid SHA256 value for Redis $version." >&2
+            exit 1
+          fi
+
+          if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_exists=true
+          else
+            release_exists=false
+          fi
+
+          force_rebuild=false
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            force_rebuild="${FORCE_REBUILD:-false}"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            force_rebuild=true
+          fi
+
+          if [[ "$release_exists" == true && "$force_rebuild" != true ]]; then
+            should_build=false
+          else
+            should_build=true
+          fi
+
+          if [[ "$version" == "$latest_track_version" ]]; then
+            is_latest_track=true
+          else
+            is_latest_track=false
+          fi
+
+          {
+            echo "version=$version"
+            echo "source_sha256=$source_sha256"
+            echo "should_build=$should_build"
+            echo "release_exists=$release_exists"
+            echo "is_latest_track=$is_latest_track"
+          } >>"$GITHUB_OUTPUT"
+
+          echo "Redis version: $version"
+          echo "Official SHA256: $source_sha256"
+          echo "Existing release: $release_exists"
+          echo "Build required: $should_build"
+
+  build:
+    name: Build ${{ matrix.package_arch }}
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine_arch: x86_64
+            package_arch: x64
+          - runner: ubuntu-24.04-arm
+            machine_arch: aarch64
+            package_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    container:
+      image: rockylinux/rockylinux:8
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf -y install \
+            binutils \
+            coreutils \
+            curl \
+            file \
+            findutils \
+            gcc \
+            git \
+            gzip \
+            make \
+            procps-ng \
+            tar \
+            tcl \
+            which
+          dnf clean all
+
+      - name: Checkout packaging project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Build, test, and package Redis
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          PACKAGE_VARIANT: ${{ env.PACKAGE_VARIANT }}
+          BUILD_IMAGE: rockylinux/rockylinux:8
+        shell: bash
+        run: ./scripts/linux/build-redis.sh
+
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Redis-${{ needs.prepare.outputs.version }}-${{ env.PACKAGE_VARIANT }}-${{ matrix.package_arch }}
+          path: |
+            dist/Redis-${{ needs.prepare.outputs.version }}-${{ env.PACKAGE_VARIANT }}-${{ matrix.package_arch }}.tar.gz
+            dist/Redis-${{ needs.prepare.outputs.version }}-${{ env.PACKAGE_VARIANT }}-${{ matrix.package_arch }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    if: >-
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish_release == true)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify package checksums
+        working-directory: release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for checksum in *.sha256; do
+            sha256sum --check "$checksum"
+          done
+
+      - name: Prepare release notes
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+        shell: bash
+        run: |
+          cat >release-notes.md <<EOF
+          Redis ${REDIS_VERSION} unofficial binary builds.
+
+          Linux assets in this release:
+
+          - Architectures: x64 and ARM64
+          - Install prefix: \`/usr/local/redis\`
+          - Archive root: \`redis/\`
+          - Compatibility baseline: Rocky Linux 8 / glibc 2.28
+          - TLS support: disabled, matching a default \`make\` build
+          - Redis source: https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz
+          - Redis source SHA256: \`${REDIS_SOURCE_SHA256}\`
+
+          Verify and install x64:
+
+          \`\`\`bash
+          sha256sum -c Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz.sha256
+          sudo tar -xzf Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz -C /usr/local
+          /usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf
+          \`\`\`
+
+          These are unofficial builds. Redis remains subject to its upstream license included in each archive.
+          EOF
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_EXISTS: ${{ needs.prepare.outputs.release_exists }}
+          IS_LATEST_TRACK: ${{ needs.prepare.outputs.is_latest_track }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$RELEASE_EXISTS" == true ]]; then
+            gh release upload "$REDIS_VERSION" release-assets/* \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+            gh release edit "$REDIS_VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Redis ${REDIS_VERSION} unofficial builds" \
+              --notes-file release-notes.md
+          else
+            latest_args=()
+            if [[ "$IS_LATEST_TRACK" == true ]]; then
+              latest_args+=(--latest)
+            fi
+
+            gh release create "$REDIS_VERSION" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Redis ${REDIS_VERSION} unofficial builds" \
+              --notes-file release-notes.md \
+              "${latest_args[@]}"
+          fi
