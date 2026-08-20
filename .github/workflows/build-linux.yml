@@ -166,7 +166,6 @@ jobs:
           set -euo pipefail
           dnf -y install \
             binutils \
-            coreutils \
             curl \
             file \
             findutils \
