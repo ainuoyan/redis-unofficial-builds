@@ -285,8 +285,8 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("Path.GetRelativePath(prefix, configPath)", source)
         self.assertNotIn("ToMsysPath", source)
         self.assertIn('dir "data"', common)
-        self.assertIn('logfile "log/redis.log"', common)
-        self.assertIn('pidfile "run/redis.pid"', common)
+        self.assertIn('logfile "../log/redis.log"', common)
+        self.assertIn('pidfile "../run/redis.pid"', common)
         self.assertNotIn('/c/Program Files/Redis-Unofficial', common)
 
     def test_traversal_and_link_entries_are_rejected(self) -> None:
