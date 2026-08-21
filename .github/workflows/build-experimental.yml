@@ -188,6 +188,16 @@ jobs:
             --env BUILD_IMAGE="$image" \
             "$image" /bin/bash -euo pipefail -c '
               yum -y install procps-ng tcl util-linux which
+              toolchain_root="/opt/rh/devtoolset-10/root"
+              [[ -d "$toolchain_root" && ! -L "$toolchain_root" ]] || {
+                echo "Pinned manylinux2014 toolchain root is missing or unsafe." >&2
+                exit 1
+              }
+              [[ -x "$toolchain_root/usr/bin/cc" \
+                && -x "$toolchain_root/usr/bin/gcc" ]] || {
+                echo "Pinned manylinux2014 C compiler is missing." >&2
+                exit 1
+              }
               useradd --create-home --shell /bin/bash redis-builder
               install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
               builder_uid="$(id -u redis-builder)"
@@ -197,7 +207,9 @@ jobs:
                 --regid "$builder_gid" \
                 --clear-groups \
                 --no-new-privs \
-                -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                -- env -i \
+                PATH="$toolchain_root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+                LD_LIBRARY_PATH="$toolchain_root/usr/lib64:$toolchain_root/usr/lib:$toolchain_root/usr/lib64/dyninst:$toolchain_root/usr/lib/dyninst:/usr/local/lib64" \
                 HOME=/home/redis-builder LANG=C GITHUB_ACTIONS=true \
                 REDIS_VERSION="$REDIS_VERSION" REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" \
                 REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" PACKAGE_ARCH="$PACKAGE_ARCH" \
