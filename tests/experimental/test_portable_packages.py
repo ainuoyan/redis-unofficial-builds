@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import stat
 import struct
 import subprocess
@@ -17,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CREATE = ROOT / "scripts/experimental/create_portable_package.py"
 VALIDATE = ROOT / "scripts/experimental/validate_portable_asset.py"
+BUILD_SCRIPT = ROOT / "scripts/experimental/build-portable-posix.sh"
 VERSION = "7.4.11"
 SOURCE_SHA256 = "a" * 64
 HASHES_COMMIT = "b" * 40
@@ -267,6 +269,19 @@ class PortablePackageTests(unittest.TestCase):
         self.assertTrue(all(item["controller_enabled"] is False for item in experimental))
         self.assertTrue(all(item["build_workflow"] == "build-experimental.yml" for item in experimental))
 
+    def test_portable_build_stabilizes_tests_and_uses_a_short_macos_temp_root(self) -> None:
+        script = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertRegex(
+            script,
+            r'if \[\[ "\$PACKAGE_VARIANT" == macos12 \]\]; then\s+temp_parent=/tmp\s+fi',
+        )
+        self.assertIn(
+            'temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"', script
+        )
+        self.assertIn('./runtest --clients 1 --timeout 1200', script)
+        self.assertIn('make test redis "${make_args[@]}"', script)
+        self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
+
     def test_windows_scripts_remain_windows_powershell_compatible_text(self) -> None:
         for script in sorted((ROOT / "packaging/windows/scripts").glob("*.ps1")):
             data = script.read_bytes()
@@ -295,6 +310,73 @@ class PortablePackageTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "multiple module_tests"):
                 prepare_windows_source.remove_optional_module_tests_target(makefile)
+
+    def test_windows_source_adjustment_guards_unsupported_dladdr_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            debug_c = Path(directory) / "debug.c"
+            debug_c.write_text(
+                "#define UNUSED(value) ((void)(value))\n"
+                "void dumpX86Calls(void *addr, size_t len) {\n"
+                "    Dl_info info;\n"
+                "    (void)addr; (void)len; (void)info;\n"
+                "}\n\n"
+                "void dumpCodeAroundEIP(void *eip) {\n"
+                "    Dl_info info;\n"
+                "    dladdr(eip, &info);\n"
+                "}\n\n"
+                "void invalidFunctionWasCalled(void) {}\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                prepare_windows_source.guard_unsupported_dladdr_diagnostics(debug_c), 1
+            )
+            guarded = debug_c.read_text(encoding="utf-8")
+            self.assertIn(
+                "#if !defined(__CYGWIN__) && !defined(__MSYS__)", guarded
+            )
+            self.assertIn("Dl_info info;", guarded)
+            self.assertIn("dladdr(eip, &info);", guarded)
+            self.assertIn(
+                "#else\nvoid dumpCodeAroundEIP(void *eip) {\n    UNUSED(eip);\n}\n"
+                "#endif /* !defined(__CYGWIN__) && !defined(__MSYS__) */",
+                guarded,
+            )
+            self.assertEqual(
+                prepare_windows_source.guard_unsupported_dladdr_diagnostics(debug_c), 0
+            )
+            self.assertEqual(debug_c.read_text(encoding="utf-8"), guarded)
+
+            compiler = shutil.which("cc")
+            if compiler is not None:
+                for platform_macro in ("__CYGWIN__", "__MSYS__"):
+                    with self.subTest(platform_macro=platform_macro):
+                        compiled = subprocess.run(
+                            [
+                                compiler,
+                                f"-D{platform_macro}",
+                                "-Werror",
+                                "-fsyntax-only",
+                                str(debug_c),
+                            ],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+
+    def test_windows_source_adjustment_rejects_ambiguous_dladdr_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            debug_c = Path(directory) / "debug.c"
+            debug_c.write_text(
+                "void dumpX86Calls(void *addr, size_t len) {}\n"
+                "void dumpX86Calls(void *addr, size_t len) {}\n"
+                "void dumpCodeAroundEIP(void *eip) {}\n"
+                "void invalidFunctionWasCalled(void) {}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "ambiguous dumpX86Calls"):
+                prepare_windows_source.guard_unsupported_dladdr_diagnostics(debug_c)
 
 
 if __name__ == "__main__":

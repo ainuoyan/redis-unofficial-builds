@@ -100,7 +100,19 @@ with tarfile.open(archive, "r:gz") as source:
             raise SystemExit(f"unsupported Redis source member type: {name!r}")
 PY
 
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis-experimental.XXXXXX")"
+temp_parent="${TMPDIR:-/tmp}"
+if [[ "$PACKAGE_VARIANT" == macos12 ]]; then
+  temp_parent=/tmp
+fi
+if ! temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"; then
+  echo "Temporary directory is unavailable." >&2
+  exit 1
+fi
+[[ -d "$temp_parent" && -w "$temp_parent" ]] || {
+  echo "Temporary directory is not writable: $temp_parent" >&2
+  exit 1
+}
+work_dir="$(mktemp -d "$temp_parent/redis-experimental.XXXXXX")"
 server_pid=""
 cleanup() {
   if [[ "$server_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -108,7 +120,7 @@ cleanup() {
     wait "$server_pid" 2>/dev/null || true
   fi
   case "$work_dir" in
-    "${TMPDIR:-/tmp}"/redis-experimental.*) rm -rf -- "$work_dir" ;;
+    "$temp_parent"/redis-experimental.*) rm -rf -- "$work_dir" ;;
     *) echo "Refusing to remove unexpected temporary path: $work_dir" >&2 ;;
   esac
 }
@@ -142,7 +154,11 @@ if [[ -x scripts/build.sh ]]; then
 else
   make -j"$jobs" "${make_args[@]}"
   if [[ "$RUN_FULL_TESTS" == true ]]; then
-    make test "${make_args[@]}"
+    [[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
+      echo "Redis test runner must be a regular executable file." >&2
+      exit 1
+    }
+    ./runtest --clients 1 --timeout 1200
   fi
 fi
 
