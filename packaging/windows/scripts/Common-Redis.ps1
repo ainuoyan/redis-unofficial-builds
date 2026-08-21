@@ -291,7 +291,21 @@ function Remove-RedisService {
 }
 
 function Start-RedisServiceAndWait {
-    Start-Service -Name $script:RedisServiceName
+    try {
+        Start-Service -Name $script:RedisServiceName
+    } catch {
+        Write-RedisInfo 'Redis service startup failed; collecting diagnostics before rollback.'
+        & sc.exe queryex $script:RedisServiceName
+        foreach ($log in @(
+                (Join-Path $script:RedisPrefix 'log\service-wrapper.log'),
+                (Join-Path $script:RedisPrefix 'log\redis.log'))) {
+            if (Test-Path -LiteralPath $log -PathType Leaf) {
+                Write-Host "===== $log ====="
+                Get-Content -LiteralPath $log -Tail 200
+            }
+        }
+        throw
+    }
     $service = Get-Service -Name $script:RedisServiceName
     $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(90))
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
