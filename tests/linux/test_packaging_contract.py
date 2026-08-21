@@ -691,6 +691,26 @@ class PackagingContractTests(unittest.TestCase):
             install,
         )
 
+    def test_uninstall_is_idempotent_only_when_managed_paths_are_absent(self) -> None:
+        uninstall = (ROOT / "packaging/linux/scripts/uninstall.sh").read_text(
+            encoding="utf-8"
+        )
+        marker = (
+            'if [[ ! -e "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" ]]; then'
+        )
+        self.assertIn(marker, uninstall)
+        absent_block = uninstall[
+            uninstall.index(marker) : uninstall.index("validate_state_file")
+        ]
+        self.assertIn('! -e "$REDIS_INSTALL_PREFIX"', absent_block)
+        self.assertIn('! -L "$REDIS_INSTALL_PREFIX"', absent_block)
+        self.assertIn('! -e "$REDIS_SERVICE_UNIT"', absent_block)
+        self.assertIn('! -L "$REDIS_SERVICE_UNIT"', absent_block)
+        self.assertIn("assert_no_live_install_redis_server", absent_block)
+        self.assertIn("info_message already_uninstalled", absent_block)
+        self.assertIn("exit 0", absent_block)
+        self.assertIn("die_message unmanaged_install", absent_block)
+
     def test_lifecycle_lock_is_root_only_and_not_symlink_following(self) -> None:
         common = (ROOT / "packaging/linux/scripts/common.sh").read_text(
             encoding="utf-8"

@@ -77,6 +77,7 @@ message() {
       ready_timeout_invalid) format='REDIS_READY_TIMEOUT 必须是 1-99999 的整数秒：%s' ;;
       operation_locked) format='另一个 Redis 安装、更新或卸载操作正在运行。' ;;
       state_invalid) format='安装状态文件无效：%s' ;;
+      already_uninstalled) format='Redis 已卸载；未更改任何文件。' ;;
       unmanaged_install) format='发现未由本项目管理的 Redis 安装。确认迁移时重新运行并添加 --adopt。' ;;
       account_invalid) format='拒绝使用 UID 0、GID 0 或无效的 Redis 服务账号：%s' ;;
       unexpected_path) format='拒绝操作非预期路径：%s' ;;
@@ -117,6 +118,7 @@ message() {
       ready_timeout_invalid) format='REDIS_READY_TIMEOUT must be an integer number of seconds (1-99999): %s' ;;
       operation_locked) format='Another Redis install, update, or uninstall operation is running.' ;;
       state_invalid) format='Invalid installation state file: %s' ;;
+      already_uninstalled) format='Redis is already uninstalled; no files were changed.' ;;
       unmanaged_install) format='An unmanaged Redis installation was found. Re-run with --adopt only after confirming that it may be migrated.' ;;
       account_invalid) format='Refusing to use a UID 0, GID 0, or invalid Redis service account: %s' ;;
       unexpected_path) format='Refusing to operate on an unexpected path: %s' ;;

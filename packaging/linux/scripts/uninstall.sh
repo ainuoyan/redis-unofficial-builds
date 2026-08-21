@@ -110,6 +110,15 @@ require_commands awk cat chmod dirname find flock getent grep id ls readlink rea
 acquire_lifecycle_lock
 [[ "$REDIS_INSTALL_PREFIX" == "/usr/local/redis" ]] \
   || die_message unexpected_path "$REDIS_INSTALL_PREFIX"
+if [[ ! -e "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" ]]; then
+  if [[ ! -e "$REDIS_INSTALL_PREFIX" && ! -L "$REDIS_INSTALL_PREFIX" \
+    && ! -e "$REDIS_SERVICE_UNIT" && ! -L "$REDIS_SERVICE_UNIT" ]]; then
+    assert_no_live_install_redis_server
+    info_message already_uninstalled
+    exit 0
+  fi
+  die_message unmanaged_install
+fi
 validate_state_file
 managed_install_exists || die_message unmanaged_install
 validate_existing_prefix_paths
