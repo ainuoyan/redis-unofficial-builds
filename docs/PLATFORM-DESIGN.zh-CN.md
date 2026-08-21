@@ -2,8 +2,9 @@
 
 [English](PLATFORM-DESIGN.md)
 
-本文明确区分已实现的发布能力和后端设计。“已实现”表示代码、CI、校验和发布策略
-均已存在；“仅设计”不代表存在可下载或受支持的包。
+本文明确区分稳定发布能力、实验性 artifact 和后端设计。“已实现”表示代码、CI、
+校验、原生生命周期门禁和发布策略均已存在；“实验性”表示已有手工构建/打包路径，
+但不宣称 GitHub Release 或生产支持；“仅设计”表示不宣称存在构建产物。
 
 ## Redis 发布系列
 
@@ -30,15 +31,16 @@ Redis 名称与标识仍受官方
 | 包变体 | 架构 | 构建基线 | 服务后端 | 状态 |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64、ARM64 | 按摘要固定的 Rocky Linux 8 用户态 | systemd | **已实现** |
-| `linux-glibc2.17-legacy` | x64、ARM64 | 经审查的 glibc 2.17 兼容工具链/sysroot | systemd | 仅设计 |
-| `linux-musl1.2` | x64、ARM64 | 固定的受支持 Alpine 基线 | OpenRC | 仅设计 |
-| `macos12` | x64、ARM64 | 原生 Runner、部署目标 12.0 | launchd | 仅设计 |
-| `windows-msys2` | x64 | 固定 MSYS2 工具链/运行库 | Windows SCM | 仅设计；Windows 主后端 |
+| `linux-glibc2.17-legacy` | x64、ARM64 | 按摘要固定的 manylinux2014（glibc 2.17） | systemd | **仅实验性 artifact** |
+| `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **仅实验性 artifact** |
+| `macos12` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 12.0 | launchd | **仅实验性 artifact** |
+| `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **仅实验性 artifact**；Windows 主后端 |
 | `windows-cygwin` | x64 | 固定 Cygwin 工具链/运行库 | Windows SCM | 仅设计；兼容后端 |
 
-只有 `linux-glibc2.28` 行已启用控制器。所有 Linux 方案均使用 `.tar.gz`，不依赖
-RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。Windows 方案使用 `.zip`
-和独立 Windows 目录布局。
+只有 `linux-glibc2.28` 行已启用控制器。实验性行指向手工
+`build-experimental.yml`，但控制器仍禁用。所有 Linux 方案均使用 `.tar.gz`，不依赖
+RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。实验性 Windows 包使用
+`.zip` 和固定目录 `C:\Program Files\Redis-Rzon`。
 
 ### ABI 原则
 
@@ -53,7 +55,7 @@ RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。Windows 方案�
 - 在模拟层运行的 x64 Windows 包不能标记为 ARM64。原生 Windows ARM64 必须具备
   兼容原生工具链，并在 ARM64 Windows 上完成服务、持久化及负载测试。
 
-## 已实现 Linux 包约定
+## 已实现稳定 Linux 包约定
 
 当前使用 `core` 配置：包含 Redis 服务端和命令行程序，不包含 Redis 8 捆绑模块。
 模块版必须使用独立变体，并设置独立编译器、依赖、许可证、持久化和升级门禁。
@@ -102,6 +104,24 @@ CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官�
 以及存在生产 `/usr/local/redis` 的主机。打包仓库快照由 root 所有且对构建账号
 只读。DNF 依赖从 Rocky 软件源动态解析，因此记录编译器/运行库信息，但不宣称
 逐字节可复现。
+
+## 实验性 artifact 约定
+
+仅手工触发的工作流先固定并严格解析官方 `redis/redis-hashes` 快照，下载对应源码包，
+再把已校验源码传给各构建 Job。仓库权限只有 `contents: read`，没有 Tag、Release、
+下游工作流分发 API 或发布步骤。artifact 保留 7 天，明确不属于稳定 Release 的 7 产物清单。
+
+glibc 2.17 包沿用第 2 版格式并增加 `PACKAGE_STATUS=experimental`；musl、macOS 和
+Windows 使用 `PACKAGE_FORMAT=3` 与 `PACKAGE_STATUS=experimental`。第 3 版元数据
+绑定源码摘要、redis-hashes 提交、打包提交、精确平台身份、经审查生命周期文件和
+平台补丁集。校验器不解压读取包，拒绝多余成员、路径穿越、链接、特殊文件、不安全
+权限、超大内容、压缩炸弹、架构/运行库不匹配和仍处于启用状态的 `loadmodule`。
+
+手工工作流对 Linux 和 macOS 执行上游构建测试及本地 Redis 协议冒烟。Windows Job
+执行优化的 MSYS2 构建、构建仓库独立实现的自包含 SCM 包装器，并在一次性 Windows
+Runner 上验证全新安装、同版本幂等、就绪、服务停止、卸载和彻底卸载。OpenRC、
+launchd、代表性旧发行版、最老 macOS、Windows 认证关闭、持久化、回滚失败和负载
+测试仍属于稳定验收，因此即使某次构建成功，这些产物仍保持实验状态。
 
 ## 当前 GitHub Release 约定
 
@@ -230,26 +250,28 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 - 普通卸载保留配置、数据、状态、账号和备份；`--purge` 在账号和挂载安全检查后
   删除固定前缀。
 
-## 设计中的后端
+## 实验性与设计中的后端
 
 ### glibc 2.17 legacy
 
-该包是独立命名的兼容变体，不替代已实现基线。验收要求包括：两个架构的固定且可维护
-工具链/sysroot、最高 `GLIBC_2.17` 符号检查、依赖检查、代表性旧用户态执行测试及
+该包是独立命名的实验性兼容变体，不替代已实现基线。构建器使用按摘要固定的
+manylinux2014，并拒绝任何要求高于 `GLIBC_2.17` 符号的 ELF。稳定验收仍要求两个
+架构的可维护工具链/sysroot、依赖检查、代表性旧用户态执行测试及
 同等 systemd 生命周期测试。说明必须明确旧 ABI 不提供操作系统安全维护。
 
 ### musl 与 OpenRC
 
-musl 包必须在固定受支持 Alpine 基线构建，不能带 glibc 标签。需要原生依赖检查、
-Shell/运行环境审查，以及 OpenRC 下的安装、启动、就绪、更新、回滚和卸载测试。
+实验性 musl 包在按摘要固定的 musllinux 1.2 镜像中构建，必须使用 musl 解释器，
+不得包含 `GLIBC_*` 引用，并包含独立 OpenRC 生命周期约定。稳定验收仍需要原生依赖
+检查、Shell/运行环境审查，以及 OpenRC 下的安装、启动、就绪、更新、回滚和卸载测试。
 OpenRC 脚本不得依赖 systemd，并使用独立服务/状态约定。
 
 ### macOS
 
-每个架构在原生 Runner 构建并记录部署目标，使用 `file` 和 `otool` 检查。
-launchd 后端需要管理已记录的禁止登录账号，保留配置/数据，验证 PING 就绪，并在
-声明支持的最老 macOS 上测试更新、回滚和卸载。只有两个 slice 分别通过后才能发布
-universal 包。
+每个实验性架构都在原生 Runner 上以 12.0 部署目标构建；包校验器检查 Mach-O 架构、
+部署目标和允许的系统动态库路径。launchd 后端管理禁止登录账号，保留配置/数据，
+验证 PING，并包含更新/回滚/卸载脚本。稳定验收仍须在声明支持的最老 macOS 上运行
+这些路径。只有两个 slice 分别通过后才能发布 universal 包。
 
 ### Windows
 
@@ -257,15 +279,16 @@ Windows 方案明确参考 Apache-2.0 许可的
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)，
 并固定提交
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)，
-以保证设计结论和 issue 映射可复核。已实现 Linux 包未合入该项目源码。
-归属和代码合入要求见
+以保证设计结论和 issue 映射可复核。本仓库的 Windows 包装器为独立实现，未合入
+该项目任何源码文件。归属和未来代码合入要求见
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 
-MSYS2 是主方案，Cygwin 是独立兼容方案，不能盲目共用路径转换：MSYS2 使用
+MSYS2 是实验性主后端，Cygwin 仍仅设计，不能盲目共用路径转换：MSYS2 使用
 `/c/...`，Cygwin 使用 `/cygdrive/c/...`。服务包装器必须以前台模式运行 Redis，
 校验配置路径，把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
-关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在
-`C:\ProgramData\Redis` 保存受保护安装状态。
+关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在固定安装前缀保存受
+保护状态；备份位于 `C:\ProgramData\Redis-Rzon\Backups`。当前实验只支持默认无认证
+回环端点，认证关闭仍是明确的稳定验收项。
 
 Windows 稳定验收要求真实测试空格/非 ASCII 路径、错误配置、端口冲突、重启与
 持久化、BGSAVE、认证关闭、子进程异常退出、Sentinel、卸载/升级和有界负载。
@@ -307,4 +330,4 @@ Release 名称清单只用于计划；内容和证明由具备发布能力的 Li
 - 只创建新草稿、回读精确清单、下载验证和单向正式发布；
 - 受保护默认分支和 `release` Environment 审批。
 
-仅设计平台不能因为配置中存在产物名称就加入已实现 Release。
+实验性或仅设计平台不能因为配置中存在工作流或产物名称就加入已实现 Release。

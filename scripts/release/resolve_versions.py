@@ -28,7 +28,16 @@ SUPPORTED_BACKEND_CONTRACTS = {
     "build-linux.yml": {
         ("linux-glibc2.28", "linux", "x64", "tar.gz"),
         ("linux-glibc2.28", "linux", "arm64", "tar.gz"),
-    }
+    },
+    "build-experimental.yml": {
+        ("linux-glibc2.17-legacy", "linux", "x64", "tar.gz"),
+        ("linux-glibc2.17-legacy", "linux", "arm64", "tar.gz"),
+        ("linux-musl1.2", "linux", "x64", "tar.gz"),
+        ("linux-musl1.2", "linux", "arm64", "tar.gz"),
+        ("macos12", "macos", "x64", "tar.gz"),
+        ("macos12", "macos", "arm64", "tar.gz"),
+        ("windows-msys2", "windows", "x64", "zip"),
+    },
 }
 EXPECTED_PACKAGE_NAME_PREFIX = "Redis-Rzon"
 REQUIRED_ENABLED_PLATFORM_IDS = {
@@ -37,21 +46,21 @@ REQUIRED_ENABLED_PLATFORM_IDS = {
 }
 REQUIRED_DESIGN_PLATFORM_CONTRACTS = {
     "linux-glibc2.17-legacy-x64": (
-        "linux-glibc2.17-legacy", "linux", "x64", "tar.gz", "designed"
+        "linux-glibc2.17-legacy", "linux", "x64", "tar.gz", "experimental"
     ),
     "linux-glibc2.17-legacy-arm64": (
-        "linux-glibc2.17-legacy", "linux", "arm64", "tar.gz", "designed"
+        "linux-glibc2.17-legacy", "linux", "arm64", "tar.gz", "experimental"
     ),
     "linux-musl1.2-x64": (
-        "linux-musl1.2", "linux", "x64", "tar.gz", "designed"
+        "linux-musl1.2", "linux", "x64", "tar.gz", "experimental"
     ),
     "linux-musl1.2-arm64": (
-        "linux-musl1.2", "linux", "arm64", "tar.gz", "designed"
+        "linux-musl1.2", "linux", "arm64", "tar.gz", "experimental"
     ),
-    "macos12-x64": ("macos12", "macos", "x64", "tar.gz", "designed"),
-    "macos12-arm64": ("macos12", "macos", "arm64", "tar.gz", "designed"),
+    "macos12-x64": ("macos12", "macos", "x64", "tar.gz", "experimental"),
+    "macos12-arm64": ("macos12", "macos", "arm64", "tar.gz", "experimental"),
     "windows-msys2-x64": (
-        "windows-msys2", "windows", "x64", "zip", "designed"
+        "windows-msys2", "windows", "x64", "zip", "experimental"
     ),
     "windows-cygwin-x64": (
         "windows-cygwin", "windows", "x64", "zip", "designed"
@@ -323,8 +332,30 @@ def validate_platform_config(config: Any, workflows_dir: Path | None = None) -> 
                     f"Enabled platform {platform_id} collides with another asset name"
                 )
             asset_keys.add(asset_key)
+        elif platform["status"] == "experimental":
+            workflow = platform["build_workflow"]
+            if not isinstance(workflow, str) or not WORKFLOW_RE.fullmatch(workflow):
+                raise PlanError(
+                    f"Experimental platform {platform_id} must name its manual workflow"
+                )
+            contract = (
+                platform["variant"],
+                platform["os"],
+                platform["arch"],
+                platform["archive_extension"],
+            )
+            if workflow != "build-experimental.yml" or contract not in SUPPORTED_BACKEND_CONTRACTS[workflow]:
+                raise PlanError(
+                    f"Experimental platform {platform_id} does not match its manual workflow"
+                )
+            if workflows_dir is not None:
+                workflow_path = workflows_dir / workflow
+                if not workflow_path.is_file() or workflow_path.is_symlink():
+                    raise PlanError(
+                        f"Experimental platform {platform_id} names a missing workflow: {workflow}"
+                    )
         elif platform["build_workflow"] is not None:
-            raise PlanError(f"Disabled platform {platform_id} must not name a workflow")
+            raise PlanError(f"Designed platform {platform_id} must not name a workflow")
 
     if not REQUIRED_ENABLED_PLATFORM_IDS.issubset(enabled_ids):
         missing = sorted(REQUIRED_ENABLED_PLATFORM_IDS - enabled_ids)
@@ -342,7 +373,7 @@ def validate_repository_platform_matrix(config: dict[str, Any]) -> None:
     for platform_id, expected in REQUIRED_DESIGN_PLATFORM_CONTRACTS.items():
         platform = indexed.get(platform_id)
         if platform is None:
-            raise PlanError(f"Required designed platform is missing: {platform_id}")
+            raise PlanError(f"Required platform contract is missing: {platform_id}")
         actual = (
             platform["variant"],
             platform["os"],
@@ -352,7 +383,7 @@ def validate_repository_platform_matrix(config: dict[str, Any]) -> None:
         )
         if actual != expected or platform["controller_enabled"]:
             raise PlanError(
-                f"Designed platform contract changed without backend review: {platform_id}"
+                f"Platform contract changed without backend review: {platform_id}"
             )
 
 

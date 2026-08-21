@@ -30,10 +30,26 @@ jobs:
           set -euo pipefail
           python3 -m json.tool config/release-lines.json >/dev/null
           python3 -m json.tool config/platforms.json >/dev/null
-          python3 -m py_compile scripts/release/*.py
+          python3 -m py_compile scripts/release/*.py scripts/experimental/*.py
           python3 scripts/release/validate_configs.py \
             --release-config config/release-lines.json \
             --platform-config config/platforms.json \
             --workflows-dir .github/workflows
-          bash -n scripts/linux/build-redis.sh packaging/linux/scripts/*.sh
+          bash -n \
+            scripts/linux/build-redis.sh \
+            scripts/experimental/*.sh \
+            packaging/linux/scripts/*.sh \
+            packaging/musl/scripts/*.sh \
+            packaging/macos/scripts/*.sh
+          pwsh -NoProfile -NonInteractive -Command '
+            $allErrors = @()
+            Get-ChildItem packaging/windows/scripts/*.ps1 | ForEach-Object {
+              $tokens = $null
+              $parseErrors = $null
+              [void][Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName, [ref]$tokens, [ref]$parseErrors)
+              $allErrors += $parseErrors
+            }
+            if ($allErrors.Count -ne 0) { $allErrors | Out-String | Write-Error }
+          '
           python3 -m unittest discover -s tests -v

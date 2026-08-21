@@ -28,9 +28,9 @@
       "os": "linux",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "linux-glibc2.17-legacy-arm64",
@@ -38,9 +38,9 @@
       "os": "linux",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "linux-musl1.2-x64",
@@ -48,9 +48,9 @@
       "os": "linux",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "linux-musl1.2-arm64",
@@ -58,9 +58,9 @@
       "os": "linux",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "macos12-x64",
@@ -68,9 +68,9 @@
       "os": "macos",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "macos12-arm64",
@@ -78,9 +78,9 @@
       "os": "macos",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "windows-msys2-x64",
@@ -88,9 +88,9 @@
       "os": "windows",
       "arch": "x64",
       "archive_extension": "zip",
-      "status": "designed",
+      "status": "experimental",
       "controller_enabled": false,
-      "build_workflow": null
+      "build_workflow": "build-experimental.yml"
     },
     {
       "id": "windows-cygwin-x64",

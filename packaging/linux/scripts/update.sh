@@ -201,6 +201,8 @@ fi
 
 if [[ "$was_managed" == true ]]; then
   old_version="$(state_value REDIS_VERSION)"
+  [[ "$(state_value PACKAGE_VARIANT)" == "$(package_info_value "$PACKAGE_ROOT" PACKAGE_VARIANT)" ]] \
+    || die "Refusing to update across package variants; use a separately reviewed migration."
 else
   old_version="unmanaged"
 fi

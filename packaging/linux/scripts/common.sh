@@ -587,11 +587,13 @@ validate_package_root() {
       required = "PACKAGE_FORMAT PACKAGE_ID REDIS_VERSION REDIS_SERIES BUILD_PROFILE PACKAGE_VARIANT PACKAGE_ARCH OS LIBC MIN_GLIBC MAX_GLIBC_SYMBOL SERVICE_BACKEND INSTALL_PREFIX UPSTREAM_SOURCE_SHA256 UPSTREAM_CONTRIBUTOR_LICENSE_SHA256 UPSTREAM_DEPENDENCY_NOTICES_SHA256 PATCHSET_SHA256"
       split(required, keys, " ")
       for (i in keys) allowed[keys[i]] = 1
+      allowed["PACKAGE_STATUS"] = 1
     }
     !/^[A-Z][A-Z0-9_]*=[^[:cntrl:]]*$/ { bad = 1; next }
     !($1 in allowed) || ++seen[$1] != 1 { bad = 1 }
     END {
-      for (key in allowed) if (seen[key] != 1) bad = 1
+      for (i in keys) if (seen[keys[i]] != 1) bad = 1
+      if (seen["PACKAGE_STATUS"] > 1) bad = 1
       exit bad
     }
   ' "$package_info" || die_message package_info_invalid "$package_info"
@@ -599,6 +601,10 @@ validate_package_root() {
     || die_message package_info_invalid "$package_info"
   [[ "$(package_info_value "$package_root" PACKAGE_FORMAT)" == "2" ]] \
     || die_message package_info_invalid "$package_info"
+  if grep -q '^PACKAGE_STATUS=' "$package_info"; then
+    [[ "$(package_info_value "$package_root" PACKAGE_STATUS)" == "experimental" ]] \
+      || die_message package_info_invalid "$package_info"
+  fi
   [[ "$(package_info_value "$package_root" OS)" == "linux" ]] \
     || die_message package_info_invalid "$package_info"
   [[ "$(package_info_value "$package_root" INSTALL_PREFIX)" == "$REDIS_INSTALL_PREFIX" ]] \

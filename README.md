@@ -2,9 +2,9 @@
 
 [简体中文](README.zh-CN.md)
 
-Unofficial, versioned binary distributions of Redis. The repository implements
-portable Linux archive builds for x64 and ARM64 and also contains reviewed
-designs for additional ABI and operating-system backends.
+Unofficial, versioned binary distributions of Redis. The stable publication
+path remains the glibc 2.28 Linux build. Additional ABI and operating-system
+backends have a separate experimental, manually triggered artifact path.
 
 > This project is not affiliated with or endorsed by Redis Ltd. Redis and its
 > bundled dependencies remain subject to the license and notice files included
@@ -12,23 +12,25 @@ designs for additional ABI and operating-system backends.
 
 ## Available packages
 
-Only rows marked **implemented** are eligible for publication.
+Only rows marked **implemented** are eligible for GitHub Release publication.
+An **experimental** row has build/package code but is not a supported or
+Release-published package.
 
 | Variant | Architecture | Runtime requirement | Status |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
 | `linux-glibc2.28` | `arm64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | Legacy glibc Linux, systemd | Design only |
-| `linux-musl1.2` | `x64` / `arm64` | musl Linux, OpenRC | Design only |
-| `macos12` | `x64` / `arm64` | macOS, launchd | Design only |
-| `windows-msys2` | `x64` | Windows Service Control Manager | Design only |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux, glibc 2.17+, systemd | Experimental artifact only |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Experimental artifact only |
+| `macos12` | `x64` / `arm64` | macOS 12+, launchd | Experimental artifact only |
+| `windows-msys2` | `x64` | Windows Server 2022 test runner, Windows SCM | Experimental artifact only |
 | `windows-cygwin` | `x64` | Windows Service Control Manager | Design only |
 
-The implemented publication target is therefore Linux-only. A glibc 2.28
-package normally runs on a newer glibc system of the same architecture; Alpine
-and other musl systems require the separate musl backend, which is not yet
-implemented. Linux packages are plain `.tar.gz` archives and do not require
-RPM, DEB, Snap, or APK. Published files are available from the repository's
+The implemented publication target remains glibc 2.28 Linux only. A glibc
+2.28 package normally runs on a newer glibc system of the same architecture;
+Alpine and other musl systems require the separately named musl artifact.
+Linux packages are plain `.tar.gz` archives and do not require RPM, DEB, Snap,
+or APK. Published files are available from the repository's
 [GitHub Releases](https://github.com/ainuoyan/redis-unofficial-builds/releases).
 
 Before using the lifecycle instructions below, confirm that the selected
@@ -48,9 +50,36 @@ references
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 at fixed commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9).
-No Windows package or native Windows ARM64 support is currently claimed. See
+No stable Windows Release, Windows production support, Cygwin package, or
+native Windows ARM64 support is currently claimed. See
 [Windows issue coverage](docs/WINDOWS-ISSUE-COVERAGE.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).
+
+### Experimental manual artifacts
+
+`.github/workflows/build-experimental.yml` can be triggered manually for an
+exact official stable Redis version. It verifies that version against an
+immutable `redis/redis-hashes` commit, builds each selected architecture
+natively, validates archive contents, and uploads seven-day Actions artifacts:
+
+- glibc 2.17 legacy: x64 and ARM64 `.tar.gz` packages with the reviewed
+  systemd lifecycle scripts;
+- musl 1.2: x64 and ARM64 `.tar.gz` packages with OpenRC lifecycle scripts;
+- macOS 12+: native x64 and ARM64 `.tar.gz` packages with launchd lifecycle
+  scripts; and
+- Windows: one x64 MSYS2 `.zip` package with a dedicated SCM wrapper and
+  PowerShell lifecycle scripts.
+
+Each package has an adjacent `.sha256` file and declares `experimental` in its
+package metadata. The workflow has `contents: read`, contains no Release/tag
+operation, is not callable by the release controller, and does not generate
+the stable Release manifest, SBOM, or attestations. Passing a build is not the
+same as completing the oldest-host, rollback, persistence, load, and security
+acceptance gates in the platform design. Use the package-local `README.txt`
+for its experimental layout; the stable lifecycle instructions below apply to
+`linux-glibc2.28` Release packages only. A checked-in experimental row does not
+prove that a successful native workflow run exists; verify the selected run
+and its logs before downloading an artifact.
 
 ## Release and package contents
 

@@ -140,6 +140,8 @@ validate_install_prefix_parent
 if managed_install_exists; then
   retained_version="$(state_value REDIS_VERSION)"
   package_version="$(package_info_value "$PACKAGE_ROOT" REDIS_VERSION)"
+  [[ "$(state_value PACKAGE_VARIANT)" == "$(package_info_value "$PACKAGE_ROOT" PACKAGE_VARIANT)" ]] \
+    || die "Refusing to reinstall a different package variant over retained lifecycle state."
   if ! redis_version_is_at_least "$package_version" "$retained_version" \
     && [[ "$allow_downgrade" != true ]]; then
     if [[ "$REDIS_UI_LANGUAGE" == "zh" ]]; then

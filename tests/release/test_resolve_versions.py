@@ -458,7 +458,7 @@ class ResolveVersionsTests(unittest.TestCase):
         with self.assertRaisesRegex(resolver.PlanError, "top-level keys"):
             resolver.validate_platform_config(self.platform_config)
 
-    def test_checked_in_designed_platform_matrix_cannot_silently_shrink(self) -> None:
+    def test_checked_in_platform_matrix_cannot_silently_shrink(self) -> None:
         config = resolver.load_json(ROOT / "config/platforms.json")
         resolver.validate_repository_platform_matrix(config)
         config["platforms"] = [
@@ -466,7 +466,7 @@ class ResolveVersionsTests(unittest.TestCase):
             for platform in config["platforms"]
             if platform["id"] != "windows-msys2-x64"
         ]
-        with self.assertRaisesRegex(resolver.PlanError, "designed platform"):
+        with self.assertRaisesRegex(resolver.PlanError, "platform contract"):
             resolver.validate_repository_platform_matrix(config)
 
     def test_boolean_schema_and_policy_integer_are_rejected(self) -> None:
