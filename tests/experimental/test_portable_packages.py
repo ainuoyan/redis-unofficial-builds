@@ -411,6 +411,11 @@ class PortablePackageTests(unittest.TestCase):
         macos_job, windows_job = remainder.split("\n  windows:\n", 1)
 
         self.assertIn("Test legacy userspace lifecycle without systemd", glibc_job)
+        self.assertNotIn("stage=/root/redis-unofficial-lifecycle", glibc_job)
+        self.assertIn(
+            'stage="$(mktemp -d /tmp/redis-unofficial-lifecycle.XXXXXX)"', glibc_job
+        )
+        self.assertIn('chmod 0755 "$stage"', glibc_job)
         self.assertIn('"$package/scripts/install.sh" --no-service', glibc_job)
         self.assertIn('redis-cli" -s "$socket" save', glibc_job.lower())
         self.assertIn('"$package/scripts/update.sh"', glibc_job)

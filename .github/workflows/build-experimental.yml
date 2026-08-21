@@ -244,8 +244,9 @@ jobs:
             --volume "$archive:/tmp/redis-package.tar.gz:ro" \
             "$image" /bin/bash -euo pipefail -c '
               yum -y install coreutils findutils gawk grep gzip procps-ng shadow-utils tar util-linux
-              stage=/root/redis-unofficial-lifecycle
-              install -d -o root -g root -m 0700 "$stage"
+              stage="$(mktemp -d /tmp/redis-unofficial-lifecycle.XXXXXX)"
+              chown root:root "$stage"
+              chmod 0755 "$stage"
               tar -xzf /tmp/redis-package.tar.gz -C "$stage"
               package="$stage/redis"
               prefix=/usr/local/redis
