@@ -400,6 +400,37 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 90", musl_job)
         self.assertIn("timeout-minutes: 90", macos_job)
 
+    def test_experimental_workflow_runs_platform_lifecycle_acceptance(self) -> None:
+        workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
+            encoding="utf-8"
+        )
+        glibc_job, remainder = workflow.split("\n  glibc217:\n", 1)[1].split(
+            "\n  musl:\n", 1
+        )
+        musl_job, remainder = remainder.split("\n  macos:\n", 1)
+        macos_job, windows_job = remainder.split("\n  windows:\n", 1)
+
+        self.assertIn("Test legacy userspace lifecycle without systemd", glibc_job)
+        self.assertIn('"$package/scripts/install.sh" --no-service', glibc_job)
+        self.assertIn('redis-cli" -s "$socket" save', glibc_job.lower())
+        self.assertIn('"$package/scripts/update.sh"', glibc_job)
+        self.assertIn('uninstall.sh" --purge', glibc_job)
+
+        self.assertIn("Test OpenRC install, persistence, recovery, and purge", musl_job)
+        self.assertIn('rc-service "$service" restart', musl_job)
+        self.assertIn('redis-cli" -s "$socket" save', musl_job.lower())
+        self.assertIn('"$package/scripts/update.sh"', musl_job)
+        self.assertIn('uninstall.sh" --purge', musl_job)
+
+        self.assertIn("Test launchd install, persistence, recovery, and purge", macos_job)
+        self.assertIn("launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial", macos_job)
+        self.assertIn('redis-cli" -s "$socket" save', macos_job.lower())
+        self.assertIn('"$package/scripts/update.sh"', macos_job)
+        self.assertIn('uninstall.sh" --purge', macos_job)
+
+        self.assertIn("Restart-Service -Name RedisUnofficial", windows_job)
+        self.assertIn("redis-unofficial-acceptance-persistence", windows_job)
+
     def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
         self.assertIn('license_root=/usr/share/doc/Cygwin', script)

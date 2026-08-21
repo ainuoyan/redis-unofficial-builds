@@ -229,6 +229,89 @@ jobs:
             --variant linux-glibc2.17-legacy --arch "$PACKAGE_ARCH" --min-glibc 2.17 \
             --package-status experimental --build-workflow .github/workflows/build-experimental.yml \
             --packaging-root "$GITHUB_WORKSPACE" --packaging-revision "$GITHUB_SHA"
+      - name: Test legacy userspace lifecycle without systemd
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          IMAGE_ENV: ${{ matrix.image_env }}
+        run: |
+          set -euo pipefail
+          image="${!IMAGE_ENV}"
+          archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-linux-glibc2.17-legacy-${PACKAGE_ARCH}.tar.gz"
+          [[ -f "$archive" && ! -L "$archive" ]]
+          docker run --rm \
+            --volume "$archive:/tmp/redis-package.tar.gz:ro" \
+            "$image" /bin/bash -euo pipefail -c '
+              yum -y install coreutils findutils gawk grep gzip procps-ng shadow-utils tar util-linux
+              stage=/root/redis-unofficial-lifecycle
+              install -d -o root -g root -m 0700 "$stage"
+              tar -xzf /tmp/redis-package.tar.gz -C "$stage"
+              package="$stage/redis"
+              prefix=/usr/local/redis
+              socket="$prefix/data/redis.sock"
+              redis_pid=""
+
+              wait_ready() {
+                local attempt
+                for attempt in $(seq 1 30); do
+                  [[ "$("$prefix/bin/redis-cli" -s "$socket" ping 2>/dev/null || true)" == PONG ]] && return 0
+                  sleep 1
+                done
+                return 1
+              }
+              start_redis() {
+                local uid gid
+                uid="$(id -u redis)"
+                gid="$(id -g redis)"
+                setpriv --reuid "$uid" --regid "$gid" --clear-groups --no-new-privs -- \
+                  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                  "$prefix/bin/redis-server" "$prefix/conf/redis.conf" &
+                redis_pid=$!
+                wait_ready
+              }
+              stop_redis() {
+                "$prefix/bin/redis-cli" -s "$socket" shutdown nosave
+                wait "$redis_pid"
+                redis_pid=""
+              }
+              cleanup() {
+                if [[ -n "$redis_pid" ]]; then
+                  kill "$redis_pid" >/dev/null 2>&1 || true
+                  wait "$redis_pid" >/dev/null 2>&1 || true
+                fi
+                if [[ -f "$prefix/.redis-package-state" ]]; then
+                  "$package/scripts/uninstall.sh" --purge >/dev/null 2>&1 || true
+                fi
+              }
+              trap cleanup EXIT
+
+              "$package/scripts/install.sh" --no-service
+              start_redis
+              "$prefix/bin/redis-cli" -s "$socket" set redis-unofficial-acceptance-persistence persisted >/dev/null
+              "$prefix/bin/redis-cli" -s "$socket" save >/dev/null
+              stop_redis
+              config_sha="$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")"
+
+              "$package/scripts/update.sh"
+              [[ "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" == "$config_sha" ]]
+              start_redis
+              [[ "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+              stop_redis
+
+              "$package/scripts/uninstall.sh"
+              [[ ! -e "$prefix/bin" && -f "$prefix/conf/redis.conf" \
+                && -f "$prefix/data/dump.rdb" && -f "$prefix/.redis-package-state" ]]
+              "$package/scripts/install.sh" --no-service
+              [[ "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" == "$config_sha" ]]
+              start_redis
+              [[ "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+              stop_redis
+              "$package/scripts/uninstall.sh" --purge
+              [[ ! -e "$prefix" ]]
+              "$package/scripts/uninstall.sh" --purge
+              trap - EXIT
+            '
       - name: Upload experimental package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -306,6 +389,67 @@ jobs:
                 PACKAGING_REVISION="$GITHUB_SHA" OUTPUT_DIR=/workspace/dist \
                 /workspace/scripts/experimental/build-portable-posix.sh
             '
+      - name: Test OpenRC install, persistence, recovery, and purge
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          IMAGE_ENV: ${{ matrix.image_env }}
+        run: |
+          set -euo pipefail
+          image="${!IMAGE_ENV}"
+          archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-linux-musl1.2-${PACKAGE_ARCH}.tar.gz"
+          [[ -f "$archive" && ! -L "$archive" ]]
+          docker run --rm \
+            --volume "$archive:/tmp/redis-package.tar.gz:ro" \
+            "$image" /bin/bash -euo pipefail -c '
+              apk add --no-cache bash coreutils findutils musl-utils openrc util-linux
+              install -d -o root -g root -m 0755 /run/openrc
+              touch /run/openrc/softlevel
+              stage=/root/redis-unofficial-lifecycle
+              install -d -o root -g root -m 0700 "$stage"
+              tar -xzf /tmp/redis-package.tar.gz -C "$stage"
+              package="$stage/redis"
+              prefix=/usr/local/redis
+              socket="$prefix/data/redis.sock"
+              service=redis-unofficial
+
+              wait_ready() {
+                local attempt
+                for attempt in $(seq 1 30); do
+                  [[ "$("$prefix/bin/redis-cli" -s "$socket" ping 2>/dev/null || true)" == PONG ]] && return 0
+                  sleep 1
+                done
+                return 1
+              }
+              cleanup() {
+                if [[ -f "$prefix/.redis-package-state" ]]; then
+                  "$package/scripts/uninstall.sh" --purge >/dev/null 2>&1 || true
+                fi
+              }
+              trap cleanup EXIT
+
+              "$package/scripts/install.sh"
+              "$package/scripts/install.sh"
+              "$prefix/bin/redis-cli" -s "$socket" set redis-unofficial-acceptance-persistence persisted >/dev/null
+              "$prefix/bin/redis-cli" -s "$socket" save >/dev/null
+              rc-service "$service" restart
+              wait_ready
+              [[ "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+              config_sha="$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")"
+
+              "$package/scripts/uninstall.sh"
+              [[ ! -e "$prefix/bin" && -f "$prefix/conf/redis.conf" \
+                && -f "$prefix/data/dump.rdb" && -f "$prefix/.redis-package-state" ]]
+              "$package/scripts/update.sh"
+              wait_ready
+              [[ "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" == "$config_sha" ]]
+              [[ "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+              "$package/scripts/uninstall.sh" --purge
+              [[ ! -e "$prefix" && ! -e /etc/init.d/redis-unofficial ]]
+              "$package/scripts/uninstall.sh" --purge
+              trap - EXIT
+            '
       - name: Upload experimental package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -357,6 +501,59 @@ jobs:
           PACKAGING_REVISION: ${{ github.sha }}
           OUTPUT_DIR: ${{ github.workspace }}/dist
         run: scripts/experimental/build-portable-posix.sh
+      - name: Test launchd install, persistence, recovery, and purge
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+        run: |
+          set -euo pipefail
+          archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-macos12-${PACKAGE_ARCH}.tar.gz"
+          [[ -f "$archive" && ! -L "$archive" ]]
+          stage="$(sudo mktemp -d /private/tmp/redis-unofficial-lifecycle.XXXXXX)"
+          sudo tar -xzf "$archive" -C "$stage"
+          package="$stage/redis"
+          prefix=/usr/local/redis
+          socket="$prefix/data/redis.sock"
+
+          wait_ready() {
+            local attempt
+            for attempt in $(jot 30); do
+              [[ "$(sudo "$prefix/bin/redis-cli" -s "$socket" ping 2>/dev/null || true)" == PONG ]] && return 0
+              sleep 1
+            done
+            return 1
+          }
+          cleanup() {
+            if sudo test -f "$prefix/.redis-package-state"; then
+              sudo "$package/scripts/uninstall.sh" --purge >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          sudo "$package/scripts/install.sh"
+          sudo "$package/scripts/install.sh"
+          sudo "$prefix/bin/redis-cli" -s "$socket" set redis-unofficial-acceptance-persistence persisted >/dev/null
+          sudo "$prefix/bin/redis-cli" -s "$socket" save >/dev/null
+          sudo launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial
+          wait_ready
+          [[ "$(sudo "$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+          config_sha="$(sudo shasum -a 256 "$prefix/conf/redis.conf" | awk '{print $1}')"
+
+          sudo "$package/scripts/uninstall.sh"
+          sudo test ! -e "$prefix/bin"
+          sudo test -f "$prefix/conf/redis.conf"
+          sudo test -f "$prefix/data/dump.rdb"
+          sudo test -f "$prefix/.redis-package-state"
+          sudo "$package/scripts/update.sh"
+          wait_ready
+          [[ "$(sudo shasum -a 256 "$prefix/conf/redis.conf" | awk '{print $1}')" == "$config_sha" ]]
+          [[ "$(sudo "$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+          sudo "$package/scripts/uninstall.sh" --purge
+          sudo test ! -e "$prefix"
+          sudo test ! -e /Library/LaunchDaemons/io.github.ainuoyan.redis-unofficial.plist
+          sudo "$package/scripts/uninstall.sh" --purge
+          trap - EXIT
       - name: Upload experimental package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -438,6 +635,32 @@ jobs:
             $response = & 'C:\Program Files\Redis-Unofficial\bin\redis-cli.exe' -h 127.0.0.1 -p 6379 ping
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
               throw 'Installed Windows service did not answer PING.'
+            }
+            $cli = 'C:\Program Files\Redis-Unofficial\bin\redis-cli.exe'
+            $response = & $cli -h 127.0.0.1 -p 6379 set redis-unofficial-acceptance-persistence persisted
+            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
+              throw 'Windows persistence setup failed.'
+            }
+            $response = & $cli -h 127.0.0.1 -p 6379 save
+            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
+              throw 'Windows persistence SAVE failed.'
+            }
+            Restart-Service -Name RedisUnofficial -Force
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              $response = & $cli -h 127.0.0.1 -p 6379 ping 2>$null
+              if ($LASTEXITCODE -eq 0 -and ([string]$response).Trim() -ceq 'PONG') {
+                $ready = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) {
+              throw 'Windows service did not recover after restart.'
+            }
+            $response = & $cli -h 127.0.0.1 -p 6379 get redis-unofficial-acceptance-persistence
+            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'persisted') {
+              throw 'Windows service did not preserve data across restart.'
             }
             & lifecycle-test/redis/scripts/Uninstall-Redis.ps1
             if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {
