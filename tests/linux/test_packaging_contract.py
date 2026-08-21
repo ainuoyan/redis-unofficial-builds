@@ -49,7 +49,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn('make -j"$(nproc)" build redis', script)
         self.assertIn("core profile", script)
         self.assertIn('package_root="$staging_root/redis"', script)
-        self.assertIn('-C "$staging_root" redis', script)
+        self.assertIn('cd "$staging_root"', script)
         self.assertIn('expected_file_arch=\'x86-64\'', script)
         self.assertIn('expected_file_arch=\'ARM aarch64\'', script)
         self.assertIn('Refusing to run an upstream source build', script)

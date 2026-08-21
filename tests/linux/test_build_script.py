@@ -80,6 +80,15 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn('install -m 0644 "$temporary_checksum_path"', script)
         self.assertIn('install -m 0644 "$temporary_package_path"', script)
 
+    def test_archive_ordering_is_compatible_with_gnu_tar_126(self) -> None:
+        script = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("--sort=name", script)
+        self.assertIn("find redis -print0", script)
+        self.assertIn("| LC_ALL=C sort -z", script)
+        self.assertIn("--null", script)
+        self.assertIn("--no-recursion", script)
+        self.assertIn("-T -", script)
+
     def test_download_retries_are_compatible_with_rocky_linux_8_curl(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("--retry 3 --retry-connrefused", script)
