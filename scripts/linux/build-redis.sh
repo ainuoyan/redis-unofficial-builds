@@ -669,17 +669,22 @@ for output_path in "$package_path" "$checksum_path"; do
   fi
 done
 
-tar \
-  --sort=name \
-  --numeric-owner \
-  --owner=0 \
-  --group=0 \
-  --mtime="@${SOURCE_DATE_EPOCH}" \
-  --format=posix \
-  --pax-option=delete=atime,delete=ctime \
-  -cf - \
-  -C "$staging_root" redis \
-  | gzip -n >"$temporary_package_path"
+(
+  cd "$staging_root"
+  find redis -print0 \
+    | LC_ALL=C sort -z \
+    | tar \
+      --null \
+      --no-recursion \
+      --numeric-owner \
+      --owner=0 \
+      --group=0 \
+      --mtime="@${SOURCE_DATE_EPOCH}" \
+      --format=posix \
+      --pax-option=delete=atime,delete=ctime \
+      -cf - \
+      -T -
+) | gzip -n >"$temporary_package_path"
 
 (
   cd "$work_dir"
