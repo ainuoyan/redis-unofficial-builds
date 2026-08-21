@@ -154,6 +154,23 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("--reuid redis-builder", workflow)
         self.assertNotIn("--regid redis-builder", workflow)
 
+    def test_glibc217_build_preserves_only_the_pinned_manylinux_toolchain(self) -> None:
+        glibc_job = self.experimental_workflow.split("  glibc217:\n", 1)[1].split(
+            "\n  musl:\n", 1
+        )[0]
+        self.assertIn(
+            'toolchain_root="/opt/rh/devtoolset-10/root"', glibc_job
+        )
+        self.assertIn('[[ -x "$toolchain_root/usr/bin/cc"', glibc_job)
+        self.assertIn(
+            'PATH="$toolchain_root/usr/bin:/usr/local/sbin:', glibc_job
+        )
+        self.assertIn(
+            'LD_LIBRARY_PATH="$toolchain_root/usr/lib64:', glibc_job
+        )
+        self.assertNotIn('PATH="$PATH"', glibc_job)
+        self.assertNotIn('LD_LIBRARY_PATH="$LD_LIBRARY_PATH"', glibc_job)
+
     def test_service_gate_covers_local_socket_expiry_and_quoted_paths(self) -> None:
         self.assertIn("Fresh installation unexpectedly exposed TCP", self.workflow)
         self.assertIn("bind 127.0.0.1", self.workflow)
