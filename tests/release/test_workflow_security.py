@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/build-linux.yml"
 EXPERIMENTAL_WORKFLOW_PATH = ROOT / ".github/workflows/build-experimental.yml"
+LINUX_BUILD_SCRIPT_PATH = ROOT / "scripts/linux/build-redis.sh"
 
 
 class WorkflowSecurityTests(unittest.TestCase):
@@ -15,6 +16,9 @@ class WorkflowSecurityTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.experimental_workflow = EXPERIMENTAL_WORKFLOW_PATH.read_text(
+            encoding="utf-8"
+        )
+        cls.linux_build_script = LINUX_BUILD_SCRIPT_PATH.read_text(
             encoding="utf-8"
         )
 
@@ -170,6 +174,18 @@ class WorkflowSecurityTests(unittest.TestCase):
         )
         self.assertNotIn('PATH="$PATH"', glibc_job)
         self.assertNotIn('LD_LIBRARY_PATH="$LD_LIBRARY_PATH"', glibc_job)
+
+    def test_build_info_records_only_installed_rpm_dependencies(self) -> None:
+        dependency_report = self.linux_build_script.split(
+            '    echo "Selected build dependency packages:"\n', 1
+        )[1].split("  fi\n", 1)[0]
+        self.assertIn("for dependency_package in", dependency_report)
+        self.assertIn(
+            'if rpm -q "$dependency_package" >/dev/null 2>&1; then',
+            dependency_report,
+        )
+        self.assertIn("devtoolset-10-gcc", dependency_report)
+        self.assertNotIn("python3", dependency_report)
 
     def test_service_gate_covers_local_socket_expiry_and_quoted_paths(self) -> None:
         self.assertIn("Fresh installation unexpectedly exposed TCP", self.workflow)
