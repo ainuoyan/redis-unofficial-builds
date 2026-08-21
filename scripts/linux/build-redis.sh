@@ -559,9 +559,13 @@ EOF
   echo "glibc: $(ldd --version | head -n 1)"
   if command -v rpm >/dev/null 2>&1; then
     echo "Selected build dependency packages:"
-    rpm -q \
-      binutils curl file findutils gcc git gzip make procps-ng python3 \
-      shadow-utils tar tcl util-linux which \
+    for dependency_package in \
+      binutils curl file findutils gcc gzip make procps-ng shadow-utils tar tcl \
+      util-linux which devtoolset-10-binutils devtoolset-10-gcc; do
+      if rpm -q "$dependency_package" >/dev/null 2>&1; then
+        rpm -q "$dependency_package"
+      fi
+    done \
       | LC_ALL=C sort \
       | sed 's/^/  /'
   fi
