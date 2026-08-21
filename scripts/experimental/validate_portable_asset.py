@@ -337,7 +337,12 @@ def validate_macho(data: bytes, arch: str, version: str) -> None:
         raise ContractError("Redis Mach-O does not contain the declared version")
 
 
-def validate_pe(data: bytes, *, require_version: str | None = None) -> None:
+def validate_pe(
+    data: bytes,
+    *,
+    require_version: str | None = None,
+    reject_cygwin_marker: bool = True,
+) -> None:
     if len(data) < 0x100 or data[:2] != b"MZ":
         raise ContractError("Windows binary does not have a valid DOS header")
     pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
@@ -352,7 +357,7 @@ def validate_pe(data: bytes, *, require_version: str | None = None) -> None:
         or struct.unpack_from("<H", data, pe_offset + 24)[0] != 0x20B
     ):
         raise ContractError("Windows binary is not PE32+ x64")
-    if b"cygwin1.dll" in data.lower():
+    if reject_cygwin_marker and b"cygwin1.dll" in data.lower():
         raise ContractError("Windows MSYS2 package contains a Cygwin-linked binary")
     if require_version is not None:
         ascii_marker = require_version.encode("ascii")
@@ -379,7 +384,10 @@ def validate_binaries(
         if not any(name.lower() == "redis/bin/msys-2.0.dll" for name in dll_names):
             raise ContractError("Windows archive is missing msys-2.0.dll")
         for name in dll_names:
-            validate_pe(files[name])
+            # The MSYS2 runtime is derived from Cygwin and may contain the
+            # upstream DLL name as inert data. Redis and the service wrapper
+            # remain subject to the marker check above.
+            validate_pe(files[name], reject_cygwin_marker=False)
 
 
 def validate_assets(

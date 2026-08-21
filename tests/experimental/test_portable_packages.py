@@ -109,7 +109,9 @@ class PortablePackageTests(unittest.TestCase):
         for name in ("redis-server", "redis-cli", "redis-benchmark"):
             (binaries / f"{name}{suffix}").write_bytes(body)
         if variant == "windows-msys2":
-            (binaries / "msys-2.0.dll").write_bytes(pe_fixture(include_version=False))
+            runtime = bytearray(pe_fixture(include_version=False))
+            runtime[0x1C0 : 0x1C0 + len(b"cygwin1.dll")] = b"cygwin1.dll"
+            (binaries / "msys-2.0.dll").write_bytes(runtime)
             (binaries / "MSYS2-RUNTIME-NOTICES.txt").write_text(
                 "MSYS2_RUNTIME_NOTICES_FORMAT=1\n"
                 "DLL=msys-2.0.dll PACKAGE=msys2-runtime\n"
@@ -256,6 +258,16 @@ class PortablePackageTests(unittest.TestCase):
             validator.validate_windows_runtime_notices(
                 notices, {"redis/bin/msys-2.0.dll"}
             )
+
+    def test_windows_cygwin_marker_is_rejected_only_for_executables(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import validate_portable_asset as validator
+
+        binary = bytearray(pe_fixture(include_version=False))
+        binary[0x1C0 : 0x1C0 + len(b"cygwin1.dll")] = b"cygwin1.dll"
+        with self.assertRaisesRegex(validator.ContractError, "Cygwin-linked"):
+            validator.validate_pe(bytes(binary))
+        validator.validate_pe(bytes(binary), reject_cygwin_marker=False)
 
     def test_traversal_and_link_entries_are_rejected(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))
