@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CREATE = ROOT / "scripts/experimental/create_portable_package.py"
 VALIDATE = ROOT / "scripts/experimental/validate_portable_asset.py"
 BUILD_SCRIPT = ROOT / "scripts/experimental/build-portable-posix.sh"
+WINDOWS_SERVICE_SOURCE = ROOT / "packaging/windows/service/RedisService/Program.cs"
 VERSION = "7.4.11"
 SOURCE_SHA256 = "a" * 64
 HASHES_COMMIT = "b" * 40
@@ -268,6 +269,14 @@ class PortablePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.ContractError, "Cygwin-linked"):
             validator.validate_pe(bytes(binary))
         validator.validate_pe(bytes(binary), reject_cygwin_marker=False)
+
+    def test_windows_service_wrapper_preserves_redis_startup_diagnostics(self) -> None:
+        source = WINDOWS_SERVICE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("RedirectStandardOutput = true", source)
+        self.assertIn("RedirectStandardError = true", source)
+        self.assertIn('LogRedisOutput("stdout", eventArgs.Data)', source)
+        self.assertIn('LogRedisOutput("stderr", eventArgs.Data)', source)
+        self.assertIn("exited before readiness with code", source)
 
     def test_traversal_and_link_entries_are_rejected(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))

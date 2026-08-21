@@ -23,6 +23,7 @@ internal static class Program
     private const int FailedServiceControllerConnect = 1063;
 
     private static readonly ManualResetEventSlim StopRequested = new(false);
+    private static readonly object LogLock = new();
     private static readonly ServiceMainDelegate ServiceMainCallback = ServiceMain;
     private static readonly HandlerExDelegate HandlerCallback = Handler;
     private static IntPtr _statusHandle;
@@ -110,17 +111,29 @@ internal static class Program
                 WorkingDirectory = prefix,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             },
             EnableRaisingEvents = true,
         };
+        process.OutputDataReceived += (_, eventArgs) => LogRedisOutput("stdout", eventArgs.Data);
+        process.ErrorDataReceived += (_, eventArgs) => LogRedisOutput("stderr", eventArgs.Data);
         process.StartInfo.ArgumentList.Add(ToMsysPath(configPath));
         if (!process.Start())
         {
             throw new InvalidOperationException("Unable to start redis-server.exe.");
         }
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
         if (!WaitForRedis(settings, process, TimeSpan.FromSeconds(60)))
         {
+            if (process.HasExited)
+            {
+                process.WaitForExit();
+                throw new InvalidOperationException(
+                    $"redis-server.exe exited before readiness with code {process.ExitCode}.");
+            }
             StopChild(process, settings);
             throw new InvalidOperationException("Redis did not pass readiness within 60 seconds.");
         }
@@ -267,15 +280,26 @@ internal static class Program
     {
         try
         {
-            string logDirectory = Path.Combine(PrefixPath(), "log");
-            Directory.CreateDirectory(logDirectory);
-            File.AppendAllText(
-                Path.Combine(logDirectory, "service-wrapper.log"),
-                $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
+            lock (LogLock)
+            {
+                string logDirectory = Path.Combine(PrefixPath(), "log");
+                Directory.CreateDirectory(logDirectory);
+                File.AppendAllText(
+                    Path.Combine(logDirectory, "service-wrapper.log"),
+                    $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
+            }
         }
         catch
         {
             // Logging must never hide the original service failure.
+        }
+    }
+
+    private static void LogRedisOutput(string stream, string? line)
+    {
+        if (!string.IsNullOrEmpty(line))
+        {
+            Log($"redis {stream}: {line}");
         }
     }
 
