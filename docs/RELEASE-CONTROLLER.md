@@ -7,9 +7,10 @@ discovers official stable versions, compares expected names with GitHub
 Release inventories, and writes review artifacts. It cannot dispatch a build,
 create a tag, modify a Release, or publish assets.
 
-`policy.patch_updates=auto_release` describes the policy consumed by a
-separate publish-capable workflow. It does not grant the resolver publication
-authority. Both configuration validation and the workflow safety gate require
+`policy.patch_updates=auto_release` is a fixed policy marker. Configuration
+validation requires this exact value, but no component currently consumes it
+to publish automatically, and the resolver has no publication authority. Both
+configuration validation and the workflow safety gate require
 `policy.controller_mode=plan_only`.
 
 ### Configuration and trust inputs
@@ -77,6 +78,7 @@ The resulting actions are:
 | `blocked_nonfinal_release_state` | A numeric stable Release is a draft or prerelease | Report a blocking item; add no rows |
 | `blocked_incomplete_immutable_release` | An existing Release lacks any required package or release-level metadata file | Report a blocking item; add no rows |
 | `blocked_unexpected_immutable_release_assets` | All required names exist, but the Release also has an extra asset | Report a blocking item; add no rows |
+| `blocked_no_official_stable_release` | A full run found no stable official SHA-256 record for an enrolled series | Report a blocking item; add no rows |
 | `skip_eol` | The selected series is past its configured EOL date | Add no rows |
 | `skip_no_enabled_platforms` | No platform is enabled | Add no rows |
 
@@ -174,9 +176,9 @@ GitHub Release trust boundary and are not independent signatures.
 预期名称与 GitHub Release 清单并生成审查产物；不能触发构建、创建 Tag、修改
 Release 或发布产物。
 
-`policy.patch_updates=auto_release` 是供独立发布工作流消费的策略，不会授予解析器
-发布权限。配置校验和工作流安全门都要求
-`policy.controller_mode=plan_only`。
+`policy.patch_updates=auto_release` 是固定的策略标识：配置校验强制要求该取值，
+但当前没有任何组件据此自动发布，解析器也不具备发布权限。配置校验和工作流
+安全门都要求 `policy.controller_mode=plan_only`。
 
 ### 配置与信任输入
 
@@ -234,6 +236,7 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 | `blocked_nonfinal_release_state` | 纯数字稳定 Release 是草稿或预发布 | 报告阻塞项，不加入 |
 | `blocked_incomplete_immutable_release` | 已有 Release 缺少任一包或 Release 级元数据 | 报告阻塞项，不加入 |
 | `blocked_unexpected_immutable_release_assets` | 必需名称均存在，但 Release 还含额外产物 | 报告阻塞项，不加入 |
+| `blocked_no_official_stable_release` | 完整运行时，已登记系列没有任何官方稳定版 SHA-256 记录 | 报告阻塞项，不加入 |
 | `skip_eol` | 系列已超过配置 EOL | 不加入 |
 | `skip_no_enabled_platforms` | 没有启用平台 | 不加入 |
 

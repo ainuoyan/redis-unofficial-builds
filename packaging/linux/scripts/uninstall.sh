@@ -68,8 +68,9 @@ show_help() {
 默认注销服务并删除程序文件，但保留 conf/、data/、安装状态和服务账号。
 
 选项：
-  --purge     同时删除 /usr/local/redis 中的配置和数据。只有在安装状态明确
-              记录账号由本项目创建且 UID/GID 仍一致时，才删除 redis 用户和组。
+  --purge     删除整个 /usr/local/redis 目录，包括其中的配置、数据和
+              任何其他文件。只有在安装状态明确记录账号由本项目创建且
+              UID/GID 仍一致时，才删除 redis 用户和组。
               /usr/local/redis-backups 中的备份始终保留。
   -h, --help  显示帮助。
 EOF
@@ -81,10 +82,11 @@ By default, unregister the service and remove program files while preserving
 conf/, data/, installation state, and the service account.
 
 Options:
-  --purge     Also delete configuration and data under /usr/local/redis. The
-              redis user/group are removed only when state proves this project
-              created them and their UID/GID still match. Backups under
-              /usr/local/redis-backups are always retained.
+  --purge     Also delete the entire /usr/local/redis directory, including its
+              configuration, data, and any other files. The redis user/group are
+              removed only when state proves this project created them and their
+              UID/GID still match. Backups under /usr/local/redis-backups are
+              always retained.
   -h, --help  Show this help message.
 EOF
   fi
@@ -104,7 +106,7 @@ while (($# > 0)); do
 done
 
 require_root
-require_commands awk chmod dirname find flock getent grep id ls readlink realpath rm stat
+require_commands awk cat chmod dirname find flock getent grep id ls readlink realpath rm sed stat
 acquire_lifecycle_lock
 [[ "$REDIS_INSTALL_PREFIX" == "/usr/local/redis" ]] \
   || die_message unexpected_path "$REDIS_INSTALL_PREFIX"

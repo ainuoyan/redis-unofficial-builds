@@ -47,6 +47,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("Existing Redis Release is incomplete", self.workflow)
         self.assertIn("existing-release-assets/manifest.json", self.workflow)
         self.assertIn('"$tag_revision" != "$release_revision"', self.workflow)
+        self.assertIn("A draft Release for Redis $version already exists", self.workflow)
+        self.assertIn("gh release delete $version --yes", self.workflow)
+        self.assertNotIn('case "${{ matrix.', self.workflow)
+        self.assertNotIn("v=${{ needs.prepare.outputs.version }}", self.workflow)
         self.assertNotIn("gh release view", self.workflow)
 
     def test_direct_build_uses_an_immutable_hashes_snapshot(self) -> None:

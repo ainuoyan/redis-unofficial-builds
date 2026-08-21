@@ -7,11 +7,30 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _gnu_userland_available() -> bool:
+    probe = subprocess.run(
+        ["bash", "-c", "stat -c %a / >/dev/null 2>&1 && realpath -e / >/dev/null 2>&1"],
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+# The lifecycle scripts contractually run on a GNU/Linux userland; their
+# deep-validation paths use GNU-only flags (stat -c, realpath -e) that BSD
+# userlands such as macOS do not support.
+GNU_USERLAND_AVAILABLE = _gnu_userland_available()
+requires_gnu_userland = unittest.skipUnless(
+    GNU_USERLAND_AVAILABLE,
+    "requires a GNU/Linux userland (stat -c, realpath -e)",
+)
 
 
 class PackagingContractTests(unittest.TestCase):
@@ -69,6 +88,7 @@ class PackagingContractTests(unittest.TestCase):
             2,
         )
 
+    @requires_gnu_userland
     def test_format_two_package_metadata_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             package_root = Path(directory) / "redis"
@@ -76,6 +96,7 @@ class PackagingContractTests(unittest.TestCase):
             result = self._validate_package_root(package_root)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    @requires_gnu_userland
     def test_upstream_notice_files_are_required_size_bounded_and_hash_bound(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             package_root = Path(directory) / "redis"
@@ -104,6 +125,7 @@ class PackagingContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("UPSTREAM-CONTRIBUTOR-LICENSE.txt", result.stderr)
 
+    @requires_gnu_userland
     def test_pre_74_package_may_record_contributor_notice_absence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             package_root = Path(directory) / "redis"
@@ -186,6 +208,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Invalid Redis version", result.stderr)
 
+    @requires_gnu_userland
     def test_readiness_check_accepts_pong_and_authentication_challenge(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         for response, exit_code in (("PONG", 0), ("NOAUTH Authentication required.", 1)):
@@ -219,6 +242,7 @@ class PackagingContractTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    @requires_gnu_userland
     def test_readiness_resolves_relative_unix_socket_from_service_workdir(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         with tempfile.TemporaryDirectory() as directory:
@@ -255,6 +279,7 @@ class PackagingContractTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    @requires_gnu_userland
     def test_readiness_uses_final_endpoint_from_ordered_includes(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         with tempfile.TemporaryDirectory() as directory:
@@ -300,6 +325,7 @@ class PackagingContractTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    @requires_gnu_userland
     def test_readiness_only_probes_the_final_included_tcp_endpoint(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         with tempfile.TemporaryDirectory() as directory:
@@ -348,6 +374,134 @@ class PackagingContractTests(unittest.TestCase):
                 attempt_log.read_text(encoding="utf-8").splitlines(),
                 ["-h 127.0.0.2 -p 6401 PING"],
             )
+
+    @requires_gnu_userland
+    def test_readiness_records_loading_response_for_diagnostics(self) -> None:
+        common = ROOT / "packaging/linux/scripts/common.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            redis_root = Path(directory) / "redis"
+            (redis_root / "bin").mkdir(parents=True)
+            (redis_root / "conf").mkdir()
+            (redis_root / "conf/redis.conf").write_text(
+                "bind 127.0.0.1\nport 6380\n", encoding="utf-8"
+            )
+            cli = redis_root / "bin/redis-cli"
+            cli.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' "
+                "'-LOADING Redis is loading the dataset in memory'\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; run_as_redis_user() { "$@"; }; '
+                    'resolve_trusted_config_file() { realpath -e -- "$1"; }; '
+                    "loading_seen=false; "
+                    'if redis_protocol_ready "$2" loading_seen; then exit 3; fi; '
+                    '[[ "$loading_seen" == true ]]',
+                    "bash",
+                    str(common),
+                    str(redis_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_ready_timeout_seconds_validates_the_budget(self) -> None:
+        common = ROOT / "packaging/linux/scripts/common.sh"
+        for value, expected in (
+            (None, "30"),
+            ("1", "1"),
+            ("3600", "3600"),
+            ("99999", "99999"),
+        ):
+            environment = os.environ.copy()
+            if value is None:
+                environment.pop("REDIS_READY_TIMEOUT", None)
+            else:
+                environment["REDIS_READY_TIMEOUT"] = value
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        'source "$1"; ready_timeout_seconds',
+                        "bash",
+                        str(common),
+                    ],
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        for value in ("0", "-5", "100000", "10.5", "abc"):
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        'source "$1"; ready_timeout_seconds',
+                        "bash",
+                        str(common),
+                    ],
+                    env={**os.environ, "REDIS_READY_TIMEOUT": value},
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("REDIS_READY_TIMEOUT", result.stderr)
+
+    def test_readiness_budget_is_wall_clock_seconds(self) -> None:
+        common = ROOT / "packaging/linux/scripts/common.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            tool_dir = Path(directory)
+            (tool_dir / "timeout").write_text(
+                "#!/bin/sh\nshift\nexec \"$@\"\n", encoding="utf-8"
+            )
+            (tool_dir / "systemctl").write_text(
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                "  is-active) exit 0 ;;\n"
+                "  show) printf '123\\n'; exit 0 ;;\n"
+                "esac\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "readlink").write_text(
+                "#!/bin/sh\nprintf '/usr/local/redis/bin/redis-server\\n'\n",
+                encoding="utf-8",
+            )
+            for tool in ("timeout", "systemctl", "readlink"):
+                (tool_dir / tool).chmod(0o755)
+            started = time.monotonic()
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; PATH="$2:$PATH"; '
+                    "redis_protocol_ready() { sleep 2; return 1; }; "
+                    "wait_for_service",
+                    "bash",
+                    str(common),
+                    directory,
+                ],
+                env={**os.environ, "REDIS_READY_TIMEOUT": "2"},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            elapsed = time.monotonic() - started
+            self.assertNotEqual(result.returncode, 0)
+            self.assertLess(elapsed, 4.0, result.stderr)
+            self.assertIn("PING", result.stderr)
 
     def test_privileged_entrypoints_pin_environment_before_sourcing(self) -> None:
         for name in ("install.sh", "update.sh", "uninstall.sh"):
@@ -415,6 +569,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("更新器不会启动 Redis", update)
         self.assertNotIn("restart any running Redis process", update)
 
+    @requires_gnu_userland
     def test_user_controlled_package_tree_is_rejected_before_help(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             package_root = Path(directory) / "redis"
@@ -451,6 +606,19 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("--allow-downgrade", update)
         self.assertIn(
             'redis_version_is_at_least "$new_version" "$old_version"', update
+        )
+        transaction = update[update.index("trap 'rollback_update $?' ERR") :]
+        self.assertLess(
+            transaction.index("if ! assert_no_live_install_redis_server"),
+            transaction.index('staged_bin_dir="$(mktemp'),
+        )
+        self.assertLess(
+            transaction.index("rollback_needed=true"),
+            transaction.index('staged_bin_dir="$(mktemp'),
+        )
+        self.assertLess(
+            transaction.index("rollback_needed=true"),
+            transaction.index('systemctl stop "$REDIS_SERVICE_NAME"'),
         )
 
         common_path = ROOT / "packaging/linux/scripts/common.sh"
@@ -822,6 +990,7 @@ class PackagingContractTests(unittest.TestCase):
             install,
         )
 
+    @requires_gnu_userland
     def test_config_trust_rejects_symlinks_in_original_path_components(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         common_text = common.read_text(encoding="utf-8")
@@ -899,6 +1068,7 @@ exit 99
                     {"MOCK_LOAD_STATE": "not-found", "MOCK_LOAD_STATUS": "1"},
                     0,
                     "",
+                    False,
                 ),
                 (
                     {
@@ -907,10 +1077,22 @@ exit 99
                     },
                     0,
                     "/etc/systemd/system/redis.service",
+                    False,
                 ),
-                ({"MOCK_LOAD_STATE": "error"}, 1, ""),
+                ({"MOCK_LOAD_STATE": "masked"}, 1, "", True),
+                ({"MOCK_LOAD_STATE": "error"}, 1, "", True),
+                (
+                    {
+                        "MOCK_LOAD_STATE": "error",
+                        "MOCK_LOAD_STATUS": "1",
+                        "MOCK_LIST_STATUS": "1",
+                    },
+                    1,
+                    "",
+                    True,
+                ),
             )
-            for additions, expected_status, expected_output in scenarios:
+            for additions, expected_status, expected_output, expected_error in scenarios:
                 with self.subTest(load_state=additions["MOCK_LOAD_STATE"]):
                     environment = os.environ.copy()
                     environment.update(additions)
@@ -930,6 +1112,25 @@ exit 99
                     )
                     self.assertEqual(result.returncode, expected_status, result.stderr)
                     self.assertEqual(result.stdout.strip(), expected_output)
+                    self.assertEqual(
+                        "[redis-package] ERROR:" in result.stderr,
+                        expected_error,
+                        result.stderr,
+                    )
+
+    def test_lifecycle_entrypoints_preflight_their_direct_dependencies(self) -> None:
+        install = (ROOT / "packaging/linux/scripts/install.sh").read_text(
+            encoding="utf-8"
+        )
+        update = (ROOT / "packaging/linux/scripts/update.sh").read_text(
+            encoding="utf-8"
+        )
+        uninstall = (ROOT / "packaging/linux/scripts/uninstall.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertRegex(install, r"require_commands[^\n]*\bgetconf\b")
+        self.assertRegex(update, r"require_commands[^\n]*\bgetconf\b")
+        self.assertRegex(uninstall, r"require_commands[^\n]*\bsed\b")
 
     def test_effective_systemd_contract_rejects_drop_in_execution_changes(self) -> None:
         common_path = ROOT / "packaging/linux/scripts/common.sh"
@@ -1063,6 +1264,7 @@ exit 99
             with self.subTest(script=name):
                 self.assertIn("assert_no_live_install_redis_server", script)
 
+    @requires_gnu_userland
     def test_missing_service_fragment_only_cleans_project_enablement_links(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         uninstall = (ROOT / "packaging/linux/scripts/uninstall.sh").read_text(

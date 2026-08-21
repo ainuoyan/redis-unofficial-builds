@@ -177,9 +177,9 @@ The lifecycle scripts require root privileges and:
 - a running systemd instance and `systemctl` when service mode is selected;
   `--no-service` instead performs a complete managed installation without
   requiring or registering systemd; and
-- glibc 2.28 or newer on the implemented package variant. `getconf` is used
-  when available, and the packaged binary is executed as the final
-  compatibility check.
+- glibc 2.28 or newer on the implemented package variant. `getconf` is required
+  to verify the host glibc version, and the packaged binary is then executed as
+  the final compatibility check.
 
 Distribution package names differ. Typical providers are `bash`, `coreutils`,
 `tar`, `findutils`, `gawk`, `grep`, `sed`, `util-linux`, `shadow-utils`,
@@ -311,6 +311,12 @@ files while preserving configuration and data. It waits for a Redis protocol
 response, not merely a systemd active state. A failed start or `INT`, `TERM`,
 or `HUP` triggers rollback of managed program and service state.
 
+Readiness after an install or update (re)start is budgeted at 30 seconds by
+default. While Redis restores a large dataset it answers PING with
+`-LOADING`; when the budget expires in that state, the scripts report the
+loading condition explicitly instead of a generic start failure. Raise the
+budget per run with `sudo REDIS_READY_TIMEOUT=<seconds> ...` (1–99999).
+
 Downgrades are rejected by default:
 
 ```bash
@@ -401,6 +407,9 @@ locale-neutral form.
 - `-march=native` is not used.
 - Each architecture runs official source checksum verification, upstream
   tests, PING/SET/GET smoke tests, and lifecycle integration tests.
+- Lifecycle integration tests execute the scripts on a GNU/Linux userland;
+  hosts without GNU `stat -c` and `realpath -e` (for example macOS) skip
+  those cases instead of failing.
 
 Rocky repository dependencies are resolved at build time, so the project
 records compiler/runtime details but does not claim bit-for-bit reproducible

@@ -14,7 +14,9 @@ ExecStart=/usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf --d
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=30s
-TimeoutStopSec=120s
+# A shutdown may flush a large RDB/AOF to disk; allow it ten minutes before
+# SIGKILL so the final save is not truncated. Tune per dataset with a drop-in.
+TimeoutStopSec=600s
 KillSignal=SIGTERM
 KillMode=control-group
 SendSIGKILL=yes

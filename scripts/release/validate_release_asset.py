@@ -8,6 +8,7 @@ import hashlib
 import os
 import re
 import stat
+import struct
 import sys
 import tarfile
 from pathlib import Path
@@ -107,6 +108,41 @@ MAX_CONTRIBUTOR_LICENSE_BYTES = 1024 * 1024
 MAX_DEPENDENCY_NOTICE_FILE_BYTES = 1024 * 1024
 MAX_DEPENDENCY_NOTICE_FILES = 256
 MAX_DEPENDENCY_NOTICES_BYTES = 10 * 1024 * 1024
+ELF_BINARY_MEMBERS = (
+    "redis/bin/redis-server",
+    "redis/bin/redis-cli",
+    "redis/bin/redis-benchmark",
+)
+ELF_MACHINE_BY_ARCH = {"x64": 0x3E, "arm64": 0xB7}
+ELF_INTERPRETER_BY_ARCH = {
+    "x64": "/lib64/ld-linux-x86-64.so.2",
+    "arm64": "/lib/ld-linux-aarch64.so.1",
+}
+MAX_ELF_BINARY_BYTES = 128 * 1024 * 1024
+ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
+ELF_PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
+ELF_SECTION_HEADER = struct.Struct("<IIQQQQIIQQ")
+ELF_DYNAMIC_ENTRY = struct.Struct("<qQ")
+ELF_VERSION_NEED = struct.Struct("<HHIII")
+ELF_VERSION_AUX = struct.Struct("<IHHII")
+PT_LOAD = 1
+PT_DYNAMIC = 2
+PT_INTERP = 3
+PT_GNU_STACK = 0x6474E551
+PF_X = 1
+PF_W = 2
+DT_NULL = 0
+DT_NEEDED = 1
+DT_STRTAB = 5
+DT_STRSZ = 10
+DT_VERNEED = 0x6FFFFFFE
+DT_VERNEEDNUM = 0x6FFFFFFF
+SHT_NOBITS = 8
+SHT_STRTAB = 3
+GLIBC_SYMBOL_RE = re.compile(
+    rb"^GLIBC_(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})"
+    rb"(?:\.(0|[1-9][0-9]{0,5}))?$"
+)
 DEPENDENCY_NOTICE_BEGIN_RE = re.compile(
     rb"===== BEGIN (deps/[A-Za-z0-9._/@:+-]{1,507}) \(([1-9][0-9]*) bytes\) =====\n"
 )
@@ -605,6 +641,330 @@ def validate_packaging_bindings(
     return actual_patchset_sha256
 
 
+def bounded_slice(data: bytes, offset: int, size: int, description: str) -> bytes:
+    if offset < 0 or size < 0 or offset > len(data) or size > len(data) - offset:
+        raise ValidationError(f"ELF {description} is outside the binary")
+    return data[offset : offset + size]
+
+
+def elf_c_string(table: bytes, offset: int, description: str) -> str:
+    if offset < 0 or offset >= len(table):
+        raise ValidationError(f"ELF {description} has an invalid string offset")
+    end = table.find(b"\x00", offset)
+    if end < 0:
+        raise ValidationError(f"ELF {description} is not NUL-terminated")
+    raw = table[offset:end]
+    if not raw or any(byte < 0x20 or byte >= 0x7F for byte in raw):
+        raise ValidationError(f"ELF {description} is not canonical ASCII")
+    return raw.decode("ascii")
+
+
+def elf_vaddr_to_offset(
+    program_headers: list[tuple[int, ...]], address: int, size: int
+) -> int:
+    for header in program_headers:
+        p_type, _, p_offset, p_vaddr, _, p_filesz, _, _ = header
+        if p_type != PT_LOAD or address < p_vaddr:
+            continue
+        relative = address - p_vaddr
+        if relative <= p_filesz and size <= p_filesz - relative:
+            return p_offset + relative
+    raise ValidationError("ELF dynamic address is not backed by a loadable file range")
+
+
+def parse_glibc_symbol(value: bytes) -> tuple[int, int, int] | None:
+    match = GLIBC_SYMBOL_RE.fullmatch(value)
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch or b"0")
+
+
+def format_glibc_symbol(value: tuple[int, int, int]) -> str:
+    major, minor, patch = value
+    if patch:
+        return f"{major}.{minor}.{patch}"
+    return f"{major}.{minor}"
+
+
+def validate_elf_binary(
+    data: bytes, *, name: str, arch: str, version: str
+) -> tuple[int, int, int]:
+    if data[:4] != b"\x7fELF":
+        raise ValidationError(f"binary is not an ELF file: {name}")
+    if len(data) < ELF_HEADER.size:
+        raise ValidationError(f"binary has a truncated ELF header: {name}")
+    (
+        ident,
+        elf_type,
+        machine,
+        elf_version,
+        entry,
+        program_offset,
+        section_offset,
+        _,
+        header_size,
+        program_entry_size,
+        program_count,
+        section_entry_size,
+        section_count,
+        section_names_index,
+    ) = ELF_HEADER.unpack_from(data)
+    if ident[4:7] != b"\x02\x01\x01" or ident[7] not in {0, 3} or ident[8] != 0:
+        raise ValidationError(f"binary is not a supported ELF64 file: {name}")
+    if elf_type not in {2, 3} or elf_version != 1 or header_size != ELF_HEADER.size:
+        raise ValidationError(f"binary has an invalid ELF header: {name}")
+    if machine != ELF_MACHINE_BY_ARCH[arch]:
+        raise ValidationError(f"binary architecture does not match {arch}: {name}")
+    if (
+        program_entry_size != ELF_PROGRAM_HEADER.size
+        or not 1 <= program_count <= 1024
+        or program_offset < ELF_HEADER.size
+        or program_offset % 8 != 0
+    ):
+        raise ValidationError(f"binary has an invalid ELF program-header table: {name}")
+    bounded_slice(
+        data,
+        program_offset,
+        program_entry_size * program_count,
+        "program-header table",
+    )
+    if (
+        section_entry_size != ELF_SECTION_HEADER.size
+        or not 1 <= section_count < 0xFF00
+        or section_names_index <= 0
+        or section_names_index >= section_count
+        or section_offset < ELF_HEADER.size
+        or section_offset % 8 != 0
+    ):
+        raise ValidationError(f"binary has an invalid ELF section-header table: {name}")
+    bounded_slice(
+        data,
+        section_offset,
+        section_entry_size * section_count,
+        "section-header table",
+    )
+
+    program_headers = [
+        ELF_PROGRAM_HEADER.unpack_from(data, program_offset + index * program_entry_size)
+        for index in range(program_count)
+    ]
+    load_headers = []
+    dynamic_headers = []
+    interpreter_headers = []
+    stack_headers = []
+    for header in program_headers:
+        p_type, flags, offset, vaddr, _, file_size, memory_size, alignment = header
+        bounded_slice(data, offset, file_size, "program segment")
+        if memory_size < file_size:
+            raise ValidationError(f"ELF segment is larger on disk than in memory: {name}")
+        if alignment not in {0, 1}:
+            if alignment & (alignment - 1) or offset % alignment != vaddr % alignment:
+                raise ValidationError(f"ELF segment has invalid alignment: {name}")
+        if p_type == PT_LOAD:
+            if flags & PF_X and flags & PF_W:
+                raise ValidationError(f"ELF has a writable executable segment: {name}")
+            load_headers.append(header)
+        elif p_type == PT_DYNAMIC:
+            dynamic_headers.append(header)
+        elif p_type == PT_INTERP:
+            interpreter_headers.append(header)
+        elif p_type == PT_GNU_STACK:
+            stack_headers.append(header)
+    executable_loads = [header for header in load_headers if header[1] & PF_X]
+    if not load_headers or not executable_loads:
+        raise ValidationError(f"ELF has no executable loadable segment: {name}")
+    if not any(header[3] <= entry < header[3] + header[6] for header in executable_loads):
+        raise ValidationError(f"ELF entry point is not executable: {name}")
+    if len(interpreter_headers) != 1 or len(dynamic_headers) != 1:
+        raise ValidationError(f"ELF must have one interpreter and dynamic segment: {name}")
+    if len(stack_headers) != 1 or stack_headers[0][1] & PF_X:
+        raise ValidationError(f"ELF does not declare a non-executable stack: {name}")
+
+    interpreter_header = interpreter_headers[0]
+    interpreter_data = bounded_slice(
+        data, interpreter_header[2], interpreter_header[5], "interpreter"
+    )
+    if (
+        not interpreter_data.endswith(b"\x00")
+        or b"\x00" in interpreter_data[:-1]
+        or len(interpreter_data) > 4096
+    ):
+        raise ValidationError(f"ELF interpreter is malformed: {name}")
+    try:
+        interpreter = interpreter_data[:-1].decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ValidationError(f"ELF interpreter is not ASCII: {name}") from exc
+    if interpreter != ELF_INTERPRETER_BY_ARCH[arch]:
+        raise ValidationError(
+            f"ELF interpreter does not match glibc {arch}: {name}"
+        )
+
+    section_headers = [
+        ELF_SECTION_HEADER.unpack_from(data, section_offset + index * section_entry_size)
+        for index in range(section_count)
+    ]
+    if any(section_headers[0]):
+        raise ValidationError(f"ELF null section is not empty: {name}")
+    for section in section_headers[1:]:
+        _, section_type, _, _, offset, size, _, _, alignment, entry_size = section
+        if section_type != SHT_NOBITS:
+            bounded_slice(data, offset, size, "section")
+        if alignment not in {0, 1} and alignment & (alignment - 1):
+            raise ValidationError(f"ELF section has invalid alignment: {name}")
+        if entry_size and size % entry_size:
+            raise ValidationError(f"ELF section has a partial entry: {name}")
+    names_header = section_headers[section_names_index]
+    if names_header[1] != SHT_STRTAB:
+        raise ValidationError(f"ELF section-name table is invalid: {name}")
+    section_names = bounded_slice(data, names_header[4], names_header[5], "section names")
+    if not section_names or section_names[0] != 0:
+        raise ValidationError(f"ELF section-name table is malformed: {name}")
+    observed_section_names = {
+        elf_c_string(section_names, section[0], "section name")
+        for section in section_headers[1:]
+    }
+    required_sections = {".interp", ".dynstr", ".dynamic", ".gnu.version_r"}
+    if not required_sections.issubset(observed_section_names):
+        raise ValidationError(f"ELF is missing required dynamic sections: {name}")
+
+    dynamic_header = dynamic_headers[0]
+    dynamic_data = bounded_slice(
+        data, dynamic_header[2], dynamic_header[5], "dynamic segment"
+    )
+    if not dynamic_data or len(dynamic_data) % ELF_DYNAMIC_ENTRY.size:
+        raise ValidationError(f"ELF dynamic segment is malformed: {name}")
+    dynamic_values: dict[int, list[int]] = {}
+    terminated = False
+    for offset in range(0, len(dynamic_data), ELF_DYNAMIC_ENTRY.size):
+        tag, value = ELF_DYNAMIC_ENTRY.unpack_from(dynamic_data, offset)
+        if tag == DT_NULL:
+            terminated = True
+            break
+        dynamic_values.setdefault(tag, []).append(value)
+    if not terminated:
+        raise ValidationError(f"ELF dynamic segment is not terminated: {name}")
+    for required_tag in (DT_STRTAB, DT_STRSZ, DT_VERNEED, DT_VERNEEDNUM):
+        if len(dynamic_values.get(required_tag, [])) != 1:
+            raise ValidationError(f"ELF dynamic metadata is incomplete: {name}")
+    needed_offsets = dynamic_values.get(DT_NEEDED, [])
+    if not needed_offsets:
+        raise ValidationError(f"ELF has no shared-library dependencies: {name}")
+    string_size = dynamic_values[DT_STRSZ][0]
+    if not 1 <= string_size <= 16 * 1024 * 1024:
+        raise ValidationError(f"ELF dynamic string table is unreasonably large: {name}")
+    string_offset = elf_vaddr_to_offset(
+        program_headers, dynamic_values[DT_STRTAB][0], string_size
+    )
+    dynamic_strings = bounded_slice(data, string_offset, string_size, "dynamic strings")
+    if dynamic_strings[0] != 0 or dynamic_strings[-1] != 0:
+        raise ValidationError(f"ELF dynamic string table is malformed: {name}")
+    needed = {
+        elf_c_string(dynamic_strings, offset, "needed library")
+        for offset in needed_offsets
+    }
+    if "libc.so.6" not in needed or any(
+        "/" in library or "musl" in library.lower() for library in needed
+    ):
+        raise ValidationError(f"ELF dependencies do not describe glibc: {name}")
+
+    version_need_count = dynamic_values[DT_VERNEEDNUM][0]
+    if not 1 <= version_need_count <= 1024:
+        raise ValidationError(f"ELF version-need count is invalid: {name}")
+    version_need_offset = elf_vaddr_to_offset(
+        program_headers, dynamic_values[DT_VERNEED][0], ELF_VERSION_NEED.size
+    )
+    required_glibc: list[tuple[int, int, int]] = []
+    cursor = version_need_offset
+    for need_index in range(version_need_count):
+        need_data = bounded_slice(data, cursor, ELF_VERSION_NEED.size, "version need")
+        need_version, aux_count, file_offset, aux_delta, next_delta = (
+            ELF_VERSION_NEED.unpack(need_data)
+        )
+        if need_version != 1 or not 1 <= aux_count <= 1024 or aux_delta == 0:
+            raise ValidationError(f"ELF version-need record is invalid: {name}")
+        library = elf_c_string(dynamic_strings, file_offset, "version-need library")
+        if library not in needed:
+            raise ValidationError(f"ELF version need references an undeclared library: {name}")
+        aux_cursor = cursor + aux_delta
+        for aux_index in range(aux_count):
+            aux_data = bounded_slice(data, aux_cursor, ELF_VERSION_AUX.size, "version aux")
+            _, _, _, aux_name_offset, aux_next = ELF_VERSION_AUX.unpack(aux_data)
+            aux_name = elf_c_string(
+                dynamic_strings, aux_name_offset, "required symbol version"
+            ).encode("ascii")
+            glibc_version = parse_glibc_symbol(aux_name)
+            if glibc_version is not None:
+                required_glibc.append(glibc_version)
+            if aux_index + 1 < aux_count:
+                if aux_next < ELF_VERSION_AUX.size:
+                    raise ValidationError(f"ELF version-aux chain is invalid: {name}")
+                aux_cursor += aux_next
+            elif aux_next != 0:
+                raise ValidationError(f"ELF version-aux chain is not terminated: {name}")
+        if need_index + 1 < version_need_count:
+            if next_delta < ELF_VERSION_NEED.size:
+                raise ValidationError(f"ELF version-need chain is invalid: {name}")
+            cursor += next_delta
+        elif next_delta != 0:
+            raise ValidationError(f"ELF version-need chain is not terminated: {name}")
+    if not required_glibc:
+        raise ValidationError(f"ELF has no verifiable GLIBC symbol requirements: {name}")
+
+    version_marker = b"\x00" + version.encode("ascii") + b"\x00"
+    if version_marker not in data:
+        raise ValidationError(f"binary does not contain Redis version {version}: {name}")
+    return max(required_glibc)
+
+
+def validate_elf_binaries(
+    archive_path: Path,
+    *,
+    arch: str,
+    version: str,
+    min_glibc: str,
+    declared_max_glibc: str,
+) -> None:
+    """Validate the real ELF structure, ABI, version, and GLIBC requirements."""
+    observed_glibc: list[tuple[int, int, int]] = []
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        binaries = {
+            member.name: member
+            for member in archive
+            if member.name in ELF_BINARY_MEMBERS and member.isfile()
+        }
+        missing = sorted(set(ELF_BINARY_MEMBERS) - binaries.keys())
+        if missing:
+            raise ValidationError(
+                f"archive is missing ELF binaries: {', '.join(missing)}"
+            )
+        for name in ELF_BINARY_MEMBERS:
+            member = binaries[name]
+            if member.size <= 0 or member.size > MAX_ELF_BINARY_BYTES:
+                raise ValidationError(f"ELF binary violates the size limit: {name}")
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise ValidationError(f"unable to read binary: {name}")
+            with extracted:
+                data = extracted.read(MAX_ELF_BINARY_BYTES + 1)
+            if len(data) != member.size:
+                raise ValidationError(f"ELF binary is truncated: {name}")
+            observed_glibc.append(
+                validate_elf_binary(data, name=name, arch=arch, version=version)
+            )
+    maximum = max(observed_glibc)
+    baseline = (*parse_glibc(min_glibc), 0)
+    if maximum > baseline:
+        raise ValidationError(
+            f"ELF binaries require GLIBC_{format_glibc_symbol(maximum)}, "
+            f"newer than GLIBC_{min_glibc}"
+        )
+    if format_glibc_symbol(maximum) != declared_max_glibc:
+        raise ValidationError(
+            "PACKAGE-INFO MAX_GLIBC_SYMBOL does not match the ELF binaries"
+        )
+
+
 def validate_metadata(
     values: dict[str, str],
     *,
@@ -691,6 +1051,13 @@ def main() -> int:
             raise ValidationError("unexpected checksum filename")
         validate_checksum(args.archive, args.checksum)
         values, _, build_info = read_package_info(args.archive)
+        validate_elf_binaries(
+            args.archive,
+            arch=args.arch,
+            version=args.redis_version,
+            min_glibc=args.min_glibc,
+            declared_max_glibc=values["MAX_GLIBC_SYMBOL"],
+        )
         validate_metadata(
             values,
             version=args.redis_version,

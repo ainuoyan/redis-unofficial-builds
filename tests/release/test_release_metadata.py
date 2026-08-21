@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import gzip
+import hashlib
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.release.package_fixture import (
     HASHES_COMMIT,
@@ -143,6 +148,44 @@ class ReleaseMetadataTests(unittest.TestCase):
             (asset_dir / "unexpected.txt").write_text("unexpected\n")
             with self.assertRaisesRegex(release_metadata.MetadataError, "exact"):
                 release_metadata.validate_metadata_set(self.args(asset_dir, "validate"))
+
+    def test_forged_archive_with_matching_checksum_is_a_clean_cli_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            asset_dir = Path(directory)
+            self.create_set(asset_dir)
+            archive = asset_dir / f"Redis-Rzon-{VERSION}-{VARIANT}-x64.tar.gz"
+            forged = gzip.compress(b"garbage-not-a-tar" * 100)
+            archive.write_bytes(forged)
+            (asset_dir / f"{archive.name}.sha256").write_text(
+                f"{hashlib.sha256(forged).hexdigest()}  {archive.name}\n",
+                encoding="ascii",
+            )
+            argv = [
+                "release_metadata.py",
+                "validate",
+                "--asset-dir",
+                str(asset_dir),
+                "--redis-version",
+                VERSION,
+                "--source-sha256",
+                SOURCE_SHA256,
+                "--variant",
+                VARIANT,
+                "--min-glibc",
+                "2.28",
+                "--repository",
+                "example/redis-unofficial-builds",
+                "--packaging-revision",
+                REVISION,
+            ]
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                contextlib.redirect_stderr(stderr),
+            ):
+                self.assertEqual(release_metadata.main(), 2)
+            self.assertIn("release metadata error:", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":

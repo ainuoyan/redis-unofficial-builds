@@ -19,6 +19,10 @@ readonly REDIS_UNIT_MARKER="# Managed by redis-unofficial-builds"
 readonly REDIS_LIFECYCLE_LOCK="/run/redis-unofficial-builds.lock"
 readonly MAX_DEPENDENCY_NOTICES_BYTES=10485760
 readonly MAX_CONTRIBUTOR_LICENSE_BYTES=1048576
+# Default readiness budget in seconds after (re)start. Large datasets answer
+# PING with -LOADING while restoring; operators can raise the budget per run
+# with REDIS_READY_TIMEOUT=<seconds>.
+readonly REDIS_READY_TIMEOUT_DEFAULT=30
 
 detect_ui_language() {
   local requested_locale
@@ -57,16 +61,20 @@ message() {
       arch_unsupported) format='不支持当前 CPU 架构：%s' ;;
       arch_mismatch) format='安装包架构为 %s，但当前系统架构为 %s。' ;;
       glibc_too_old) format='当前 glibc 为 %s，安装包至少需要 glibc %s。' ;;
+      glibc_unverifiable) format='无法确定当前系统的 glibc 版本（getconf GNU_LIBC_VERSION 不可用）；拒绝安装 glibc 软件包。' ;;
       binary_failed) format='新 redis-server 无法在当前系统运行：%s' ;;
       version_unreadable) format='无法读取新 redis-server 的版本。' ;;
       version_mismatch) format='PACKAGE-INFO 声明 Redis %s，但二进制报告 %s。' ;;
       systemd_unavailable) format='systemd 未运行。可在启用了 systemd 的主机上安装，或使用 --no-service 安装完整包布局但不注册或要求 systemd。' ;;
+      service_state_unavailable) format='无法安全确定 %s 的 systemd 加载状态：%s' ;;
       unit_replace) format='由于指定了 --force-service，将替换现有服务单元：%s' ;;
       unit_conflict) format='%s 已由其他安装管理。确认允许替换时使用 --force-service。' ;;
       group_created) format='已创建系统用户组 %s。' ;;
       user_created) format='已创建系统用户 %s。' ;;
       service_failed) format='%s 未能保持运行状态，请检查：journalctl -u %s' ;;
       service_unready) format='%s 未能通过 Redis PING 就绪检查，请检查：journalctl -u %s' ;;
+      service_loading) format='%s 已启动但仍在加载数据集。数据集较大时请增大 REDIS_READY_TIMEOUT（秒）后重试，请检查：journalctl -u %s' ;;
+      ready_timeout_invalid) format='REDIS_READY_TIMEOUT 必须是 1-99999 的整数秒：%s' ;;
       operation_locked) format='另一个 Redis 安装、更新或卸载操作正在运行。' ;;
       state_invalid) format='安装状态文件无效：%s' ;;
       unmanaged_install) format='发现未由本项目管理的 Redis 安装。确认迁移时重新运行并添加 --adopt。' ;;
@@ -93,16 +101,20 @@ message() {
       arch_unsupported) format='Unsupported CPU architecture: %s' ;;
       arch_mismatch) format='The package architecture is %s, but this system is %s.' ;;
       glibc_too_old) format='This system has glibc %s; the package requires glibc %s or newer.' ;;
+      glibc_unverifiable) format='Unable to determine the system glibc version (getconf GNU_LIBC_VERSION is unavailable); refusing to install a glibc package.' ;;
       binary_failed) format='The new redis-server cannot run on this system: %s' ;;
       version_unreadable) format='Unable to read the version from the new redis-server binary.' ;;
       version_mismatch) format='PACKAGE-INFO declares Redis %s, but the binary reports %s.' ;;
       systemd_unavailable) format='systemd is not running. Install on a systemd host or use --no-service to install the complete package layout without registering or requiring systemd.' ;;
+      service_state_unavailable) format='Unable to determine a safe systemd load state for %s: %s' ;;
       unit_replace) format='Replacing the existing service unit because --force-service was supplied: %s' ;;
       unit_conflict) format='%s is managed by another installation. Re-run with --force-service only if it may be replaced.' ;;
       group_created) format='Created system group %s.' ;;
       user_created) format='Created system user %s.' ;;
       service_failed) format='%s did not remain active. Check: journalctl -u %s' ;;
       service_unready) format='%s did not pass the Redis PING readiness check. Check: journalctl -u %s' ;;
+      service_loading) format='%s started but is still loading its dataset. For large datasets re-run with a larger REDIS_READY_TIMEOUT (seconds). Check: journalctl -u %s' ;;
+      ready_timeout_invalid) format='REDIS_READY_TIMEOUT must be an integer number of seconds (1-99999): %s' ;;
       operation_locked) format='Another Redis install, update, or uninstall operation is running.' ;;
       state_invalid) format='Invalid installation state file: %s' ;;
       unmanaged_install) format='An unmanaged Redis installation was found. Re-run with --adopt only after confirming that it may be migrated.' ;;
@@ -723,7 +735,8 @@ preflight_package_compatibility() {
   if [[ "$(package_info_value "$package_root" LIBC)" == "glibc" ]]; then
     required_glibc="$(package_info_value "$package_root" MIN_GLIBC)"
     actual_glibc="$(runtime_glibc_version)"
-    if [[ -n "$actual_glibc" && -n "$required_glibc" ]] \
+    [[ -n "$actual_glibc" ]] || die_message glibc_unverifiable
+    if [[ -n "$required_glibc" ]] \
       && ! version_is_at_least "$actual_glibc" "$required_glibc"; then
       die_message glibc_too_old "$actual_glibc" "$required_glibc"
     fi
@@ -752,16 +765,24 @@ service_fragment_path() {
   if ! load_state="$(systemctl show \
     --property=LoadState --value "$REDIS_SERVICE_NAME" 2>/dev/null)"; then
     [[ "$load_state" == "not-found" ]] && return 0
-    listed_units="$(LC_ALL=C systemctl list-unit-files \
-      --no-legend --no-pager "$REDIS_SERVICE_NAME" 2>/dev/null)" || return 1
+    if ! listed_units="$(LC_ALL=C systemctl list-unit-files \
+      --no-legend --no-pager "$REDIS_SERVICE_NAME" 2>/dev/null)"; then
+      die_message service_state_unavailable \
+        "$REDIS_SERVICE_NAME" "systemctl query failed"
+    fi
     [[ -z "$listed_units" ]] && return 0
-    return 1
+    die_message service_state_unavailable \
+      "$REDIS_SERVICE_NAME" "${load_state:-query failed}"
   fi
   [[ "$load_state" == "not-found" ]] && return 0
-  [[ "$load_state" == "loaded" ]] || return 1
+  [[ "$load_state" == "loaded" ]] \
+    || die_message service_state_unavailable \
+      "$REDIS_SERVICE_NAME" "${load_state:-empty}"
   fragment="$(systemctl show \
     --property=FragmentPath --value "$REDIS_SERVICE_NAME")"
-  [[ -n "$fragment" ]] || return 1
+  [[ -n "$fragment" ]] \
+    || die_message service_state_unavailable \
+      "$REDIS_SERVICE_NAME" "loaded without FragmentPath"
   printf '%s\n' "$fragment"
 }
 
@@ -1173,7 +1194,7 @@ validate_effective_service_contract() {
   if effective_unit_text_matches_contract "$effective_unit"; then
     effective_unit_safe=true
   fi
-  path_count="$(grep -o 'path=' <<<"$exec_start" | wc -l)"
+  path_count="$(grep -o 'path=' <<<"$exec_start" | wc -l || true)"
   exec_path="$(sed -nE \
     's/^[[:space:]]*\{ path=([^ ;]+) ; argv\[\]=.*$/\1/p' <<<"$exec_start")"
   exec_argv="$(sed -nE \
@@ -1438,13 +1459,26 @@ normalize_config_scalar() {
   printf '%s\n' "$value"
 }
 
+ready_timeout_seconds() {
+  local requested="${REDIS_READY_TIMEOUT:-$REDIS_READY_TIMEOUT_DEFAULT}"
+  if [[ ! "$requested" =~ ^[1-9][0-9]{0,4}$ ]]; then
+    die_message ready_timeout_invalid "$requested"
+  fi
+  printf '%s\n' "$requested"
+}
+
 redis_protocol_ready() {
   local redis_root="${1:-$REDIS_INSTALL_PREFIX}"
+  local loading_ref="${2:-}"
+  local probe_budget="${3:-3}"
+  local probe_deadline remaining command_timeout
   local config_file="$redis_root/conf/redis.conf"
   local unix_socket port bind_value candidate output
   local -a bind_targets cli configured_bind_targets
 
+  [[ "$probe_budget" =~ ^[1-3]$ ]] || return 1
   [[ -x "$redis_root/bin/redis-cli" && -f "$config_file" ]] || return 1
+  probe_deadline=$((SECONDS + probe_budget))
   unix_socket="$(normalize_config_scalar "$(
     redis_effective_config_value "$config_file" unixsocket "$redis_root"
   )")"
@@ -1453,9 +1487,18 @@ redis_protocol_ready() {
       unix_socket="$redis_root/$unix_socket"
     fi
     cli=("$redis_root/bin/redis-cli" -s "$unix_socket")
-    output="$(LC_ALL=C run_as_redis_user timeout 3 "${cli[@]}" PING 2>&1 || true)"
-    [[ "$output" == "PONG" || "$output" == *NOAUTH* || "$output" == *NOPERM* ]]
-    return
+    remaining=$((probe_deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    command_timeout=$((remaining < 3 ? remaining : 3))
+    output="$(LC_ALL=C run_as_redis_user \
+      timeout "$command_timeout" "${cli[@]}" PING 2>&1 || true)"
+    if [[ "$output" == "PONG" || "$output" == *NOAUTH* || "$output" == *NOPERM* ]]; then
+      return 0
+    fi
+    if [[ -n "$loading_ref" && "$output" == *LOADING* ]]; then
+      printf -v "$loading_ref" 'true'
+    fi
+    return 1
   fi
 
   read -r port _ <<<"$(
@@ -1482,37 +1525,86 @@ redis_protocol_ready() {
   done
 
   for candidate in "${bind_targets[@]}"; do
+    remaining=$((probe_deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    command_timeout=$((remaining < 3 ? remaining : 3))
     cli=("$redis_root/bin/redis-cli" -h "$candidate" -p "$port")
-    output="$(LC_ALL=C run_as_redis_user timeout 3 "${cli[@]}" PING 2>&1 || true)"
+    output="$(LC_ALL=C run_as_redis_user \
+      timeout "$command_timeout" "${cli[@]}" PING 2>&1 || true)"
     if [[ "$output" == "PONG" || "$output" == *NOAUTH* || "$output" == *NOPERM* ]]; then
       return 0
+    fi
+    if [[ -n "$loading_ref" && "$output" == *LOADING* ]]; then
+      printf -v "$loading_ref" 'true'
     fi
   done
   return 1
 }
 
 wait_for_service() {
-  local attempt active_seen=false main_pid confirmed_pid
-  for attempt in {1..30}; do
-    if systemctl is-active --quiet "$REDIS_SERVICE_NAME"; then
+  local active_seen=false loading_seen=false main_pid confirmed_pid
+  local budget deadline remaining probe_timeout
+  # die inside a command substitution only exits the subshell; exit explicitly
+  # so an invalid REDIS_READY_TIMEOUT cannot fall through to a generic
+  # service_failed report when wait_for_service runs in a tested context.
+  budget="$(ready_timeout_seconds)" || exit 1
+  deadline=$((SECONDS + budget))
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    probe_timeout=$((remaining < 3 ? remaining : 3))
+    if timeout "$probe_timeout" \
+      systemctl is-active --quiet "$REDIS_SERVICE_NAME"; then
       active_seen=true
-      main_pid="$(systemctl show --property=MainPID --value "$REDIS_SERVICE_NAME")"
+      remaining=$((deadline - SECONDS))
+      (( remaining > 0 )) || break
+      probe_timeout=$((remaining < 3 ? remaining : 3))
+      main_pid="$(timeout "$probe_timeout" systemctl show \
+        --property=MainPID --value "$REDIS_SERVICE_NAME" 2>/dev/null || true)"
       if [[ "$main_pid" =~ ^[1-9][0-9]*$ \
         && "$(readlink -f -- "/proc/$main_pid/exe" 2>/dev/null || true)" \
           == "$REDIS_INSTALL_PREFIX/bin/redis-server" ]] \
-        && redis_protocol_ready; then
+        && (( SECONDS < deadline )); then
+        remaining=$((deadline - SECONDS))
+        probe_timeout=$((remaining < 3 ? remaining : 3))
+        if ! redis_protocol_ready \
+          "$REDIS_INSTALL_PREFIX" loading_seen "$probe_timeout"; then
+          remaining=$((deadline - SECONDS))
+          (( remaining > 0 )) && sleep 1
+          continue
+        fi
         confirmed_pid="$main_pid"
+        (( SECONDS < deadline )) || break
         sleep 1
-        main_pid="$(systemctl show --property=MainPID --value "$REDIS_SERVICE_NAME")"
+        remaining=$((deadline - SECONDS))
+        (( remaining > 0 )) || break
+        probe_timeout=$((remaining < 3 ? remaining : 3))
+        main_pid="$(timeout "$probe_timeout" systemctl show \
+          --property=MainPID --value "$REDIS_SERVICE_NAME" 2>/dev/null || true)"
         if [[ "$main_pid" == "$confirmed_pid" ]] \
-          && systemctl is-active --quiet "$REDIS_SERVICE_NAME" \
-          && redis_protocol_ready; then
-          return 0
+          && (( SECONDS < deadline )); then
+          remaining=$((deadline - SECONDS))
+          probe_timeout=$((remaining < 3 ? remaining : 3))
+          if timeout "$probe_timeout" \
+            systemctl is-active --quiet "$REDIS_SERVICE_NAME"; then
+            remaining=$((deadline - SECONDS))
+            (( remaining > 0 )) || break
+            probe_timeout=$((remaining < 3 ? remaining : 3))
+            if redis_protocol_ready \
+              "$REDIS_INSTALL_PREFIX" loading_seen "$probe_timeout"; then
+              return 0
+            fi
+          fi
         fi
       fi
     fi
-    sleep 1
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) && sleep 1
   done
+  if [[ "$loading_seen" == true ]]; then
+    printf '[redis-package] ERROR: %s\n' \
+      "$(message service_loading "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
+    return 1
+  fi
   if [[ "$active_seen" == true ]]; then
     printf '[redis-package] ERROR: %s\n' \
       "$(message service_unready "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
