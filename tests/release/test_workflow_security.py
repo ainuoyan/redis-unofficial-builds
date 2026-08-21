@@ -9,6 +9,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/build-linux.yml"
 EXPERIMENTAL_WORKFLOW_PATH = ROOT / ".github/workflows/build-experimental.yml"
 LINUX_BUILD_SCRIPT_PATH = ROOT / "scripts/linux/build-redis.sh"
+REVIEWED_NODE24_ACTIONS = {
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "actions/download-artifact": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+}
 
 
 class WorkflowSecurityTests(unittest.TestCase):
@@ -35,6 +40,23 @@ class WorkflowSecurityTests(unittest.TestCase):
                     r"^[^@]+@[0-9a-f]{40}$",
                     f"unpinned action in {workflow_path.name}",
                 )
+
+    def test_core_actions_use_reviewed_node24_releases(self) -> None:
+        found: set[str] = set()
+        for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            workflow = workflow_path.read_text(encoding="utf-8")
+            for action, revision in re.findall(
+                r"^\s*uses:\s*([^@\s#]+)@([0-9a-f]{40})", workflow, re.MULTILINE
+            ):
+                if action not in REVIEWED_NODE24_ACTIONS:
+                    continue
+                found.add(action)
+                self.assertEqual(
+                    revision,
+                    REVIEWED_NODE24_ACTIONS[action],
+                    f"unreviewed {action} revision in {workflow_path.name}",
+                )
+        self.assertEqual(found, set(REVIEWED_NODE24_ACTIONS))
 
     def test_release_requires_protected_default_branch_and_environment(self) -> None:
         self.assertIn("github.ref_protected == true", self.workflow)
