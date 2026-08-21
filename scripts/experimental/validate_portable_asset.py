@@ -427,8 +427,14 @@ def validate_windows_runtime_notices(data: bytes, runtime_dlls: set[str]) -> Non
         raise ContractError("Windows runtime notices lack an owning package record")
     for package in packages:
         marker = f"===== BEGIN /usr/share/licenses/{package}/".encode("utf-8")
-        if marker not in data:
-            raise ContractError(f"Windows runtime notices lack license text for {package}")
+        if marker in data:
+            continue
+        if package == "msys2-runtime" and all(
+            f"===== BEGIN /usr/share/doc/Cygwin/{name} (".encode("utf-8") in data
+            for name in ("COPYING", "CYGWIN_LICENSE")
+        ):
+            continue
+        raise ContractError(f"Windows runtime notices lack license text for {package}")
 
 
 def main() -> int:

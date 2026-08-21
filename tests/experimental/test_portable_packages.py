@@ -114,9 +114,12 @@ class PortablePackageTests(unittest.TestCase):
                 "MSYS2_RUNTIME_NOTICES_FORMAT=1\n"
                 "DLL=msys-2.0.dll PACKAGE=msys2-runtime\n"
                 "PACKAGE=msys2-runtime 3.6.5-1\n"
-                "===== BEGIN /usr/share/licenses/msys2-runtime/COPYING (5 bytes) =====\n"
+                "===== BEGIN /usr/share/doc/Cygwin/COPYING (5 bytes) =====\n"
                 "test\n"
-                "===== END /usr/share/licenses/msys2-runtime/COPYING =====\n",
+                "===== END /usr/share/doc/Cygwin/COPYING =====\n"
+                "===== BEGIN /usr/share/doc/Cygwin/CYGWIN_LICENSE (5 bytes) =====\n"
+                "test\n"
+                "===== END /usr/share/doc/Cygwin/CYGWIN_LICENSE =====\n",
                 encoding="utf-8",
             )
             service_wrapper = root / "RedisService.exe"
@@ -237,6 +240,23 @@ class PortablePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.ContractError, "map every packaged DLL"):
             validator.validate_windows_runtime_notices(notices, {"redis/bin/msys-2.0.dll"})
 
+    def test_windows_runtime_notice_requires_the_complete_cygwin_license_pair(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import validate_portable_asset as validator
+
+        notices = (
+            b"MSYS2_RUNTIME_NOTICES_FORMAT=1\n"
+            b"DLL=msys-2.0.dll PACKAGE=msys2-runtime\n"
+            b"PACKAGE=msys2-runtime 3.6.5-1\n"
+            b"===== BEGIN /usr/share/doc/Cygwin/COPYING (5 bytes) =====\n"
+            b"test\n"
+            b"===== END /usr/share/doc/Cygwin/COPYING =====\n"
+        )
+        with self.assertRaisesRegex(validator.ContractError, "lack license text"):
+            validator.validate_windows_runtime_notices(
+                notices, {"redis/bin/msys-2.0.dll"}
+            )
+
     def test_traversal_and_link_entries_are_rejected(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))
         import validate_portable_asset as validator
@@ -281,6 +301,10 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('./runtest --clients 1 --timeout 1200', script)
         self.assertIn('make test redis "${make_args[@]}"', script)
         self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
+
+    def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
+        script = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('license_root=/usr/share/doc/Cygwin', script)
 
     def test_windows_scripts_remain_windows_powershell_compatible_text(self) -> None:
         for script in sorted((ROOT / "packaging/windows/scripts").glob("*.ps1")):

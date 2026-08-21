@@ -257,17 +257,31 @@ if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
     package_record="$(pacman -Q "$runtime_package")"
     printf 'PACKAGE=%s\n' "$package_record" >>"$runtime_notices"
     license_root="/usr/share/licenses/${runtime_package}"
-    [[ -d "$license_root" && ! -L "$license_root" ]] || {
+    license_files=()
+    if [[ -d "$license_root" && ! -L "$license_root" ]]; then
+      while IFS= read -r license_file; do
+        license_files+=("$license_file")
+      done < <(find -P "$license_root" -type f | LC_ALL=C sort)
+    elif [[ "$runtime_package" == msys2-runtime ]]; then
+      license_root=/usr/share/doc/Cygwin
+      [[ -d "$license_root" && ! -L "$license_root" ]] || {
+        echo "MSYS2 runtime package lacks its Cygwin license directory." >&2
+        exit 1
+      }
+      license_files=("$license_root/COPYING" "$license_root/CYGWIN_LICENSE")
+    else
       echo "MSYS2 runtime package lacks a license directory: $runtime_package" >&2
       exit 1
+    fi
+    ((${#license_files[@]} > 0)) || {
+      echo "MSYS2 runtime package has no license files: $runtime_package" >&2
+      exit 1
     }
-    found_license=false
-    while IFS= read -r license_file; do
+    for license_file in "${license_files[@]}"; do
       [[ -f "$license_file" && ! -L "$license_file" ]] || {
         echo "Unsafe MSYS2 runtime license file: $license_file" >&2
         exit 1
       }
-      found_license=true
       license_size="$(wc -c <"$license_file")"
       (( license_size > 0 && license_size <= 1048576 )) || {
         echo "MSYS2 runtime license file violates the size limit: $license_file" >&2
@@ -276,11 +290,7 @@ if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
       printf '===== BEGIN %s (%s bytes) =====\n' "$license_file" "$license_size" >>"$runtime_notices"
       cat "$license_file" >>"$runtime_notices"
       printf '\n===== END %s =====\n' "$license_file" >>"$runtime_notices"
-    done < <(find -P "$license_root" -type f | LC_ALL=C sort)
-    [[ "$found_license" == true ]] || {
-      echo "MSYS2 runtime package has no license files: $runtime_package" >&2
-      exit 1
-    }
+    done
   done <"$runtime_packages"
   runtime_notice_size="$(wc -c <"$runtime_notices")"
   (( runtime_notice_size > 0 && runtime_notice_size <= 10485760 )) || {
