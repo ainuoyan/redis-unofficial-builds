@@ -51,9 +51,7 @@ if [[ ! "$GLIBC_BASELINE" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
   exit 1
 fi
 
-if [[ ! "$SOURCE_DATE_EPOCH" =~ ^(0|[1-9][0-9]*)$ \
-  || ${#SOURCE_DATE_EPOCH} -gt 12 ]] \
-  || (( SOURCE_DATE_EPOCH > 253402300799 )); then
+if [[ "$SOURCE_DATE_EPOCH" != 0 ]]; then
   echo "Invalid SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH" >&2
   exit 1
 fi
@@ -264,6 +262,7 @@ cd "$work_dir"
 
 curl --fail --silent --show-error --location \
   --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 5 \
+  --retry 3 --retry-connrefused --connect-timeout 20 --max-time 600 \
   "$SOURCE_URL" --output "$SOURCE_ARCHIVE"
 
 printf '%s  %s\n' "$REDIS_SOURCE_SHA256" "$SOURCE_ARCHIVE" | sha256sum --check --strict

@@ -126,7 +126,7 @@ while (($# > 0)); do
 done
 
 require_root
-require_commands awk chmod chown cp date dirname env find flock getent grep groupadd groupdel head id install ls mktemp mv readlink realpath rm rmdir sed setpriv sha256sum sleep stat timeout uname useradd userdel
+require_commands awk cat chmod chown cp date dirname env find flock getconf getent grep groupadd groupdel head id install ls mktemp mv readlink realpath rm rmdir sed setpriv sha256sum sleep stat timeout uname useradd userdel
 acquire_lifecycle_lock
 validate_package_root_security "$PACKAGE_ROOT"
 validate_package_root "$PACKAGE_ROOT"
@@ -228,11 +228,8 @@ fi
 backup_dir="$(mktemp -d "$REDIS_BACKUP_ROOT/redis-${safe_old_version}-${timestamp}.XXXXXX")"
 chown root:root "$backup_dir"
 chmod 0700 "$backup_dir"
-previous_bin_dir="$(mktemp -d "$REDIS_INSTALL_PREFIX/.bin.previous-${timestamp}.XXXXXX")"
-rmdir "$previous_bin_dir"
-staged_bin_dir="$(mktemp -d "$REDIS_INSTALL_PREFIX/.bin.new-${timestamp}.XXXXXX")"
-chown root:root "$staged_bin_dir"
-chmod 0755 "$staged_bin_dir"
+previous_bin_dir=""
+staged_bin_dir=""
 
 for backup_item in \
   bin conf scripts systemd PACKAGE-INFO BUILD-INFO LICENSE.txt README.txt \
@@ -404,7 +401,12 @@ rollback_update() {
     fi
   fi
 
-  rm -rf "$staged_bin_dir" "$previous_bin_dir" || rollback_failed=true
+  if [[ -n "$staged_bin_dir" ]]; then
+    rm -rf -- "$staged_bin_dir" || rollback_failed=true
+  fi
+  if [[ -n "$previous_bin_dir" ]]; then
+    rm -rf -- "$previous_bin_dir" || rollback_failed=true
+  fi
   if [[ "$rollback_failed" == true ]]; then
     if [[ "$REDIS_UI_LANGUAGE" == "zh" ]]; then
       warn "回滚未能完整恢复；请保留备份 $backup_dir 并手动检查服务。"
@@ -427,17 +429,18 @@ trap 'rollback_update 143' TERM
 trap 'rollback_update 129' HUP
 
 if [[ "$service_manager" == "systemd" && "$service_was_active" == true ]]; then
+  rollback_needed=true
   systemctl stop "$REDIS_SERVICE_NAME"
 fi
 if ! assert_no_live_install_redis_server; then
-  rm -rf "$staged_bin_dir" "$previous_bin_dir"
-  if [[ "$service_manager" == "systemd" && "$service_was_active" == true ]]; then
-    systemctl start "$REDIS_SERVICE_NAME" \
-      || warn "Unable to restart $REDIS_SERVICE_NAME after the process-safety check failed."
-  fi
   exit 1
 fi
 rollback_needed=true
+previous_bin_dir="$(mktemp -d "$REDIS_INSTALL_PREFIX/.bin.previous-${timestamp}.XXXXXX")"
+rmdir "$previous_bin_dir"
+staged_bin_dir="$(mktemp -d "$REDIS_INSTALL_PREFIX/.bin.new-${timestamp}.XXXXXX")"
+chown root:root "$staged_bin_dir"
+chmod 0755 "$staged_bin_dir"
 
 cp -a --no-preserve=context,xattr \
   "$PACKAGE_ROOT/bin/." "$staged_bin_dir/"
@@ -498,7 +501,7 @@ if [[ "$service_manager" == "systemd" ]]; then
 fi
 
 write_install_state "$REDIS_INSTALL_PREFIX" "$service_manager"
-rm -rf "$previous_bin_dir" "$staged_bin_dir"
+rm -rf -- "$previous_bin_dir" "$staged_bin_dir"
 rollback_needed=false
 trap - ERR EXIT INT TERM HUP
 

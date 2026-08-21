@@ -152,8 +152,8 @@ gh attestation verify \
 - `getent`、`groupadd`、`groupdel`、`useradd`、`userdel` 等账号管理命令；
 - 使用服务模式时需要正在运行的 systemd 和 `systemctl`；`--no-service` 则执行
   完整的受管安装，但不要求或注册 systemd；
-- 当前包变体要求 glibc 2.28 或以上。脚本在 `getconf` 可用时读取 glibc 版本，
-  最后还会实际执行新二进制验证兼容性。
+- 当前包变体要求 glibc 2.28 或以上。脚本要求使用 `getconf` 验证主机 glibc 版本，
+  随后还会实际执行新二进制完成最终兼容性检查。
 
 不同发行版的软件包名不同，常见提供者包括 `bash`、`coreutils`、`tar`、
 `findutils`、`gawk`、`grep`、`sed`、`util-linux`、`shadow-utils`、`glibc` 和
@@ -265,6 +265,10 @@ notices、元数据及状态备份到 `/usr/local/redis-backups/`，替换程序
 和数据。它以 Redis 协议响应而不是仅凭 systemd active 状态判断就绪。启动失败或
 收到 `INT`、`TERM`、`HUP` 时会回滚受管程序和服务状态。
 
+安装或更新后的就绪检查默认预算为 30 秒。Redis 恢复大数据集时会以 `-LOADING`
+应答 PING；若预算在此状态耗尽，脚本会明确报告正在加载数据集，而不是笼统的启动
+失败。可用 `sudo REDIS_READY_TIMEOUT=<秒> ...`（1–99999）按次增大预算。
+
 默认拒绝降级：
 
 ```bash
@@ -340,6 +344,8 @@ locale 无关格式。
 - 不使用 `-march=native`。
 - 两个架构均执行官方源码校验、上游测试、PING/SET/GET 冒烟测试和生命周期集成
   测试。
+- 生命周期集成测试在 GNU/Linux 用户态执行脚本；缺少 GNU `stat -c` 与
+  `realpath -e` 的主机（例如 macOS）会跳过这些用例而不是报错。
 
 Rocky 软件源依赖在构建时解析，因此会记录编译器/运行库信息，但不宣称压缩包可
 逐字节复现。`ARM64-COW-BUG` 等内核警告不会被自动忽略。

@@ -48,9 +48,11 @@ class BuildScriptTests(unittest.TestCase):
         self.assertNotIn("download.redis.io", result.stderr)
 
     def test_rejects_noncanonical_source_date_epoch(self) -> None:
-        result = self._run_validation(SOURCE_DATE_EPOCH="01")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Invalid SOURCE_DATE_EPOCH", result.stderr)
+        for value in ("01", "1", "1700000000"):
+            with self.subTest(value=value):
+                result = self._run_validation(SOURCE_DATE_EPOCH=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid SOURCE_DATE_EPOCH", result.stderr)
 
     def test_rejects_oversized_glibc_numeric_components(self) -> None:
         result = self._run_validation(GLIBC_BASELINE="1000000.28")
@@ -77,6 +79,11 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn('[[ -e "$output_path" || -L "$output_path" ]]', script)
         self.assertIn('install -m 0644 "$temporary_checksum_path"', script)
         self.assertIn('install -m 0644 "$temporary_package_path"', script)
+
+    def test_download_retries_are_compatible_with_rocky_linux_8_curl(self) -> None:
+        script = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("--retry 3 --retry-connrefused", script)
+        self.assertNotIn("--retry-all-errors", script)
 
     def test_generated_readme_does_not_overstate_compatibility(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")

@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import sys
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,13 @@ def inspect_archives(
         checksum = asset_dir / f"{archive_name}.sha256"
         asset_validator.validate_checksum(archive, checksum)
         values, _, build_info = asset_validator.read_package_info(archive)
+        asset_validator.validate_elf_binaries(
+            archive,
+            arch=arch,
+            version=version,
+            min_glibc=min_glibc,
+            declared_max_glibc=values["MAX_GLIBC_SYMBOL"],
+        )
         asset_validator.validate_metadata(
             values,
             version=version,
@@ -494,6 +502,7 @@ def main() -> int:
         UnicodeError,
         EOFError,
         json.JSONDecodeError,
+        tarfile.TarError,
         asset_validator.ValidationError,
         MetadataError,
     ) as exc:

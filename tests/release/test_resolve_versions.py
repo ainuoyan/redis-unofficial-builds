@@ -4,6 +4,8 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -599,8 +601,95 @@ class ResolveVersionsTests(unittest.TestCase):
             requested_series={"7.4"},
         )
         summary = resolver.render_summary(plan)
-        self.assertIn("Blocked immutable releases: **1**", summary)
+        self.assertIn("Blocked rows: **1**", summary)
         self.assertIn("excluded from all build matrices", summary)
+
+    def test_stable_hash_prefix_with_irregular_whitespace_is_rejected(self) -> None:
+        for separator in ("hash  redis-", "hash\tredis-"):
+            line = (
+                f"{separator}7.4.12.tar.gz sha256 "
+                + "a" * 64
+                + " http://download.redis.io/releases/redis-7.4.12.tar.gz"
+            )
+            with self.subTest(separator=repr(separator)):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "README"
+                    path.write_text(f"{self.hash_text}\n{line}\n", encoding="utf-8")
+                    with self.assertRaisesRegex(resolver.PlanError, "Malformed stable"):
+                        resolver.parse_hashes(path)
+
+    def test_series_without_stable_release_is_blocked_without_suppressing_others(
+        self,
+    ) -> None:
+        config = copy.deepcopy(self.release_config)
+        config["series"].append(
+            {"series": "9.9", "release_type": "standard", "eol": "2031-01-01"}
+        )
+        config["policy"]["new_series_floor"] = "9.9"
+        plan = resolver.resolve(
+            config,
+            self.platform_config,
+            self.parse_hashes(),
+            {},
+            dt.date(2026, 8, 20),
+        )
+        actions = {item["series"]: item["action"] for item in plan["release_plans"]}
+        self.assertEqual(actions["9.9"], "blocked_no_official_stable_release")
+        self.assertEqual(actions["7.4"], "plan_new_release")
+        self.assertEqual(actions["8.0"], "plan_new_release")
+        self.assertEqual(plan["blocked_release_count"], 1)
+        self.assertEqual(
+            {row["series"] for row in plan["build_matrix"]["include"]},
+            {"7.4", "8.0"},
+        )
+        self.assertIn(
+            "blocked_no_official_stable_release", resolver.render_summary(plan)
+        )
+
+    def test_explicit_series_without_stable_release_still_fails_closed(self) -> None:
+        config = copy.deepcopy(self.release_config)
+        config["series"].append(
+            {"series": "9.9", "release_type": "standard", "eol": "2031-01-01"}
+        )
+        config["policy"]["new_series_floor"] = "9.9"
+        with self.assertRaisesRegex(resolver.PlanError, "No stable official SHA-256"):
+            resolver.resolve(
+                config,
+                self.platform_config,
+                self.parse_hashes(),
+                {},
+                dt.date(2026, 8, 20),
+                requested_series={"9.9"},
+            )
+
+    def test_unwritable_output_location_is_a_single_line_cli_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocker = Path(directory) / "blocker"
+            blocker.write_text("not a directory", encoding="utf-8")
+            hashes_path = Path(directory) / "README"
+            hashes_path.write_text(self.hash_text, encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/release/resolve_versions.py"),
+                    "--release-config",
+                    str(ROOT / "config/release-lines.json"),
+                    "--platform-config",
+                    str(ROOT / "config/platforms.json"),
+                    "--hashes",
+                    str(hashes_path),
+                    "--output-dir",
+                    str(blocker / "out"),
+                    "--as-of",
+                    "2026-08-20",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("release controller error:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ STABLE_HASH_LINE_RE = re.compile(
     r"(sha1|sha256) ([0-9a-f]+) (\S+)$"
 )
 STABLE_HASH_PREFIX_RE = re.compile(
-    r"^hash redis-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz(?:\s|$)"
+    r"^hash\s+redis-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz(?:\s|$)"
 )
 WORKFLOW_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$")
 GIT_OID_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -553,7 +553,29 @@ def resolve(
             version for version in hashes if series_text(version) == name
         ]
         if not candidates:
-            raise PlanError(f"No stable official SHA-256 releases found for Redis {name}")
+            if requested_series is not None or exact is not None:
+                raise PlanError(
+                    f"No stable official SHA-256 releases found for Redis {name}"
+                )
+            plans.append(
+                {
+                    "series": name,
+                    "version": "none",
+                    "release_type": entry["release_type"],
+                    "eol": entry.get("eol"),
+                    "source_url": "",
+                    "source_sha256": "",
+                    "release_exists": False,
+                    "release_draft": False,
+                    "release_prerelease": False,
+                    "expected_assets": [],
+                    "missing_assets": [],
+                    "unexpected_assets": [],
+                    "blocked": True,
+                    "action": "blocked_no_official_stable_release",
+                }
+            )
+            continue
         version_tuple = exact if exact is not None else max(candidates)
         assert version_tuple is not None
         record = hashes[version_tuple]
@@ -718,7 +740,7 @@ def render_summary(plan: dict[str, Any]) -> str:
             f"Planned platform jobs: **{len(plan['build_matrix']['include'])}**",
             f"New series candidates: **{len(plan['new_series_candidates'])}**",
             f"Disabled platform rows: **{len(plan['disabled_platforms'])}**",
-            f"Blocked immutable releases: **{plan['blocked_release_count']}**",
+            f"Blocked rows: **{plan['blocked_release_count']}**",
             "",
         ]
     )
@@ -817,7 +839,7 @@ def main() -> int:
             write_github_output(args.github_output, plan)
         print(summary)
         return 0
-    except (PlanError, ValueError) as exc:
+    except (PlanError, ValueError, OSError) as exc:
         print(f"release controller error: {exc}", file=sys.stderr)
         return 2
 

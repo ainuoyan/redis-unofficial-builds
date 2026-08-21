@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       redis_version:
-        description: Exact tracked Redis version (X.Y.Z)
+        description: Exact official Redis version (X.Y.Z)
         required: true
         type: string
       source_sha256:
@@ -70,6 +70,7 @@ jobs:
   prepare:
     name: Resolve and verify version
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       attestations: read
@@ -245,7 +246,12 @@ jobs:
               (.data.repository.release.isPrerelease | not) and
               (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not)
             ' --arg version "$version" release-state.json >/dev/null || {
-              echo "Existing Redis Release is draft, prerelease, malformed, or too large." >&2
+              if [[ "$(jq -r '.data.repository.release.isDraft' release-state.json)" == "true" ]]; then
+                echo "A draft Release for Redis $version already exists (leftover from a failed publish run or a manual draft)." >&2
+                echo "Recovery: review it, then delete it with 'gh release delete $version --yes' and re-run this workflow." >&2
+              else
+                echo "Existing Redis Release is prerelease, malformed, or too large." >&2
+              fi
               exit 1
             }
 
@@ -538,6 +544,8 @@ jobs:
 
       - name: Test installation and service
         shell: bash
+        env:
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
         run: |
           set -euo pipefail
 
@@ -547,9 +555,10 @@ jobs:
             /var/tmp/redis-package-root/redis/scripts/install.sh --help | grep -Fq '用法：'
 
           sudo cp -a /var/tmp/redis-package-root /var/tmp/incompatible-package
-          case "${{ matrix.package_arch }}" in
+          case "$PACKAGE_ARCH" in
             x64) incompatible_arch=arm64 ;;
             arm64) incompatible_arch=x64 ;;
+            *) echo "Unexpected matrix architecture: $PACKAGE_ARCH" >&2; exit 1 ;;
           esac
           sudo sed -i "s/^PACKAGE_ARCH=.*/PACKAGE_ARCH=${incompatible_arch}/" \
             /var/tmp/incompatible-package/redis/PACKAGE-INFO
@@ -682,6 +691,8 @@ jobs:
 
       - name: Test failed-update rollback
         shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           redis_cli() {
@@ -689,14 +700,17 @@ jobs:
               -s /usr/local/redis/data/redis.sock "$@"
           }
           sudo cp -a /var/tmp/redis-package-root /var/tmp/rollback-package
-          sudo tee /var/tmp/rollback-package/redis/bin/redis-server >/dev/null <<'EOF'
-          #!/bin/sh
-          if [ "${1:-}" = "--version" ]; then
-            echo 'Redis server v=${{ needs.prepare.outputs.version }} sha=00000000:0 malloc=libc bits=64 build=0000000000000000'
-            exit 0
-          fi
-          exit 1
-          EOF
+          {
+            printf '%s\n' \
+              '#!/bin/sh' \
+              'if [ "${1:-}" = "--version" ]; then'
+            printf '  echo "Redis server v=%s sha=00000000:0 malloc=libc bits=64 build=0000000000000000"\n' \
+              "$REDIS_VERSION"
+            printf '%s\n' \
+              '  exit 0' \
+              'fi' \
+              'exit 1'
+          } | sudo tee /var/tmp/rollback-package/redis/bin/redis-server >/dev/null
           sudo chmod 0755 /var/tmp/rollback-package/redis/bin/redis-server
           if sudo /var/tmp/rollback-package/redis/scripts/update.sh; then
             echo "Update unexpectedly succeeded with a failing Redis binary." >&2

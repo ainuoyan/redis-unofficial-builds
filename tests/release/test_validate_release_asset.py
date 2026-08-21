@@ -16,6 +16,9 @@ from tests.release.package_fixture import (
     SOURCE_SHA256,
     VARIANT,
     VERSION,
+    ELF_BINARIES,
+    elf_fixture,
+    elf_stub,
     write_package,
 )
 
@@ -29,6 +32,13 @@ class ValidateReleaseAssetTests(unittest.TestCase):
     def validate(self, archive: Path, checksum: Path, arch: str) -> None:
         validator.validate_checksum(archive, checksum)
         values, _, build_info = validator.read_package_info(archive)
+        validator.validate_elf_binaries(
+            archive,
+            arch=arch,
+            version=VERSION,
+            min_glibc="2.28",
+            declared_max_glibc=values["MAX_GLIBC_SYMBOL"],
+        )
         validator.validate_metadata(
             values,
             version=VERSION,
@@ -51,6 +61,104 @@ class ValidateReleaseAssetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive, checksum = write_package(Path(directory), "x64")
             self.validate(archive, checksum, "x64")
+
+    def test_non_elf_binary_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(
+                Path(directory),
+                "x64",
+                binary_contents={
+                    "redis/bin/redis-server": b"#!/bin/sh\necho hi\n"
+                },
+            )
+            with self.assertRaisesRegex(validator.ValidationError, "not an ELF"):
+                self.validate(archive, checksum, "x64")
+
+    def test_wrong_architecture_elf_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(
+                Path(directory),
+                "x64",
+                binary_contents={
+                    "redis/bin/redis-server": elf_fixture("arm64")
+                },
+            )
+            with self.assertRaisesRegex(
+                validator.ValidationError, "architecture does not match"
+            ):
+                self.validate(archive, checksum, "x64")
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(Path(directory), "arm64")
+            with self.assertRaises(validator.ValidationError):
+                self.validate(archive, checksum, "x64")
+            self.validate(archive, checksum, "arm64")
+
+    def test_stub_and_truncated_elf_are_rejected(self) -> None:
+        for content, error in (
+            (elf_stub("x64"), "ELF64|program-header|section-header"),
+            (elf_fixture("x64")[:-1], "section-header table"),
+        ):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
+                archive, checksum = write_package(
+                    Path(directory),
+                    "x64",
+                    binary_contents={"redis/bin/redis-server": content},
+                )
+                with self.assertRaisesRegex(validator.ValidationError, error):
+                    self.validate(archive, checksum, "x64")
+
+    def test_elf_redis_version_is_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(
+                Path(directory),
+                "x64",
+                binary_contents={
+                    "redis/bin/redis-server": elf_fixture(
+                        "x64", version="7.4.10"
+                    )
+                },
+            )
+            with self.assertRaisesRegex(validator.ValidationError, "Redis version"):
+                self.validate(archive, checksum, "x64")
+
+    def test_elf_glibc_interpreter_and_symbol_baseline_are_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(
+                Path(directory),
+                "x64",
+                binary_contents={
+                    "redis/bin/redis-server": elf_fixture(
+                        "x64", interpreter="/lib/ld-musl-x86_64.so.1"
+                    )
+                },
+            )
+            with self.assertRaisesRegex(validator.ValidationError, "interpreter"):
+                self.validate(archive, checksum, "x64")
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive, checksum = write_package(
+                Path(directory),
+                "x64",
+                binary_contents={
+                    "redis/bin/redis-server": elf_fixture("x64", glibc="2.29")
+                },
+            )
+            with self.assertRaisesRegex(validator.ValidationError, "GLIBC_2.29"):
+                self.validate(archive, checksum, "x64")
+
+    def test_declared_max_glibc_must_match_all_binaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary_contents = {
+                name: elf_fixture("x64", glibc="2.27") for name in ELF_BINARIES
+            }
+            archive, checksum = write_package(
+                Path(directory), "x64", binary_contents=binary_contents
+            )
+            with self.assertRaisesRegex(
+                validator.ValidationError, "MAX_GLIBC_SYMBOL"
+            ):
+                self.validate(archive, checksum, "x64")
 
     def test_version_and_glibc_numeric_components_are_bounded(self) -> None:
         with self.assertRaisesRegex(validator.ValidationError, "version"):
