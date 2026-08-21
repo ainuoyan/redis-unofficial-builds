@@ -158,6 +158,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("--reuid redis-builder", workflow)
         self.assertNotIn("--regid redis-builder", workflow)
 
+    def test_musl_tests_use_procps_process_detection(self) -> None:
+        musl_job = self.experimental_workflow.split("  musl:\n", 1)[1].split(
+            "\n  macos:\n", 1
+        )[0]
+        self.assertIn("make musl-dev procps python3", musl_job)
+
     def test_glibc217_build_preserves_only_the_pinned_manylinux_toolchain(self) -> None:
         glibc_job = self.experimental_workflow.split("  glibc217:\n", 1)[1].split(
             "\n  musl:\n", 1

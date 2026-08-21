@@ -287,7 +287,7 @@ jobs:
             --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH --env GITHUB_SHA \
             --env BUILD_ENVIRONMENT="$image" \
             "$image" /bin/bash -euo pipefail -c '
-              apk add --no-cache bash coreutils findutils gcc libc-dev linux-headers make musl-dev python3 tcl util-linux
+              apk add --no-cache bash coreutils findutils gcc libc-dev linux-headers make musl-dev procps python3 tcl util-linux
               adduser -D -s /bin/bash redis-builder
               install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
               builder_uid="$(id -u redis-builder)"
