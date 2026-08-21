@@ -190,8 +190,14 @@ jobs:
               yum -y install procps-ng tcl util-linux which
               useradd --create-home --shell /bin/bash redis-builder
               install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
-              setpriv --reuid redis-builder --regid redis-builder --clear-groups --no-new-privs -- \
-                env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              builder_uid="$(id -u redis-builder)"
+              builder_gid="$(id -g redis-builder)"
+              setpriv \
+                --reuid "$builder_uid" \
+                --regid "$builder_gid" \
+                --clear-groups \
+                --no-new-privs \
+                -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 HOME=/home/redis-builder LANG=C GITHUB_ACTIONS=true \
                 REDIS_VERSION="$REDIS_VERSION" REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" \
                 REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" PACKAGE_ARCH="$PACKAGE_ARCH" \
@@ -272,8 +278,14 @@ jobs:
               apk add --no-cache bash coreutils findutils gcc libc-dev linux-headers make musl-dev python3 tcl util-linux
               adduser -D -s /bin/bash redis-builder
               install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
-              setpriv --reuid redis-builder --regid redis-builder --clear-groups --no-new-privs -- \
-                env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              builder_uid="$(id -u redis-builder)"
+              builder_gid="$(id -g redis-builder)"
+              setpriv \
+                --reuid "$builder_uid" \
+                --regid "$builder_gid" \
+                --clear-groups \
+                --no-new-privs \
+                -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 HOME=/home/redis-builder LANG=C REDIS_VERSION="$REDIS_VERSION" \
                 REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" \
                 REDIS_SOURCE_ARCHIVE="/workspace/source/redis-${REDIS_VERSION}.tar.gz" \
