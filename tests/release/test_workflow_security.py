@@ -90,6 +90,17 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("REDIS_HASHES_COMMIT", self.workflow)
         self.assertIn("[0-9]{0,5}", self.workflow)
 
+    def test_linux_build_has_time_for_one_complete_serial_test_retry(self) -> None:
+        build_job = self.workflow.split("\n  build:\n", 1)[1].split(
+            "\n  service_test:\n", 1
+        )[0]
+        self.assertIn("timeout-minutes: 90", build_job)
+        self.assertIn("./runtest --clients 1 --timeout 1200", self.linux_build_script)
+        self.assertIn(
+            'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"',
+            self.linux_build_script,
+        )
+
     def test_release_is_a_new_verified_draft_published_once(self) -> None:
         self.assertIn("before-create.json", self.workflow)
         self.assertIn("pre-publish-state.json", self.workflow)

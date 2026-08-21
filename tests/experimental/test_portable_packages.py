@@ -340,10 +340,14 @@ class PortablePackageTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
             encoding="utf-8"
         )
-        musl_job, remainder = workflow.split("\n  musl:\n", 1)[1].split(
+        glibc_job, remainder = workflow.split("\n  glibc217:\n", 1)[1].split(
+            "\n  musl:\n", 1
+        )
+        musl_job, remainder = remainder.split(
             "\n  macos:\n", 1
         )
         macos_job = remainder.split("\n  windows:\n", 1)[0]
+        self.assertIn("timeout-minutes: 90", glibc_job)
         self.assertIn("timeout-minutes: 90", musl_job)
         self.assertIn("timeout-minutes: 90", macos_job)
 

@@ -312,11 +312,14 @@ if [[ -x scripts/build.sh ]]; then
   # publishes the stable core profile; a full profile needs a separate variant
   # and pinned Rust/LLVM/CMake dependency chain.
   make -j"$(nproc)" build redis BUILD_TLS=no
-  test_command=(make test redis BUILD_TLS=no)
 else
   make -j"$(nproc)" BUILD_TLS=no
-  test_command=(make BUILD_TLS=no test)
 fi
+[[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
+  echo "Redis test runner must be a regular executable file." >&2
+  exit 1
+}
+test_command=(./runtest --clients 1 --timeout 1200)
 bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 
 src/redis-server --version

@@ -64,7 +64,8 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn("if (( EUID == 0 )); then", script)
         self.assertIn('make -j"$(nproc)" build redis BUILD_TLS=no', script)
         self.assertIn('make -j"$(nproc)" BUILD_TLS=no', script)
-        self.assertIn("make BUILD_TLS=no test", script)
+        self.assertIn("./runtest --clients 1 --timeout 1200", script)
+        self.assertIn("Redis test runner must be a regular executable file", script)
         self.assertIn(
             'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
         )
