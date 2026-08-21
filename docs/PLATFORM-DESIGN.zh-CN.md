@@ -118,10 +118,15 @@ Windows 使用 `PACKAGE_FORMAT=3` 与 `PACKAGE_STATUS=experimental`。第 3 版�
 权限、超大内容、压缩炸弹、架构/运行库不匹配和仍处于启用状态的 `loadmodule`。
 
 手工工作流对 Linux 和 macOS 执行上游构建测试及本地 Redis 协议冒烟。Windows Job
-执行优化的 MSYS2 构建、构建仓库独立实现的自包含 SCM 包装器，并在一次性 Windows
-Runner 上验证全新安装、同版本幂等、就绪、服务停止、卸载和彻底卸载。OpenRC、
-launchd、代表性旧发行版、最老 macOS、Windows 认证关闭、持久化、回滚失败和负载
-测试仍属于稳定验收，因此即使某次构建成功，这些产物仍保持实验状态。
+执行优化的 MSYS2 构建并构建仓库独立实现的自包含 SCM 包装器。一次性生命周期门禁
+分别覆盖两个 legacy Linux 架构的无 systemd 用户态、两个 musl 架构的 Alpine 容器内
+OpenRC、两个 macOS 架构在原生 macOS 15 Runner 上的 launchd，以及 Windows Server
+2022 上的 SCM。各后端按适用范围验证全新安装、同版本幂等、就绪、已保存数据重载、
+普通卸载后的恢复和彻底卸载。
+
+稳定验收仍要求启动了 systemd 的代表性旧发行版、以 OpenRC 引导的环境、声明支持的
+最老 macOS 12、故障注入回滚，以及其余 Windows 认证、TLS、非 ASCII 路径、失败、
+安全和负载场景。因此即使手工运行成功，这些产物仍保持实验状态。
 
 ## 当前 GitHub Release 约定
 
@@ -255,23 +260,29 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 ### glibc 2.17 legacy
 
 该包是独立命名的实验性兼容变体，不替代已实现基线。构建器使用按摘要固定的
-manylinux2014，并拒绝任何要求高于 `GLIBC_2.17` 符号的 ELF。稳定验收仍要求两个
-架构的可维护工具链/sysroot、依赖检查、代表性旧用户态执行测试及
-同等 systemd 生命周期测试。说明必须明确旧 ABI 不提供操作系统安全维护。
+manylinux2014，并拒绝任何要求高于 `GLIBC_2.17` 符号的 ELF。手工门禁在对应的
+manylinux2014/CentOS 7 用户态中，以 `--no-service` 对两个架构测试全新安装、更新、
+已保存数据重载、普通卸载后的恢复和彻底卸载。稳定验收仍要求可维护的工具链/sysroot、
+代表性且仍受支持的旧操作系统、systemd 生命周期测试和故障注入回滚。说明必须明确
+旧 ABI 不提供操作系统安全维护。
 
 ### musl 与 OpenRC
 
 实验性 musl 包在按摘要固定的 musllinux 1.2 镜像中构建，必须使用 musl 解释器，
-不得包含 `GLIBC_*` 引用，并包含独立 OpenRC 生命周期约定。稳定验收仍需要原生依赖
-检查、Shell/运行环境审查，以及 OpenRC 下的安装、启动、就绪、更新、回滚和卸载测试。
+不得包含 `GLIBC_*` 引用，并包含独立 OpenRC 生命周期约定。手工门禁在一次性 Alpine
+容器内对两个架构测试 OpenRC 全新和重复安装、服务重启、已保存数据重载、普通卸载、
+基于更新的恢复及彻底卸载。该容器并非以 OpenRC 作为 PID 1 引导，因此稳定验收仍需
+以 OpenRC 引导的环境、更广的原生依赖及 Shell/运行环境兼容覆盖和故障注入回滚。
 OpenRC 脚本不得依赖 systemd，并使用独立服务/状态约定。
 
 ### macOS
 
 每个实验性架构都在原生 Runner 上以 12.0 部署目标构建；包校验器检查 Mach-O 架构、
 部署目标和允许的系统动态库路径。launchd 后端管理禁止登录账号，保留配置/数据，
-验证 PING，并包含更新/回滚/卸载脚本。稳定验收仍须在声明支持的最老 macOS 上运行
-这些路径。只有两个 slice 分别通过后才能发布 universal 包。
+验证 PING，并包含更新/回滚/卸载脚本。手工门禁在原生 macOS 15 Runner 上对两个
+架构测试全新和重复安装、launchd 重启、已保存数据重载、普通卸载后的恢复及彻底卸载。
+稳定验收仍须在声明支持的最老 macOS 12 上运行这些路径并执行故障注入回滚。只有两个
+slice 分别通过后才能发布 universal 包。
 
 ### Windows
 
@@ -290,10 +301,12 @@ MSYS2 是实验性主后端，Cygwin 仍仅设计，不能盲目共用路径转�
 保护状态；备份位于 `C:\ProgramData\Redis-Unofficial\Backups`。当前实验只支持默认无认证
 回环端点，认证关闭仍是明确的稳定验收项。
 
-Windows 稳定验收要求真实测试空格/非 ASCII 路径、错误配置、端口冲突、重启与
-持久化、BGSAVE、认证关闭、子进程异常退出、Sentinel、卸载/升级和有界负载。
-原生 EXE 必须具有 PE VERSIONINFO。发布构建使用优化而非 `-O0`，公布实测限制，
-不承诺 POSIX 兼容层具有 Linux 同等性能。详见
+当前 Windows Server 2022 门禁在固定默认路径覆盖全新安装、同版本更新、PING 就绪、
+显式 `SAVE`、SCM 重启后的键值重载、普通卸载保留、基于更新的服务恢复和彻底卸载。
+Windows 稳定验收仍要求真实测试空格/非 ASCII 路径、错误配置、端口冲突、BGSAVE/AOF、
+认证或 TLS 关闭、子进程异常退出、Sentinel、故障注入回滚和有界负载。原生 EXE 必须
+具有 PE VERSIONINFO。发布构建使用优化而非 `-O0`，公布实测限制，不承诺 POSIX
+兼容层具有 Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
 
 ## 版本解析与构建分离

@@ -73,13 +73,17 @@ natively, validates archive contents, and uploads seven-day Actions artifacts:
 Each package has an adjacent `.sha256` file and declares `experimental` in its
 package metadata. The workflow has `contents: read`, contains no Release/tag
 operation, is not callable by the release controller, and does not generate
-the stable Release manifest, SBOM, or attestations. Passing a build is not the
-same as completing the oldest-host, rollback, persistence, load, and security
-acceptance gates in the platform design. Use the package-local `README.txt`
-for its experimental layout; the stable lifecycle instructions below apply to
-`linux-glibc2.28` Release packages only. A checked-in experimental row does not
-prove that a successful native workflow run exists; verify the selected run
-and its logs before downloading an artifact.
+the stable Release manifest, SBOM, or attestations. Its disposable CI gates
+exercise no-systemd legacy Linux lifecycle paths, Alpine-container OpenRC,
+native macOS 15 launchd, and Windows Server 2022 SCM, including saved-data
+reload and ordinary-uninstall recovery. They do not cover a booted legacy
+systemd host, a booted OpenRC host, the oldest claimed macOS 12 host,
+fault-injected rollback, or the remaining platform security and load cases.
+Passing these gates therefore does not make an artifact production-supported.
+Use the package-local `README.txt` for its experimental layout; the stable
+lifecycle instructions below apply to `linux-glibc2.28` Release packages only.
+A checked-in experimental row does not prove that a successful native workflow
+run exists; verify the selected run and its logs before downloading an artifact.
 
 ## Release and package contents
 

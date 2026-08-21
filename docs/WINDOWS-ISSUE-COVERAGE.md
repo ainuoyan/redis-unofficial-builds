@@ -51,12 +51,14 @@ normal uninstall, back up managed program state for update rollback, and
 require explicit purge for data removal.
 
 The Windows build job currently tests only the fixed path
-`C:\Program Files\Redis-Unofficial`, default unauthenticated loopback service start,
-same-version update idempotency, PING, stop, uninstall, and purge on
-`windows-2022`. It does not yet cover non-ASCII paths, authenticated shutdown,
-TLS, Sentinel, BGSAVE/AOF persistence, port conflicts, unexpected child exit,
-rollback fault injection, load ceilings, Windows client releases, or native
-PE VERSIONINFO. Consequently no issue row below is marked **Verified**.
+`C:\Program Files\Redis-Unofficial` and the default unauthenticated loopback endpoint
+on `windows-2022`. It covers fresh install, same-version update idempotency,
+PING, explicit `SAVE`, SCM restart followed by key reload, ordinary uninstall
+retention, update-based service recovery, and purge. It does not yet cover
+non-ASCII paths, authenticated or TLS shutdown, Sentinel, BGSAVE/AOF-specific
+behavior, port conflicts, unexpected child exit, rollback fault injection,
+load ceilings, Windows client releases, or native PE VERSIONINFO. Consequently
+no issue row below is marked **Verified**.
 
 ## Design requirements and regression tests
 

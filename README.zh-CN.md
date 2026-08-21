@@ -60,9 +60,13 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 
 每个包都有相邻 `.sha256`，包元数据明确标记为 `experimental`。该工作流权限为
 `contents: read`，没有 Release/Tag 操作，发布控制器不能调用它，也不生成稳定发布的
-manifest、SBOM 或证明。一次构建通过不等于已经完成平台方案中的最老系统、回滚、
-持久化、负载和安全验收。实验包布局以包内 `README.txt` 为准；下文稳定生命周期说明
-只适用于 GitHub Release 中的 `linux-glibc2.28` 包。
+manifest、SBOM 或证明。它在一次性 CI 环境中测试无 systemd 的 legacy Linux
+生命周期、Alpine 容器内的 OpenRC、原生 macOS 15 launchd 和 Windows Server 2022
+SCM，并覆盖已保存数据的重载及普通卸载后的恢复。但它尚未覆盖启动了 systemd 的
+代表性旧系统、以 OpenRC 引导的主机、声明支持的最老 macOS 12、故障注入回滚及其余
+平台安全和负载场景。因此门禁通过也不代表产物已获得生产支持。实验包布局以包内
+`README.txt` 为准；下文稳定生命周期说明只适用于 GitHub Release 中的
+`linux-glibc2.28` 包。
 配置中存在实验性行不代表原生工作流已经成功运行；下载前必须核对所选 run 及其日志。
 
 ## Release 与包内容

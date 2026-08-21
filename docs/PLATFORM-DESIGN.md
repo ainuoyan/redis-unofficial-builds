@@ -144,14 +144,20 @@ members, traversal, links, special files, unsafe modes, oversized content,
 compression bombs, architecture/runtime mismatches, and active `loadmodule`
 records.
 
-The manual workflow runs upstream build tests and a local Redis protocol smoke
-test for Linux and macOS. The Windows job runs an optimized MSYS2 build, builds
-the repository's independent self-contained SCM wrapper, then exercises fresh
-install, same-version idempotency, readiness, service stop, uninstall, and
-purge on the disposable Windows runner. OpenRC, launchd, legacy-distribution,
-oldest-macOS, authenticated Windows shutdown, persistence, rollback-failure,
-and load tests remain stable-acceptance work; therefore these artifacts stay
-experimental even after a successful run.
+The manual workflow runs upstream build tests and local Redis protocol smoke
+tests for Linux and macOS. Its disposable lifecycle gates exercise both legacy
+Linux architectures without systemd, both musl architectures with OpenRC in an
+Alpine container, both macOS architectures with launchd on native macOS 15
+runners, and the optimized MSYS2 x64 build plus the repository's independent
+self-contained SCM wrapper on Windows Server 2022. Those gates cover fresh
+install, same-version idempotency, readiness, saved-data reload, ordinary
+uninstall recovery, and purge as applicable to each backend.
+
+Stable acceptance still requires a representative booted legacy distribution
+with systemd, a booted OpenRC environment, the oldest claimed macOS 12 version,
+fault-injected rollback, and the remaining Windows authentication, TLS,
+non-ASCII-path, failure, security, and load cases. A successful manual run
+therefore leaves every artifact in experimental status.
 
 ## Current GitHub Release contract
 
@@ -329,21 +335,26 @@ uninstall; maintenance fails closed while any such process remains.
 This is a separately named experimental compatibility artifact, not a
 replacement for the implemented baseline. Its builder uses digest-pinned
 manylinux2014 images and rejects any ELF requiring a symbol newer than
-`GLIBC_2.17`. Stable acceptance still requires a supportable build
-toolchain/sysroot for both architectures, maximum `GLIBC_2.17` symbol checks,
-dependency inspection, execution on representative legacy user spaces, and
-the same systemd lifecycle tests. Release notes must state that an old ABI
-does not provide operating-system security maintenance.
+`GLIBC_2.17`. The manual gate executes fresh install, update, saved-data
+reload, ordinary-uninstall recovery, and purge for both architectures in the
+matching manylinux2014/CentOS 7 user space using `--no-service`. Stable
+acceptance still requires a maintainable toolchain/sysroot, execution on a
+representative supported legacy operating system, systemd lifecycle tests,
+and rollback fault injection. Release notes must state that an old ABI does
+not provide operating-system security maintenance.
 
 ### musl and OpenRC
 
 The experimental musl archive is built in digest-pinned musllinux 1.2 images,
 must carry the musl interpreter, must contain no `GLIBC_*` references, and
-includes a distinct OpenRC lifecycle contract. Stable acceptance still needs
-native dependency inspection and shell/runtime
-compatibility review, and install/start/readiness/update/rollback/uninstall
-tests with OpenRC. The OpenRC scripts cannot depend on systemd and require a
-distinct service/state contract.
+includes a distinct OpenRC lifecycle contract. The manual gate tests both
+architectures in a disposable Alpine container with OpenRC: fresh and repeated
+install, service restart, saved-data reload, ordinary uninstall, update-based
+recovery, and purge. This container does not boot under OpenRC as PID 1, so
+stable acceptance still needs a booted OpenRC environment, broader native
+dependency and shell/runtime compatibility coverage, and rollback fault
+injection. The OpenRC scripts cannot depend on systemd and require a distinct
+service/state contract.
 
 ### macOS
 
@@ -351,9 +362,12 @@ Each experimental architecture is built on a native runner with deployment
 target 12.0. Archive validation checks Mach-O architecture, deployment target,
 and approved system-library paths. The launchd backend manages a recorded
 non-login account, preserves configuration/data, verifies PING readiness, and
-includes update/rollback/uninstall scripts. Stable acceptance still requires
-running those paths on the oldest claimed macOS version. A universal archive
-is permitted only after both slices independently pass.
+includes update/rollback/uninstall scripts. The manual gate runs fresh and
+repeated install, launchd restart, saved-data reload, ordinary-uninstall
+recovery, and purge for both architectures on native macOS 15 runners. Stable
+acceptance still requires running those paths on the oldest claimed macOS 12
+version and rollback fault injection. A universal archive is permitted only
+after both slices independently pass.
 
 ### Windows
 
@@ -379,11 +393,14 @@ state under the fixed prefix. Backups use
 default unauthenticated loopback endpoint; authenticated shutdown remains an
 explicit stable-acceptance gate.
 
-Stable Windows acceptance requires real tests for spaces and non-ASCII paths,
-invalid configuration, port conflicts, restart/persistence, BGSAVE,
-authenticated shutdown, unexpected child exit, Sentinel, uninstall/upgrade,
-and bounded load. Native executables require PE VERSIONINFO. Release builds
-use optimization rather than `-O0` and publish measured limits without
+The current Windows Server 2022 gate covers fresh install, same-version update,
+PING readiness, explicit `SAVE`, SCM restart with key reload, ordinary
+uninstall retention, update-based service recovery, and purge at the fixed
+default path. Stable Windows acceptance still requires real tests for spaces
+and non-ASCII paths, invalid configuration, port conflicts, BGSAVE/AOF,
+authenticated or TLS shutdown, unexpected child exit, Sentinel, rollback fault
+injection, and bounded load. Native executables require PE VERSIONINFO. Release
+builds use optimization rather than `-O0` and publish measured limits without
 promising Linux-equivalent behavior through a POSIX layer. See
 [Windows issue coverage](WINDOWS-ISSUE-COVERAGE.md).
 
