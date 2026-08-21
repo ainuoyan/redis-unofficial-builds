@@ -176,7 +176,8 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 ### 文件系统与账号信任
 
 - 生命周期脚本以 root 运行，但要求解压后的包树由 root 所有、组和其他用户不可写，
-  没有扩展 ACL、异常符号链接、多硬链接、特殊文件或特殊权限位。
+  没有扩展 ACL、异常符号链接、多硬链接或特殊文件。普通文件不得带 setuid、setgid 或
+  sticky 特殊权限位；目录按所有者和可写性约束，不统一禁止特殊权限位。
 - 新建 `redis` 账号禁止登录且仅属于 `redis` 组。已有账号仅在 UID/GID 非 0、
   `redis` 为主组和唯一所属组、Shell 为 `nologin`/`false` 且 home 是规范绝对路径时
   复用。当前格式状态固定记录 UID、主 GID、home、shell 和附加组集合。旧格式状态

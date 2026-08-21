@@ -1131,6 +1131,51 @@ exit 99
         self.assertRegex(install, r"require_commands[^\n]*\bgetconf\b")
         self.assertRegex(update, r"require_commands[^\n]*\bgetconf\b")
         self.assertRegex(uninstall, r"require_commands[^\n]*\bsed\b")
+        for name, script in (
+            ("install.sh", install),
+            ("update.sh", update),
+            ("uninstall.sh", uninstall),
+        ):
+            with self.subTest(script=name):
+                self.assertRegex(script, r"require_commands[^\n]*\bwc\b")
+                self.assertLess(
+                    script.index("require_commands"),
+                    script.index("acquire_lifecycle_lock"),
+                )
+
+    def test_platform_docs_match_filesystem_mode_validation(self) -> None:
+        common = (ROOT / "packaging/linux/scripts/common.sh").read_text(
+            encoding="utf-8"
+        )
+        directory_check = common[
+            common.index("assert_root_owned_directory()") :
+            common.index("assert_root_owned_regular_file()")
+        ]
+        regular_file_check = common[
+            common.index("assert_root_owned_regular_file()") :
+            common.index("validate_package_root_security()")
+        ]
+        self.assertIn("mode_value & 0022", directory_check)
+        self.assertNotIn("mode_value & 07000", directory_check)
+        self.assertIn("mode_value & 07000", regular_file_check)
+
+        english = (ROOT / "docs/PLATFORM-DESIGN.md").read_text(encoding="utf-8")
+        chinese = (ROOT / "docs/PLATFORM-DESIGN.zh-CN.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertRegex(
+            english,
+            r"Regular files may not have\s+setuid, setgid, or sticky mode bits",
+        )
+        self.assertRegex(
+            english,
+            r"Directories are constrained by ownership\s+and writability",
+        )
+        self.assertRegex(
+            chinese,
+            r"普通文件不得带 setuid、setgid 或\s+sticky 特殊权限位",
+        )
+        self.assertIn("目录按所有者和可写性约束", chinese)
 
     def test_effective_systemd_contract_rejects_drop_in_execution_changes(self) -> None:
         common_path = ROOT / "packaging/linux/scripts/common.sh"

@@ -106,7 +106,7 @@ while (($# > 0)); do
 done
 
 require_root
-require_commands awk cat chmod dirname find flock getent grep id ls readlink realpath rm sed stat
+require_commands awk cat chmod dirname find flock getent grep id ls readlink realpath rm sed stat wc
 acquire_lifecycle_lock
 [[ "$REDIS_INSTALL_PREFIX" == "/usr/local/redis" ]] \
   || die_message unexpected_path "$REDIS_INSTALL_PREFIX"
