@@ -55,16 +55,28 @@ That project is distributed under the Apache License 2.0; its license at the
 reviewed commit is:
 <https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/LICENSE>.
 
-The current repository uses that codebase as a design and test reference; no
-Windows source file from it is incorporated into the implemented Linux
-packages. Any later incorporation must record the exact source commit, retain
+The current repository uses that codebase as a design and test reference. Its
+MSYS2 approach and public issue reports informed the experimental backend, but
+the Windows service wrapper and lifecycle scripts in this repository are an
+independent implementation; no source file from the referenced project is
+incorporated. Any later incorporation must record the exact source commit, retain
 required copyright and attribution notices, include the Apache License 2.0
 and applicable upstream `NOTICE` material, and identify modifications.
 
 ## Build environment
 
-GitHub Actions, Rocky Linux, compilers, build tools, and system libraries used
-during compilation remain subject to their own terms. The implemented archive
-does not redistribute the Rocky Linux container image. Runtime shared-library
-requirements are recorded and inspected as part of the package validation;
-their installation and licensing are provided by the target operating system.
+GitHub Actions, Rocky Linux, manylinux/musllinux images, MSYS2, .NET,
+compilers, build tools, and system libraries used during compilation remain
+subject to their own terms. Packages do not redistribute complete build
+images. The Windows experiment does redistribute the runtime DLLs discovered
+for its MSYS2 Redis executables and a self-contained .NET service wrapper; the
+archive validator checks their bounded inventory and PE architecture, but the
+current rolling MSYS2 package resolution is not claimed to be bit-for-bit
+reproducible. The package records owning MSYS2 package versions and embeds the
+license files installed for every copied runtime-DLL package as
+`MSYS2-RUNTIME-NOTICES.txt`. This is not a substitute for a complete legal or
+corresponding-source review; redistributors remain responsible for the
+corresponding runtime notices and obligations. Other runtime shared-library
+requirements are inspected during build/package validation, while the declared
+platform baseline is recorded in package metadata; those libraries are normally
+provided by the target operating system.

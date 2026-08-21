@@ -41,6 +41,7 @@ EXPECTED_METADATA_KEYS = {
     "UPSTREAM_DEPENDENCY_NOTICES_SHA256",
     "PATCHSET_SHA256",
 }
+EXPERIMENTAL_METADATA_KEYS = EXPECTED_METADATA_KEYS | {"PACKAGE_STATUS"}
 REQUIRED_REGULAR_MEMBERS = {
     "redis/bin/redis-server",
     "redis/bin/redis-cli",
@@ -99,6 +100,8 @@ PATCHSET_FIXED_PATHS = (
     "scripts/linux/build-redis.sh",
     "THIRD_PARTY_NOTICES.md",
 )
+DEFAULT_BUILD_WORKFLOW = Path(".github/workflows/build-linux.yml")
+EXPERIMENTAL_BUILD_WORKFLOW = Path(".github/workflows/build-experimental.yml")
 MAX_ARCHIVE_MEMBERS = 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_DECLARED_FILE_BYTES = 512 * 1024 * 1024
@@ -304,6 +307,8 @@ def validate_member_name(name: str, *, is_directory: bool) -> str:
 
 def read_package_info(
     archive_path: Path,
+    *,
+    package_status: str = "release",
 ) -> tuple[dict[str, str], dict[str, tarfile.TarInfo], str]:
     members: dict[str, tarfile.TarInfo] = {}
     declared_bytes = 0
@@ -459,8 +464,15 @@ def read_package_info(
         if not match or match.group(1) in values:
             raise ValidationError("PACKAGE-INFO has an invalid or duplicate record")
         values[match.group(1)] = match.group(2)
-    if set(values) != EXPECTED_METADATA_KEYS:
+    expected_keys = (
+        EXPERIMENTAL_METADATA_KEYS
+        if package_status == "experimental"
+        else EXPECTED_METADATA_KEYS
+    )
+    if set(values) != expected_keys:
         raise ValidationError("PACKAGE-INFO has unknown or missing keys")
+    if package_status == "experimental" and values["PACKAGE_STATUS"] != "experimental":
+        raise ValidationError("PACKAGE-INFO does not declare experimental status")
     validate_upstream_notice_payloads(
         dependency_notices_bytes,
         contributor_license_bytes,
@@ -539,7 +551,10 @@ def require_real_parent_directories(root: Path, relative_path: Path) -> None:
             )
 
 
-def packaging_patchset_sha256(packaging_root: Path) -> str:
+def packaging_patchset_sha256(
+    packaging_root: Path,
+    build_workflow: Path = DEFAULT_BUILD_WORKFLOW,
+) -> str:
     """Reproduce build-redis.sh's sorted sha256sum-of-sha256sum patch-set hash."""
 
     try:
@@ -549,7 +564,12 @@ def packaging_patchset_sha256(packaging_root: Path) -> str:
     if not stat.S_ISDIR(root_mode) or packaging_root.is_symlink():
         raise ValidationError("packaging root is not a real directory")
 
-    relative_paths = [Path(value) for value in PATCHSET_FIXED_PATHS]
+    if build_workflow not in {DEFAULT_BUILD_WORKFLOW, EXPERIMENTAL_BUILD_WORKFLOW}:
+        raise ValidationError("unsupported build workflow for the packaging patch-set")
+    relative_paths = [
+        build_workflow if Path(value) == DEFAULT_BUILD_WORKFLOW else Path(value)
+        for value in PATCHSET_FIXED_PATHS
+    ]
     packaging_directory = packaging_root / "packaging/linux"
     require_real_parent_directories(
         packaging_root, Path("packaging/linux/.patchset-placeholder")
@@ -599,9 +619,14 @@ def packaging_patchset_sha256(packaging_root: Path) -> str:
 
 
 def validate_packaging_bindings(
-    archive_path: Path, packaging_root: Path, declared_patchset_sha256: str
+    archive_path: Path,
+    packaging_root: Path,
+    declared_patchset_sha256: str,
+    build_workflow: Path = DEFAULT_BUILD_WORKFLOW,
 ) -> str:
-    actual_patchset_sha256 = packaging_patchset_sha256(packaging_root)
+    actual_patchset_sha256 = packaging_patchset_sha256(
+        packaging_root, build_workflow
+    )
     if actual_patchset_sha256 != declared_patchset_sha256:
         raise ValidationError(
             "PACKAGE-INFO patch-set SHA256 differs from the reviewed packaging tree"
@@ -1022,9 +1047,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--variant", required=True)
     parser.add_argument("--arch", choices=("x64", "arm64"), required=True)
     parser.add_argument("--min-glibc", required=True)
+    parser.add_argument(
+        "--package-status",
+        choices=("release", "experimental"),
+        default="release",
+    )
     parser.add_argument("--packaging-root", type=Path)
     parser.add_argument("--packaging-revision")
+    parser.add_argument(
+        "--build-workflow",
+        type=Path,
+        default=DEFAULT_BUILD_WORKFLOW,
+    )
     return parser.parse_args()
+
+
+def validate_build_contract(
+    *, package_status: str, variant: str, min_glibc: str, build_workflow: Path
+) -> None:
+    expected = {
+        "release": ("linux-glibc2.28", "2.28", DEFAULT_BUILD_WORKFLOW),
+        "experimental": (
+            "linux-glibc2.17-legacy",
+            "2.17",
+            EXPERIMENTAL_BUILD_WORKFLOW,
+        ),
+    }
+    try:
+        required = expected[package_status]
+    except KeyError as exc:
+        raise ValidationError("unsupported package publication status") from exc
+    if (variant, min_glibc, build_workflow) != required:
+        raise ValidationError(
+            "package status, variant, glibc baseline, and workflow do not match"
+        )
 
 
 def main() -> int:
@@ -1036,6 +1092,12 @@ def main() -> int:
         if not SHA256_RE.fullmatch(args.source_sha256):
             raise ValidationError("invalid source SHA-256")
         parse_glibc(args.min_glibc)
+        validate_build_contract(
+            package_status=args.package_status,
+            variant=args.variant,
+            min_glibc=args.min_glibc,
+            build_workflow=args.build_workflow,
+        )
         if args.packaging_revision is not None and not re.fullmatch(
             r"[0-9a-f]{40}", args.packaging_revision
         ):
@@ -1050,7 +1112,10 @@ def main() -> int:
         if args.checksum.name != f"{expected_name}.sha256":
             raise ValidationError("unexpected checksum filename")
         validate_checksum(args.archive, args.checksum)
-        values, _, build_info = read_package_info(args.archive)
+        values, _, build_info = read_package_info(
+            args.archive,
+            package_status=args.package_status,
+        )
         validate_elf_binaries(
             args.archive,
             arch=args.arch,
@@ -1075,9 +1140,16 @@ def main() -> int:
             patchset_sha256=values["PATCHSET_SHA256"],
             packaging_revision=args.packaging_revision,
         )
+        if args.package_status == "experimental" and build_info_value(
+            build_info, "Package status"
+        ) != "experimental; GitHub Release publication is disabled":
+            raise ValidationError("BUILD-INFO does not preserve experimental status")
         if args.packaging_root is not None:
             validate_packaging_bindings(
-                args.archive, args.packaging_root, values["PATCHSET_SHA256"]
+                args.archive,
+                args.packaging_root,
+                values["PATCHSET_SHA256"],
+                args.build_workflow,
             )
         print(f"Validated immutable release asset: {args.archive.name}")
         return 0

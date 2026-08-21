@@ -1,10 +1,13 @@
 # Windows issue coverage
 
-This document records how the design-only Windows backends use reports from
+This document records how the experimental MSYS2 backend and design-only
+Cygwin backend use reports from
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows).
-No Windows package is currently implemented or published. The table is an
-acceptance specification and prevents a packaging change from being presented
-as proof that an upstream or compatibility-runtime defect is fixed.
+No stable Windows package is currently published. A manual Actions workflow
+can produce a seven-day experimental MSYS2 x64 artifact; that fact alone does
+not establish Windows production support. The table is an acceptance
+specification and prevents a packaging change from being presented as proof
+that an upstream or compatibility-runtime defect is fixed.
 
 Review baseline: upstream commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)
@@ -34,6 +37,26 @@ reported issues:
 
 These are code-reading conclusions, not assertions made by the referenced
 project.
+
+## Current experimental coverage
+
+This repository contains an independently implemented, self-contained .NET
+SCM wrapper; no source file from the reference project is copied. The current
+wrapper uses the MSYS2 `/c/...` path convention, runs Redis in the foreground,
+performs protocol readiness, reports child/start failures to SCM, uses bounded
+graceful shutdown with a process-tree fallback, and writes diagnostics under
+the fixed installation prefix. PowerShell scripts validate package identity,
+refuse reparse points, apply SID-based ACLs, preserve `conf` and `data` on a
+normal uninstall, back up managed program state for update rollback, and
+require explicit purge for data removal.
+
+The Windows build job currently tests only the fixed path
+`C:\Program Files\Redis-Unofficial`, default unauthenticated loopback service start,
+same-version update idempotency, PING, stop, uninstall, and purge on
+`windows-2022`. It does not yet cover non-ASCII paths, authenticated shutdown,
+TLS, Sentinel, BGSAVE/AOF persistence, port conflicts, unexpected child exit,
+rollback fault injection, load ceilings, Windows client releases, or native
+PE VERSIONINFO. Consequently no issue row below is marked **Verified**.
 
 ## Design requirements and regression tests
 
@@ -85,5 +108,6 @@ Windows backend passes.
 - **Separate scope**: belongs to a different edition/upstream and is not a core
   package defect.
 
-Any Windows Release notes must link to this table and use these terms. They
-must not claim that all `redis-windows` issues are fixed.
+Any stable Windows Release notes must link to this table and use these terms.
+Experimental artifact summaries must also state the unverified gates. Neither
+may claim that all `redis-windows` issues are fixed.

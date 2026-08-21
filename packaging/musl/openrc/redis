@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+
+name="Redis Unofficial experimental service"
+description="Redis server from redis-unofficial-builds"
+command="/usr/local/redis/bin/redis-server"
+command_args="/usr/local/redis/conf/redis.conf"
+command_user="redis:redis"
+command_background="yes"
+pidfile="/run/redis-unofficial.pid"
+start_stop_daemon_args="--make-pidfile --chdir /usr/local/redis"
+retry="TERM/30/KILL/5"
+
+depend() {
+    need localmount
+    use net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner redis:redis --mode 0750 /usr/local/redis/data
+    checkpath --directory --owner redis:redis --mode 0750 /usr/local/redis/log
+    checkpath --file --owner redis:redis --mode 0640 /usr/local/redis/log/redis.log
+}

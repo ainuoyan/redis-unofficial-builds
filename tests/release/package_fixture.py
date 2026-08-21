@@ -291,11 +291,14 @@ def package_info(
     contributor_license_sha256: str,
     dependency_notices_sha256: str,
     max_glibc: str = "2.28",
+    package_status: str | None = None,
 ) -> bytes:
+    status_record = [] if package_status is None else [f"PACKAGE_STATUS={package_status}"]
     return (
         "\n".join(
             [
                 "PACKAGE_FORMAT=2",
+                *status_record,
                 "PACKAGE_ID=redis-unofficial-builds",
                 f"REDIS_VERSION={VERSION}",
                 "REDIS_SERIES=7.4",
@@ -324,13 +327,20 @@ def build_info(
     revision: str = REVISION,
     patchset_sha256: str = PATCHSET_SHA256,
     hashes_commit: str = HASHES_COMMIT,
+    package_status: str | None = None,
 ) -> bytes:
+    status_record = (
+        []
+        if package_status is None
+        else ["Package status: experimental; GitHub Release publication is disabled"]
+    )
     return (
         "\n".join(
             [
                 f"Redis version: {VERSION}",
                 f"Package variant: {VARIANT}",
                 f"Package architecture: {arch}",
+                *status_record,
                 f"Redis source SHA256: {SOURCE_SHA256}",
                 f"Redis hashes snapshot: {hashes_commit}",
                 f"Packaging patch-set SHA256: {patchset_sha256}",
@@ -377,6 +387,7 @@ def write_package(
     max_glibc: str = "2.28",
     server_pax_headers: dict[str, str] | None = None,
     archive_format: int = tarfile.PAX_FORMAT,
+    package_status: str | None = None,
 ) -> tuple[Path, Path]:
     name = f"Redis-{VERSION}-{VARIANT}-{arch}.tar.gz"
     archive_path = directory / name
@@ -440,6 +451,7 @@ def write_package(
                 contributor_license_sha256=contributor_license_sha256,
                 dependency_notices_sha256=dependency_notices_sha256,
                 max_glibc=max_glibc,
+                package_status=package_status,
             ),
             0o644,
         )
@@ -451,6 +463,7 @@ def write_package(
                 revision,
                 build_patchset_sha256 or patchset_sha256,
                 hashes_commit,
+                package_status,
             ),
             0o644,
         )

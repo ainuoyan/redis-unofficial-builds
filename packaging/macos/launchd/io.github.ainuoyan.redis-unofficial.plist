@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.ainuoyan.redis-unofficial</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/redis/bin/redis-server</string>
+    <string>/usr/local/redis/conf/redis.conf</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/usr/local/redis</string>
+  <key>UserName</key>
+  <string>_redis_unofficial</string>
+  <key>GroupName</key>
+  <string>_redis_unofficial</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/usr/local/redis/log/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/redis/log/launchd.stderr.log</string>
+  <key>LimitNOFILE</key>
+  <integer>65536</integer>
+  <key>Umask</key>
+  <integer>23</integer>
+</dict>
+</plist>

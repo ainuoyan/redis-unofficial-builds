@@ -14,7 +14,9 @@ readonly PACKAGE_ARCH="${PACKAGE_ARCH:?PACKAGE_ARCH is required}"
 readonly PACKAGE_VARIANT="${PACKAGE_VARIANT:-linux-glibc2.28}"
 readonly GLIBC_BASELINE="${GLIBC_BASELINE:-2.28}"
 readonly BUILD_IMAGE="${BUILD_IMAGE:-unknown}"
+readonly BUILD_WORKFLOW_PATH="${BUILD_WORKFLOW_PATH:-.github/workflows/build-linux.yml}"
 readonly REQUESTED_PACKAGING_REVISION="${PACKAGING_REVISION:-}"
+readonly REQUESTED_SOURCE_ARCHIVE="${REDIS_SOURCE_ARCHIVE:-}"
 readonly SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 readonly SOURCE_ARCHIVE="redis-${REDIS_VERSION}.tar.gz"
 readonly SOURCE_URL="https://download.redis.io/releases/${SOURCE_ARCHIVE}"
@@ -48,6 +50,32 @@ fi
 
 if [[ ! "$GLIBC_BASELINE" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
   echo "Invalid glibc baseline: $GLIBC_BASELINE" >&2
+  exit 1
+fi
+
+case "$BUILD_WORKFLOW_PATH" in
+  .github/workflows/build-linux.yml)
+    [[ "$PACKAGE_VARIANT" == linux-glibc2.28 && "$GLIBC_BASELINE" == 2.28 ]] || {
+      echo "The release workflow only accepts linux-glibc2.28 with glibc 2.28." >&2
+      exit 1
+    }
+    package_status=""
+    ;;
+  .github/workflows/build-experimental.yml)
+    [[ "$PACKAGE_VARIANT" == linux-glibc2.17-legacy && "$GLIBC_BASELINE" == 2.17 ]] || {
+      echo "The experimental workflow only accepts the reviewed glibc 2.17 legacy identity." >&2
+      exit 1
+    }
+    package_status="experimental"
+    ;;
+  *)
+    echo "Unsupported build workflow path: $BUILD_WORKFLOW_PATH" >&2
+    exit 1
+    ;;
+esac
+if [[ ! -f "$PROJECT_ROOT/$BUILD_WORKFLOW_PATH" \
+  || -L "$PROJECT_ROOT/$BUILD_WORKFLOW_PATH" ]]; then
+  echo "Build workflow is missing or unsafe: $BUILD_WORKFLOW_PATH" >&2
   exit 1
 fi
 
@@ -260,10 +288,19 @@ fi
 mkdir -p "$resolved_output_dir"
 cd "$work_dir"
 
-curl --fail --silent --show-error --location \
-  --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 5 \
-  --retry 3 --retry-connrefused --connect-timeout 20 --max-time 600 \
-  "$SOURCE_URL" --output "$SOURCE_ARCHIVE"
+if [[ -n "$REQUESTED_SOURCE_ARCHIVE" ]]; then
+  requested_source_archive="$(realpath -e -- "$REQUESTED_SOURCE_ARCHIVE")"
+  [[ -f "$requested_source_archive" && ! -L "$requested_source_archive" ]] || {
+    echo "REDIS_SOURCE_ARCHIVE must name a regular non-symlink file." >&2
+    exit 1
+  }
+  cp -- "$requested_source_archive" "$SOURCE_ARCHIVE"
+else
+  curl --fail --silent --show-error --location \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 5 \
+    --retry 3 --retry-connrefused --connect-timeout 20 --max-time 600 \
+    "$SOURCE_URL" --output "$SOURCE_ARCHIVE"
+fi
 
 printf '%s  %s\n' "$REDIS_SOURCE_SHA256" "$SOURCE_ARCHIVE" | sha256sum --check --strict
 
@@ -470,7 +507,7 @@ patchset_sha256="$(
   cd "$PROJECT_ROOT"
   {
     printf '%s\0' \
-      .github/workflows/build-linux.yml \
+      "$BUILD_WORKFLOW_PATH" \
       scripts/linux/build-redis.sh \
       THIRD_PARTY_NOTICES.md
     find packaging/linux -type f -print0
@@ -481,8 +518,12 @@ patchset_sha256="$(
     | awk '{print $1}'
 )"
 
-cat >"$package_root/PACKAGE-INFO" <<EOF
-PACKAGE_FORMAT=2
+{
+  printf 'PACKAGE_FORMAT=2\n'
+  if [[ -n "$package_status" ]]; then
+    printf 'PACKAGE_STATUS=%s\n' "$package_status"
+  fi
+  cat <<EOF
 PACKAGE_ID=redis-unofficial-builds
 REDIS_VERSION=${REDIS_VERSION}
 REDIS_SERIES=${redis_series}
@@ -500,9 +541,13 @@ UPSTREAM_CONTRIBUTOR_LICENSE_SHA256=${contributor_license_sha256}
 UPSTREAM_DEPENDENCY_NOTICES_SHA256=${dependency_notices_sha256}
 PATCHSET_SHA256=${patchset_sha256}
 EOF
+} >"$package_root/PACKAGE-INFO"
 
 {
   echo "Redis version: $REDIS_VERSION"
+  if [[ -n "$package_status" ]]; then
+    echo "Package status: experimental; GitHub Release publication is disabled"
+  fi
   echo "Package variant: $PACKAGE_VARIANT"
   echo "Package architecture: $PACKAGE_ARCH"
   echo "Build profile: $build_profile_description"
@@ -541,6 +586,11 @@ cat >"$package_root/README.txt" <<EOF
 Redis ${REDIS_VERSION} unofficial Linux binary package
 Redis ${REDIS_VERSION} 非官方 Linux 二进制安装包
 
+$(if [[ -n "$package_status" ]]; then
+  printf '%s\n' \
+    'Status: experimental Actions artifact; GitHub Release publication is disabled' \
+    '状态：实验性 Actions artifact；禁止上传到 GitHub Release'
+fi)
 Package variant: ${PACKAGE_VARIANT}
 Package architecture: ${PACKAGE_ARCH}
 Build profile: ${build_profile_description}

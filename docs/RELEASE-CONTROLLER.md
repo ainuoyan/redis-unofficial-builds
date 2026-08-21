@@ -50,9 +50,10 @@ The controller writes:
 - `new-series.json`: stable series above the configured discovery floor;
 - `summary.md`: the same decisions for the GitHub job summary.
 
-Designed but disabled platforms are reported and never added to the matrices.
-A new series is assigned `candidate_then_pull_request` and requires reviewed
-configuration enrollment.
+Experimental and design-only platforms are reported as controller-disabled and
+never added to the matrices, even when an experimental row names its manual
+artifact workflow. A new series is assigned `candidate_then_pull_request` and
+requires reviewed configuration enrollment.
 
 ### Current exact Release inventory
 
@@ -210,7 +211,8 @@ SHA-1 记录忽略。伪装为稳定版但格式错误的记录、冲突重复�
 - `new-series.json`：高于配置发现基线的稳定系列；
 - `summary.md`：供 GitHub Job Summary 使用的同一组决定。
 
-仅设计且禁用的平台会列入报告，绝不进入矩阵。新系列标记为
+实验性和仅设计平台都会以控制器禁用状态列入报告，即使实验性行指向手工 artifact
+工作流也绝不进入矩阵。新系列标记为
 `candidate_then_pull_request`，必须经配置审查后登记。
 
 ### 当前精确 Release 清单

@@ -62,6 +62,50 @@ class ValidateReleaseAssetTests(unittest.TestCase):
             archive, checksum = write_package(Path(directory), "x64")
             self.validate(archive, checksum, "x64")
 
+    def test_experimental_linux_status_is_explicit_and_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive, _ = write_package(
+                Path(directory), "x64", package_status="experimental"
+            )
+            with self.assertRaisesRegex(validator.ValidationError, "unknown or missing"):
+                validator.read_package_info(archive)
+            values, _, build_info = validator.read_package_info(
+                archive, package_status="experimental"
+            )
+            self.assertEqual(values["PACKAGE_STATUS"], "experimental")
+            self.assertEqual(
+                validator.build_info_value(build_info, "Package status"),
+                "experimental; GitHub Release publication is disabled",
+            )
+
+    def test_publication_status_is_bound_to_one_reviewed_linux_contract(self) -> None:
+        validator.validate_build_contract(
+            package_status="release",
+            variant="linux-glibc2.28",
+            min_glibc="2.28",
+            build_workflow=validator.DEFAULT_BUILD_WORKFLOW,
+        )
+        validator.validate_build_contract(
+            package_status="experimental",
+            variant="linux-glibc2.17-legacy",
+            min_glibc="2.17",
+            build_workflow=validator.EXPERIMENTAL_BUILD_WORKFLOW,
+        )
+        for status, variant, baseline, workflow in (
+            ("release", "linux-glibc2.17-legacy", "2.17", validator.DEFAULT_BUILD_WORKFLOW),
+            ("experimental", "linux-glibc2.28", "2.28", validator.EXPERIMENTAL_BUILD_WORKFLOW),
+            ("experimental", "linux-glibc2.17-legacy", "2.17", validator.DEFAULT_BUILD_WORKFLOW),
+        ):
+            with self.subTest(status=status, variant=variant), self.assertRaisesRegex(
+                validator.ValidationError, "do not match"
+            ):
+                validator.validate_build_contract(
+                    package_status=status,
+                    variant=variant,
+                    min_glibc=baseline,
+                    build_workflow=workflow,
+                )
+
     def test_non_elf_binary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive, checksum = write_package(
@@ -386,6 +430,31 @@ class ValidateReleaseAssetTests(unittest.TestCase):
             (root / "scripts/linux/build-redis.sh").write_bytes(b"changed\n")
             with self.assertRaisesRegex(validator.ValidationError, "patch-set"):
                 validator.validate_packaging_bindings(archive, root, patchset)
+
+    def test_experimental_workflow_can_be_bound_into_linux_patchset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_names = set(validator.PATCHSET_FIXED_PATHS) | set(
+                validator.PACKAGING_BINDINGS.values()
+            )
+            source_names.add(validator.EXPERIMENTAL_BUILD_WORKFLOW.as_posix())
+            for source_name in source_names:
+                path = root / source_name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture\n")
+
+            default_patchset = validator.packaging_patchset_sha256(root)
+            experimental_patchset = validator.packaging_patchset_sha256(
+                root, validator.EXPERIMENTAL_BUILD_WORKFLOW
+            )
+            self.assertNotEqual(default_patchset, experimental_patchset)
+            (root / validator.EXPERIMENTAL_BUILD_WORKFLOW).write_bytes(b"changed\n")
+            self.assertNotEqual(
+                experimental_patchset,
+                validator.packaging_patchset_sha256(
+                    root, validator.EXPERIMENTAL_BUILD_WORKFLOW
+                ),
+            )
 
 
 if __name__ == "__main__":

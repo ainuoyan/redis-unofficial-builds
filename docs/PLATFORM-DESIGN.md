@@ -2,9 +2,11 @@
 
 [简体中文](PLATFORM-DESIGN.zh-CN.md)
 
-This document separates implemented release behavior from backend designs.
-**Implemented** means that code, CI, validation, and publication policy exist.
-**Design only** means that no downloadable or supported package is claimed.
+This document separates stable release behavior, experimental artifacts, and
+backend designs. **Implemented** means that code, CI, validation, native
+lifecycle gates, and publication policy exist. **Experimental** means that a
+manual build/package path exists but no GitHub Release or production support
+is claimed. **Design only** means that no build artifact is claimed.
 
 ## Redis release lines
 
@@ -35,16 +37,17 @@ marks remain subject to the official
 | Variant | Architectures | Build baseline | Service backend | Status |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64, ARM64 | Digest-pinned Rocky Linux 8 user space | systemd | **Implemented** |
-| `linux-glibc2.17-legacy` | x64, ARM64 | Reviewed glibc 2.17-compatible toolchain/sysroot | systemd | Design only |
-| `linux-musl1.2` | x64, ARM64 | Pinned supported Alpine baseline | OpenRC | Design only |
-| `macos12` | x64, ARM64 | Native runners with deployment target 12.0 | launchd | Design only |
-| `windows-msys2` | x64 | Pinned MSYS2 toolchain/runtime | Windows SCM | Design only; primary Windows backend |
+| `linux-glibc2.17-legacy` | x64, ARM64 | Digest-pinned manylinux2014 (glibc 2.17) | systemd | **Experimental artifact only** |
+| `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Experimental artifact only** |
+| `macos12` | x64, ARM64 | Native macOS 15 runners, deployment target 12.0 | launchd | **Experimental artifact only** |
+| `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Experimental artifact only**; primary Windows backend |
 | `windows-cygwin` | x64 | Pinned Cygwin toolchain/runtime | Windows SCM | Design only; compatibility backend |
 
-Only `linux-glibc2.28` rows are controller-enabled. All Linux archive designs
-use `.tar.gz` rather than an RPM, DEB, Snap, or APK and use the fixed prefix
-`/usr/local/redis`. Planned Windows packages use `.zip` and a separate
-Windows layout.
+Only `linux-glibc2.28` rows are controller-enabled. Experimental rows name the
+manual `build-experimental.yml` workflow but remain controller-disabled. All
+Linux archive designs use `.tar.gz` rather than an RPM, DEB, Snap, or APK and
+use the fixed prefix `/usr/local/redis`. The experimental Windows package uses
+`.zip` and the fixed prefix `C:\Program Files\Redis-Unofficial`.
 
 ### ABI principles
 
@@ -64,7 +67,7 @@ Windows layout.
   ARM64 requires a compatible native toolchain and real service, persistence,
   and load tests on ARM64 Windows.
 
-## Implemented Linux package contract
+## Implemented stable Linux package contract
 
 The current profile is `core`: Redis server and command-line binaries are
 included, while Redis 8 bundled modules are excluded. A module-enabled profile
@@ -120,6 +123,35 @@ staging tree. It refuses UID 0 and refuses a host with a live
 read-only to the builder. DNF packages are resolved from Rocky repositories,
 so compiler/runtime details are recorded but bit-for-bit reproducibility is
 not claimed.
+
+## Experimental artifact contract
+
+The manual-only workflow first pins and strictly parses an official
+`redis/redis-hashes` snapshot, downloads the matching source archive, and
+passes the verified archive between jobs. It has repository `contents: read`
+permission and no tag, Release, downstream workflow-dispatch API, or
+publication step. Artifacts are
+retained for seven days and are deliberately outside the stable seven-asset
+Release inventory.
+
+The glibc 2.17 packages reuse format 2 plus
+`PACKAGE_STATUS=experimental`. The musl, macOS, and Windows packages use
+`PACKAGE_FORMAT=3` and `PACKAGE_STATUS=experimental`. Format 3 binds the
+source digest, redis-hashes commit, packaging revision, exact platform
+identity, reviewed lifecycle assets, and platform-specific packaging patch
+set. Validation reads archives without extraction and rejects unexpected
+members, traversal, links, special files, unsafe modes, oversized content,
+compression bombs, architecture/runtime mismatches, and active `loadmodule`
+records.
+
+The manual workflow runs upstream build tests and a local Redis protocol smoke
+test for Linux and macOS. The Windows job runs an optimized MSYS2 build, builds
+the repository's independent self-contained SCM wrapper, then exercises fresh
+install, same-version idempotency, readiness, service stop, uninstall, and
+purge on the disposable Windows runner. OpenRC, launchd, legacy-distribution,
+oldest-macOS, authenticated Windows shutdown, persistence, rollback-failure,
+and load tests remain stable-acceptance work; therefore these artifacts stay
+experimental even after a successful run.
 
 ## Current GitHub Release contract
 
@@ -290,12 +322,14 @@ uninstall; maintenance fails closed while any such process remains.
   default. `--purge` removes the fixed prefix subject to account and mount
   safety checks.
 
-## Designed backends
+## Experimental and designed backends
 
 ### glibc 2.17 legacy
 
-This is a separately named compatibility artifact, not a replacement for the
-implemented baseline. Acceptance requires a pinned, supportable build
+This is a separately named experimental compatibility artifact, not a
+replacement for the implemented baseline. Its builder uses digest-pinned
+manylinux2014 images and rejects any ELF requiring a symbol newer than
+`GLIBC_2.17`. Stable acceptance still requires a supportable build
 toolchain/sysroot for both architectures, maximum `GLIBC_2.17` symbol checks,
 dependency inspection, execution on representative legacy user spaces, and
 the same systemd lifecycle tests. Release notes must state that an old ABI
@@ -303,20 +337,23 @@ does not provide operating-system security maintenance.
 
 ### musl and OpenRC
 
-The musl archive must be built in a pinned supported Alpine baseline and must
-not carry a glibc label. It needs native dependency inspection, shell/runtime
+The experimental musl archive is built in digest-pinned musllinux 1.2 images,
+must carry the musl interpreter, must contain no `GLIBC_*` references, and
+includes a distinct OpenRC lifecycle contract. Stable acceptance still needs
+native dependency inspection and shell/runtime
 compatibility review, and install/start/readiness/update/rollback/uninstall
 tests with OpenRC. The OpenRC scripts cannot depend on systemd and require a
 distinct service/state contract.
 
 ### macOS
 
-Each architecture is built on a native runner with a recorded deployment
-target, then inspected with `file` and `otool`. A launchd backend must manage a
-recorded non-login account, preserve configuration/data, verify PING
-readiness, and test update/rollback/uninstall on the oldest claimed macOS
-version. A universal archive is permitted only after both slices independently
-pass.
+Each experimental architecture is built on a native runner with deployment
+target 12.0. Archive validation checks Mach-O architecture, deployment target,
+and approved system-library paths. The launchd backend manages a recorded
+non-login account, preserves configuration/data, verifies PING readiness, and
+includes update/rollback/uninstall scripts. Stable acceptance still requires
+running those paths on the oldest claimed macOS version. A universal archive
+is permitted only after both slices independently pass.
 
 ### Windows
 
@@ -325,18 +362,22 @@ The Windows design explicitly references Apache-2.0-licensed
 at commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9).
 The reference is fixed so design conclusions and issue mappings are
-reproducible. The implemented Linux packages incorporate none of that
-project's source code. Attribution and incorporation requirements are recorded
+reproducible. This repository's Windows wrapper is an independent
+implementation and incorporates no source file from that project. Attribution
+and any future incorporation requirements are recorded
 in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-MSYS2 is the primary design and Cygwin is a separate compatibility design.
+MSYS2 is the experimental primary backend and Cygwin remains design only.
 Their path conversion rules cannot be shared blindly: MSYS2 uses `/c/...`,
 while Cygwin uses `/cygdrive/c/...`. The service wrapper must keep Redis in
 foreground mode, validate configuration paths, propagate startup/child-exit
 failure to the Service Control Manager, perform real readiness checks, use
 bounded graceful shutdown and process-tree fallback, exclude credentials from
 arguments/logs, record diagnostic output, and maintain protected installation
-state under `C:\ProgramData\Redis`.
+state under the fixed prefix. Backups use
+`C:\ProgramData\Redis-Unofficial\Backups`. The current experiment supports the
+default unauthenticated loopback endpoint; authenticated shutdown remains an
+explicit stable-acceptance gate.
 
 Stable Windows acceptance requires real tests for spaces and non-ASCII paths,
 invalid configuration, port conflicts, restart/persistence, BGSAVE,
@@ -385,5 +426,5 @@ An implemented stable row requires:
   and one-way publication; and
 - protected-default-branch and `release` Environment approval.
 
-A design-only row cannot be included in an implemented Release merely because
-its asset name is present in configuration.
+An experimental or design-only row cannot be included in an implemented
+Release merely because its workflow or asset name is present in configuration.

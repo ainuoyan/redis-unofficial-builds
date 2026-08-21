@@ -2,28 +2,29 @@
 
 [English](README.md)
 
-本仓库提供按版本发布的 Redis 非官方二进制包。当前已实现 x64 与 ARM64 Linux
-压缩包构建，并维护其他 ABI 和操作系统后端的审查方案。
+本仓库提供按版本发布的 Redis 非官方二进制包。稳定发布路径仍是 glibc 2.28 Linux；
+其他 ABI 和操作系统后端使用独立的实验性手工 artifact 路径。
 
 > 本项目与 Redis Ltd. 无关联，也未获得其背书。Redis 及其捆绑依赖仍受每个包内
 > 许可证和 notices 文件的约束。
 
 ## 可用包
 
-只有标记为“已实现”的平台才具备发布资格。
+只有标记为“已实现”的平台才具备 GitHub Release 发布资格。“实验性”表示已有构建与
+打包代码，不代表存在受支持或已发布到 Release 的包。
 
 | 包变体 | 架构 | 运行要求 | 状态 |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
 | `linux-glibc2.28` | `arm64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | 旧版 glibc Linux、systemd | 仅设计 |
-| `linux-musl1.2` | `x64` / `arm64` | musl Linux、OpenRC | 仅设计 |
-| `macos12` | `x64` / `arm64` | macOS、launchd | 仅设计 |
-| `windows-msys2` | `x64` | Windows 服务控制管理器 | 仅设计 |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux、glibc 2.17+、systemd | 仅实验性 artifact |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 仅实验性 artifact |
+| `macos12` | `x64` / `arm64` | macOS 12+、launchd | 仅实验性 artifact |
+| `windows-msys2` | `x64` | Windows Server 2022 测试 Runner、Windows SCM | 仅实验性 artifact |
 | `windows-cygwin` | `x64` | Windows 服务控制管理器 | 仅设计 |
 
-当前已实现的发布目标仅支持 Linux。同架构的 glibc 2.28 包通常可在更高版本 glibc 上运行；
-Alpine 等 musl 系统需要单独的 musl 后端，该后端尚未实现。Linux 包是普通
+当前已实现的发布目标仍仅支持 glibc 2.28 Linux。同架构的 glibc 2.28 包通常可在
+更高版本 glibc 上运行；Alpine 等 musl 系统必须使用单独命名的 musl artifact。Linux 包是普通
 `.tar.gz` 压缩包，不依赖 RPM、DEB、Snap 或 APK。正式产物从仓库的
 [GitHub Releases](https://github.com/ainuoyan/redis-unofficial-builds/releases)
 下载。
@@ -41,9 +42,28 @@ Alpine 等 musl 系统需要单独的 musl 后端，该后端尚未实现。Linu
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 提交
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)。
-当前不宣称存在 Windows 包或原生 Windows ARM64 支持。详见
+当前不宣称存在稳定 Windows Release、Windows 生产支持、Cygwin 包或原生 Windows
+ARM64 支持。详见
 [Windows issue 覆盖表](docs/WINDOWS-ISSUE-COVERAGE.md)和
 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
+### 实验性手工 artifact
+
+可手工触发 `.github/workflows/build-experimental.yml`，输入一个精确的官方稳定版
+Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交，再按所选平台原生
+构建、校验包内内容，并上传保留 7 天的 Actions artifact：
+
+- glibc 2.17 legacy：x64、ARM64 `.tar.gz`，包含经审查的 systemd 生命周期脚本；
+- musl 1.2：x64、ARM64 `.tar.gz`，包含 OpenRC 生命周期脚本；
+- macOS 12+：原生 x64、ARM64 `.tar.gz`，包含 launchd 生命周期脚本；
+- Windows：一个 x64 MSYS2 `.zip`，包含专用 SCM 包装器和 PowerShell 生命周期脚本。
+
+每个包都有相邻 `.sha256`，包元数据明确标记为 `experimental`。该工作流权限为
+`contents: read`，没有 Release/Tag 操作，发布控制器不能调用它，也不生成稳定发布的
+manifest、SBOM 或证明。一次构建通过不等于已经完成平台方案中的最老系统、回滚、
+持久化、负载和安全验收。实验包布局以包内 `README.txt` 为准；下文稳定生命周期说明
+只适用于 GitHub Release 中的 `linux-glibc2.28` 包。
+配置中存在实验性行不代表原生工作流已经成功运行；下载前必须核对所选 run 及其日志。
 
 ## Release 与包内容
 
