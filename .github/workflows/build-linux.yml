@@ -1,144 +1,367 @@
 name: Build Linux binaries
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       redis_version:
-        description: Redis version, for example 7.4.11
+        description: Exact official Redis version
         required: true
-        default: 7.4.11
+        type: string
+      source_sha256:
+        description: Expected official Redis source SHA-256
+        required: true
+        type: string
+      package_arch:
+        description: Package architecture
+        required: true
         type: string
       publish_release:
         description: Publish the packages to GitHub Releases
+        required: false
+        default: false
+        type: boolean
+      force_rebuild:
+        description: Rebuild even if the release already exists
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      redis_version:
+        description: Exact official Redis version (X.Y.Z)
         required: true
-        default: true
+        type: string
+      source_sha256:
+        description: Optional official source SHA-256 cross-check
+        required: false
+        type: string
+      package_arch:
+        description: Package architecture
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - x64
+          - arm64
+      publish_release:
+        description: Publish the packages to GitHub Releases
+        required: true
+        default: false
         type: boolean
       force_rebuild:
         description: Rebuild even if the release already exists
         required: true
         default: false
         type: boolean
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/build-linux.yml
-      - scripts/linux/**
-  schedule:
-    - cron: "17 1 * * *"
-
 permissions:
   contents: read
 
 concurrency:
-  group: redis-linux-${{ github.event_name }}-${{ inputs.redis_version || 'tracked-7.4' }}
+  group: redis-linux-${{ inputs.redis_version }}
   cancel-in-progress: false
 
 env:
-  TRACK_SERIES: "7.4"
-  HASHES_URL: https://raw.githubusercontent.com/redis/redis-hashes/master/README
   PACKAGE_VARIANT: linux-glibc2.28
+  GLIBC_BASELINE: "2.28"
+  ROCKY_8_IMAGE: rockylinux/rockylinux:8@sha256:e8a49c5403b687db05d4d67333fa45808fbe74f36e683cec7abb1f7d0f2338c6
 
 jobs:
   prepare:
     name: Resolve and verify version
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       source_sha256: ${{ steps.resolve.outputs.source_sha256 }}
+      hashes_commit: ${{ steps.resolve.outputs.hashes_commit }}
       should_build: ${{ steps.resolve.outputs.should_build }}
       release_exists: ${{ steps.resolve.outputs.release_exists }}
-      is_latest_track: ${{ steps.resolve.outputs.is_latest_track }}
+      arch_matrix: ${{ steps.resolve.outputs.arch_matrix }}
     steps:
+      - name: Checkout reviewed packaging project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
       - name: Resolve Redis version and official checksum
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.redis_version }}
+          PROVIDED_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          REQUESTED_PACKAGE_ARCH: ${{ inputs.package_arch }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
           FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TRIGGER_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
         shell: bash
         run: |
           set -euo pipefail
 
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 \
-            "$HASHES_URL" --output redis-hashes.txt
+          python3 scripts/release/validate_configs.py \
+            --release-config config/release-lines.json \
+            --platform-config config/platforms.json \
+            --workflows-dir .github/workflows
 
-          series_regex="${TRACK_SERIES//./\\.}"
-          latest_track_version="$({
-            grep -E "^hash redis-${series_regex}\\.[0-9]+\\.tar\\.gz sha256 " redis-hashes.txt || true
-          } | awk '{print $2}' \
-            | sed -E 's/^redis-//; s/\.tar\.gz$//' \
-            | sort -V \
-            | tail -n 1)"
-
-          if [[ -z "$latest_track_version" ]]; then
-            echo "No Redis ${TRACK_SERIES}.x release found in redis-hashes." >&2
+          version="$REQUESTED_VERSION"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
+            echo "Invalid canonical Redis version: $version" >&2
             exit 1
           fi
 
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            version="$REQUESTED_VERSION"
-          else
-            version="$latest_track_version"
+          if [[ "${PUBLISH_RELEASE:-false}" == true ]]; then
+            if [[ "$TRIGGER_REF" != "refs/heads/${DEFAULT_BRANCH}" \
+              || "$REF_PROTECTED" != true ]]; then
+              echo "Release publication requires the protected default branch." >&2
+              exit 1
+            fi
+            python3 scripts/release/validate_publish_policy.py \
+              --release-config config/release-lines.json \
+              --redis-version "$version" \
+              --as-of "$(date -u +%F)"
           fi
 
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid Redis version: $version" >&2
+          hashes_repository="$(jq -er '.upstream.hashes_repository' config/release-lines.json)"
+          hashes_ref="$(jq -er '.upstream.hashes_ref' config/release-lines.json)"
+          hashes_path="$(jq -er '.upstream.hashes_path' config/release-lines.json)"
+          hashes_commit="$(
+            gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${hashes_repository}/commits/${hashes_ref}" \
+              --jq '.sha'
+          )"
+          if [[ ! "$hashes_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid Redis hashes snapshot Git OID." >&2
+            exit 1
+          fi
+          gh api \
+            -H 'Accept: application/vnd.github.raw+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${hashes_repository}/contents/${hashes_path}?ref=${hashes_commit}" \
+            >redis-hashes.txt
+          hashes_size="$(wc -c <redis-hashes.txt)"
+          if ((hashes_size == 0 || hashes_size > 16777216)); then
+            echo "Official Redis hashes file has an invalid size: $hashes_size" >&2
             exit 1
           fi
 
-          hash_line="$(awk -v file="redis-${version}.tar.gz" \
-            '$1 == "hash" && $2 == file && $3 == "sha256" { print; exit }' \
-            redis-hashes.txt)"
+          requested_arch="${REQUESTED_PACKAGE_ARCH:-all}"
+          case "$requested_arch" in
+            all)
+              selected_arches=(x64 arm64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04","machine_arch":"x86_64","package_arch":"x64"},{"runner":"ubuntu-24.04-arm","machine_arch":"aarch64","package_arch":"arm64"}]}'
+              ;;
+            x64)
+              selected_arches=(x64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04","machine_arch":"x86_64","package_arch":"x64"}]}'
+              ;;
+            arm64)
+              selected_arches=(arm64)
+              arch_matrix='{"include":[{"runner":"ubuntu-24.04-arm","machine_arch":"aarch64","package_arch":"arm64"}]}'
+              ;;
+            *)
+              echo "Unsupported package architecture: $requested_arch" >&2
+              exit 1
+              ;;
+          esac
 
-          if [[ -z "$hash_line" ]]; then
-            echo "No official checksum found for Redis $version." >&2
+          if [[ "${PUBLISH_RELEASE:-false}" == true && "$requested_arch" != all ]]; then
+            echo "Direct Release publication requires package_arch=all." >&2
             exit 1
           fi
+
+          if ! awk -v file="redis-${version}.tar.gz" '
+            $1 == "hash" && $2 == file && $3 == "sha256" {
+              if (NF == 5) { print; next }
+              exit 2
+            }
+          ' redis-hashes.txt >redis-version-hashes.txt; then
+            echo "Malformed official checksum record for Redis $version." >&2
+            exit 1
+          fi
+          mapfile -t hash_lines <redis-version-hashes.txt
+
+          if [[ "${#hash_lines[@]}" -eq 0 ]]; then
+            echo "No official checksum was found for Redis $version." >&2
+            exit 1
+          fi
+          hash_line="${hash_lines[0]}"
 
           source_sha256="$(awk '{print $4}' <<<"$hash_line")"
           if [[ ! "$source_sha256" =~ ^[0-9a-f]{64}$ ]]; then
             echo "Invalid SHA256 value for Redis $version." >&2
             exit 1
           fi
+          hashes_source_url="$(awk '{print $5}' <<<"$hash_line")"
+          case "$hashes_source_url" in
+            "http://download.redis.io/releases/redis-${version}.tar.gz"|\
+            "https://download.redis.io/releases/redis-${version}.tar.gz") ;;
+            *)
+              echo "Official hash entry has an unexpected source URL: $hashes_source_url" >&2
+              exit 1
+              ;;
+          esac
+          for duplicate_line in "${hash_lines[@]:1}"; do
+            duplicate_sha256="$(awk '{print $4}' <<<"$duplicate_line")"
+            duplicate_url="$(awk '{print $5}' <<<"$duplicate_line")"
+            if [[ "$duplicate_sha256" != "$source_sha256" \
+              || "$duplicate_url" != "$hashes_source_url" ]]; then
+              echo "Conflicting official checksum entries for Redis $version." >&2
+              exit 1
+            fi
+          done
 
-          if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if [[ -n "${PROVIDED_SOURCE_SHA256:-}" && \
+                "$PROVIDED_SOURCE_SHA256" != "$source_sha256" ]]; then
+            echo "Provided SHA256 does not match the official Redis hash." >&2
+            exit 1
+          fi
+
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          qualified_tag="refs/tags/${version}"
+          gh api graphql \
+            -f owner="$owner" \
+            -f name="$repository_name" \
+            -f tag="$version" \
+            -f qualifiedTag="$qualified_tag" \
+            -f query='query($owner:String!,$name:String!,$tag:String!,$qualifiedTag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){id tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}} ref(qualifiedName:$qualifiedTag){name target{oid}}}}' \
+            >release-state.json
+          jq -e '((.errors // []) | length) == 0 and .data.repository != null' \
+            release-state.json >/dev/null
+
+          release_exists=false
+          release_complete=false
+          if jq -e '.data.repository.release != null' release-state.json >/dev/null; then
             release_exists=true
-          else
-            release_exists=false
+            jq -e '
+              .data.repository.release.tagName == $version and
+              (.data.repository.release.isDraft | not) and
+              (.data.repository.release.isPrerelease | not) and
+              (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not)
+            ' --arg version "$version" release-state.json >/dev/null || {
+              if [[ "$(jq -r '.data.repository.release.isDraft' release-state.json)" == "true" ]]; then
+                echo "A draft Release for Redis $version already exists (leftover from a failed publish run or a manual draft)." >&2
+                echo "Recovery: review it, then delete it with 'gh release delete $version --yes' and re-run this workflow." >&2
+              else
+                echo "Existing Redis Release is prerelease, malformed, or too large." >&2
+              fi
+              exit 1
+            }
+
+            expected_assets=(
+              "Redis-${version}-${PACKAGE_VARIANT}-x64.tar.gz"
+              "Redis-${version}-${PACKAGE_VARIANT}-x64.tar.gz.sha256"
+              "Redis-${version}-${PACKAGE_VARIANT}-arm64.tar.gz"
+              "Redis-${version}-${PACKAGE_VARIANT}-arm64.tar.gz.sha256"
+              SHA256SUMS
+              manifest.json
+              "redis-unofficial-builds-${version}.spdx.json"
+            )
+            existing_assets="$(
+              jq -r '.data.repository.release.releaseAssets.nodes[].name' \
+                release-state.json | LC_ALL=C sort
+            )"
+            expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
+            if [[ "$existing_assets" != "$expected_asset_list" ]]; then
+              echo "Existing Redis Release is incomplete or uses a legacy asset contract." >&2
+              exit 1
+            fi
+
+            install -d -m 0700 existing-release-assets
+            download_args=()
+            for asset in "${expected_assets[@]}"; do
+              download_args+=(--pattern "$asset")
+            done
+            gh release download "$version" \
+              --repo "$GITHUB_REPOSITORY" \
+              "${download_args[@]}" \
+              --dir existing-release-assets
+            python3 scripts/release/release_metadata.py validate \
+              --asset-dir existing-release-assets \
+              --redis-version "$version" \
+              --source-sha256 "$source_sha256" \
+              --variant "$PACKAGE_VARIANT" \
+              --min-glibc "$GLIBC_BASELINE" \
+              --repository "$GITHUB_REPOSITORY"
+            release_revision="$(
+              jq -er '.build.revision | select(type == "string")' \
+                existing-release-assets/manifest.json
+            )"
+            tag_revision="$(jq -er '.data.repository.ref.target.oid' release-state.json)"
+            if [[ "$tag_revision" != "$release_revision" ]]; then
+              echo "Existing Release tag does not identify its packaging revision." >&2
+              exit 1
+            fi
+
+            attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+            verify_attestation() {
+              local asset="$1"
+              local predicate_type="$2"
+              local attempt
+              for attempt in 1 2 3; do
+                if gh attestation verify "$asset" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --cert-identity "$attestation_identity" \
+                  --signer-digest "$release_revision" \
+                  --source-digest "$release_revision" \
+                  --source-ref "refs/heads/$DEFAULT_BRANCH" \
+                  --predicate-type "$predicate_type" \
+                  --deny-self-hosted-runners >/dev/null; then
+                  return 0
+                fi
+                (( attempt == 3 )) || sleep "$((attempt * 2))"
+              done
+              echo "Required attestation verification failed for $asset." >&2
+              return 1
+            }
+            for asset in "${expected_assets[@]}"; do
+              verify_attestation \
+                "existing-release-assets/$asset" \
+                https://slsa.dev/provenance/v1
+            done
+            for package_arch in x64 arm64; do
+              verify_attestation \
+                "existing-release-assets/Redis-${version}-${PACKAGE_VARIANT}-${package_arch}.tar.gz" \
+                https://spdx.dev/Document/v2.3
+            done
+            release_complete=true
+          elif jq -e '.data.repository.ref != null' release-state.json >/dev/null; then
+            echo "Tag $version already exists without a current immutable Release." >&2
+            exit 1
           fi
 
-          force_rebuild=false
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            force_rebuild="${FORCE_REBUILD:-false}"
-          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            force_rebuild=true
-          fi
-
-          if [[ "$release_exists" == true && "$force_rebuild" != true ]]; then
-            should_build=false
+          force_rebuild="${FORCE_REBUILD:-false}"
+          if [[ "$release_complete" == true ]]; then
+            if [[ "$force_rebuild" == true && "${PUBLISH_RELEASE:-false}" == true ]]; then
+              echo "An immutable Release cannot be force-republished." >&2
+              exit 1
+            fi
+            [[ "$force_rebuild" == true ]] && should_build=true || should_build=false
           else
             should_build=true
-          fi
-
-          if [[ "$version" == "$latest_track_version" ]]; then
-            is_latest_track=true
-          else
-            is_latest_track=false
           fi
 
           {
             echo "version=$version"
             echo "source_sha256=$source_sha256"
+            echo "hashes_commit=$hashes_commit"
             echo "should_build=$should_build"
             echo "release_exists=$release_exists"
-            echo "is_latest_track=$is_latest_track"
+            echo "arch_matrix=$arch_matrix"
           } >>"$GITHUB_OUTPUT"
 
           echo "Redis version: $version"
           echo "Official SHA256: $source_sha256"
+          echo "Redis hashes snapshot: $hashes_commit"
           echo "Existing release: $release_exists"
+          echo "Selected assets complete: $release_complete"
           echo "Build required: $should_build"
 
   build:
@@ -147,18 +370,11 @@ jobs:
     if: needs.prepare.outputs.should_build == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            machine_arch: x86_64
-            package_arch: x64
-          - runner: ubuntu-24.04-arm
-            machine_arch: aarch64
-            package_arch: arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
-      image: rockylinux/rockylinux:8
+      image: rockylinux/rockylinux:8@sha256:e8a49c5403b687db05d4d67333fa45808fbe74f36e683cec7abb1f7d0f2338c6
     steps:
       - name: Install build dependencies
         shell: bash
@@ -173,9 +389,12 @@ jobs:
             git \
             gzip \
             make \
+            python3 \
             procps-ng \
+            shadow-utils \
             tar \
             tcl \
+            util-linux \
             which
           dnf clean all
 
@@ -183,17 +402,87 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Create unprivileged builder and read-only packaging snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --system \
+            --home-dir /var/lib/redis-builder \
+            --create-home \
+            --shell /sbin/nologin \
+            redis-builder
+          chown -R root:root "$GITHUB_WORKSPACE"
+          chmod -R go-w "$GITHUB_WORKSPACE"
+          install -d -o root -g root -m 0555 /opt/redis-packaging
+          cp -a \
+            "$GITHUB_WORKSPACE/.github" \
+            "$GITHUB_WORKSPACE/packaging" \
+            "$GITHUB_WORKSPACE/scripts" \
+            "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" \
+            /opt/redis-packaging/
+          chown -R root:root /opt/redis-packaging
+          chmod -R go-w /opt/redis-packaging
+          find /opt/redis-packaging -perm /0022 -print -quit | grep -q . && {
+            echo "Packaging snapshot remains writable." >&2
+            exit 1
+          }
+          install -d -o redis-builder -g redis-builder -m 0755 \
+            "$GITHUB_WORKSPACE/dist"
 
       - name: Build, test, and package Redis
         env:
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
           REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           PACKAGE_ARCH: ${{ matrix.package_arch }}
           PACKAGE_VARIANT: ${{ env.PACKAGE_VARIANT }}
-          BUILD_IMAGE: rockylinux/rockylinux:8
+          BUILD_IMAGE: ${{ env.ROCKY_8_IMAGE }}
         shell: bash
-        run: ./scripts/linux/build-redis.sh
+        run: |
+          set -euo pipefail
+          builder_uid="$(id -u redis-builder)"
+          builder_gid="$(id -g redis-builder)"
+          setpriv \
+            --reuid "$builder_uid" \
+            --regid "$builder_gid" \
+            --clear-groups \
+            --no-new-privs \
+            -- env -i \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              HOME=/var/lib/redis-builder \
+              LANG=C \
+              REDIS_VERSION="$REDIS_VERSION" \
+              REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" \
+              REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" \
+              EXPECTED_MACHINE_ARCH="$EXPECTED_MACHINE_ARCH" \
+              PACKAGE_ARCH="$PACKAGE_ARCH" \
+              PACKAGE_VARIANT="$PACKAGE_VARIANT" \
+              GLIBC_BASELINE="$GLIBC_BASELINE" \
+              BUILD_IMAGE="$BUILD_IMAGE" \
+              OUTPUT_DIR="$GITHUB_WORKSPACE/dist" \
+              GITHUB_SHA="$GITHUB_SHA" \
+              GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
+              GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+              /opt/redis-packaging/scripts/linux/build-redis.sh
+          pkill -KILL -u "$builder_uid" 2>/dev/null || true
+          chown -R root:root "$GITHUB_WORKSPACE/dist"
+          chmod -R go-w "$GITHUB_WORKSPACE/dist"
+
+          archive="dist/Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-${PACKAGE_ARCH}.tar.gz"
+          python3 scripts/release/validate_release_asset.py \
+            --archive "$archive" \
+            --checksum "${archive}.sha256" \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --arch "$PACKAGE_ARCH" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --packaging-root "$GITHUB_WORKSPACE" \
+            --packaging-revision "$GITHUB_SHA"
 
       - name: Upload package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -205,29 +494,394 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  service_test:
+    name: Test service scripts ${{ matrix.package_arch }}
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.arch_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout reviewed packaging project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Download package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Redis-${{ needs.prepare.outputs.version }}-${{ env.PACKAGE_VARIANT }}-${{ matrix.package_arch }}
+          path: package-artifact
+
+      - name: Verify and extract package
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd package-artifact
+          package="Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-${PACKAGE_ARCH}.tar.gz"
+          python3 ../scripts/release/validate_release_asset.py \
+            --archive "$package" \
+            --checksum "${package}.sha256" \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --arch "$PACKAGE_ARCH" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --packaging-root "$GITHUB_WORKSPACE" \
+            --packaging-revision "$GITHUB_SHA"
+          sudo install -d -o root -g root -m 0755 /var/tmp/redis-package-root
+          package_path="$PWD/$package"
+          sudo sh -c \
+            'umask 022; exec tar --no-same-owner --no-same-permissions -xzf "$1" -C "$2"' \
+            sh "$package_path" /var/tmp/redis-package-root
+
+      - name: Test installation and service
+        shell: bash
+        env:
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+        run: |
+          set -euo pipefail
+
+          sudo env REDIS_INSTALL_LANG=en \
+            /var/tmp/redis-package-root/redis/scripts/install.sh --help | grep -Fq 'Usage:'
+          sudo env REDIS_INSTALL_LANG=zh_CN \
+            /var/tmp/redis-package-root/redis/scripts/install.sh --help | grep -Fq '用法：'
+
+          sudo cp -a /var/tmp/redis-package-root /var/tmp/incompatible-package
+          case "$PACKAGE_ARCH" in
+            x64) incompatible_arch=arm64 ;;
+            arm64) incompatible_arch=x64 ;;
+            *) echo "Unexpected matrix architecture: $PACKAGE_ARCH" >&2; exit 1 ;;
+          esac
+          sudo sed -i "s/^PACKAGE_ARCH=.*/PACKAGE_ARCH=${incompatible_arch}/" \
+            /var/tmp/incompatible-package/redis/PACKAGE-INFO
+          if sudo /var/tmp/incompatible-package/redis/scripts/install.sh --no-service; then
+            echo "Architecture preflight unexpectedly accepted an incompatible package." >&2
+            exit 1
+          fi
+          [[ ! -e /usr/local/redis ]]
+
+          sudo /var/tmp/redis-package-root/redis/scripts/install.sh
+          sudo systemctl is-enabled --quiet redis.service
+          sudo systemctl is-active --quiet redis.service
+          sudo grep -Fqx 'PACKAGE_ID=redis-unofficial-builds' \
+            /usr/local/redis/.redis-package-state
+          sudo grep -Fqx 'SERVICE_MANAGER=systemd' \
+            /usr/local/redis/.redis-package-state
+          sudo grep -Fqx 'dir /usr/local/redis/data' \
+            /usr/local/redis/conf/redis.conf
+          sudo grep -Fqx 'port 0' /usr/local/redis/conf/redis.conf
+          sudo grep -Fqx 'unixsocket /usr/local/redis/data/redis.sock' \
+            /usr/local/redis/conf/redis.conf
+
+          redis_cli() {
+            sudo -u redis /usr/local/redis/bin/redis-cli \
+              -s /usr/local/redis/data/redis.sock "$@"
+          }
+          wait_for_socket() {
+            local attempt
+            for attempt in {1..30}; do
+              if [[ "$(redis_cli PING 2>/dev/null || true)" == PONG ]]; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+          wait_for_socket
+          if timeout 3 /usr/local/redis/bin/redis-cli \
+            -h 127.0.0.1 -p 6379 PING >/dev/null 2>&1; then
+            echo "Fresh installation unexpectedly exposed TCP port 6379." >&2
+            exit 1
+          fi
+
+          sudo cp -a /usr/local/redis/conf/redis.conf \
+            /var/tmp/redis.conf.socket-only
+          sudo sed -i 's/^port 0$/port 6379/' \
+            /usr/local/redis/conf/redis.conf
+          if sudo grep -Eq '^[[:space:]]*bind[[:space:]]+' \
+            /usr/local/redis/conf/redis.conf; then
+            sudo sed -i -E \
+              's/^[[:space:]]*bind[[:space:]]+.*/bind 127.0.0.1/' \
+              /usr/local/redis/conf/redis.conf
+          else
+            printf '\nbind 127.0.0.1\n' \
+              | sudo tee -a /usr/local/redis/conf/redis.conf >/dev/null
+          fi
+          sudo grep -Fqx 'port 6379' /usr/local/redis/conf/redis.conf
+          sudo grep -Fqx 'bind 127.0.0.1' /usr/local/redis/conf/redis.conf
+          sudo systemctl restart redis.service
+          tcp_ready=false
+          for _ in {1..30}; do
+            if [[ "$(timeout 3 /usr/local/redis/bin/redis-cli \
+              -h 127.0.0.1 -p 6379 PING 2>/dev/null || true)" == PONG ]]; then
+              tcp_ready=true
+              break
+            fi
+            sleep 1
+          done
+          [[ "$tcp_ready" == true ]]
+          sudo install -o root -g redis -m 0640 \
+            /var/tmp/redis.conf.socket-only /usr/local/redis/conf/redis.conf
+          sudo rm -f /var/tmp/redis.conf.socket-only
+          sudo systemctl restart redis.service
+          wait_for_socket
+          if timeout 3 /usr/local/redis/bin/redis-cli \
+            -h 127.0.0.1 -p 6379 PING >/dev/null 2>&1; then
+            echo "TCP port 6379 remained enabled after restoring port 0." >&2
+            exit 1
+          fi
+
+          sudo chmod 0666 /usr/local/redis/.redis-package-state
+          if sudo /usr/local/redis/scripts/uninstall.sh; then
+            echo "Writable installation state was unexpectedly accepted." >&2
+            exit 1
+          fi
+          sudo chmod 0600 /usr/local/redis/.redis-package-state
+
+          sudo mv /usr/local/redis/.redis-package-state \
+            /usr/local/redis/.redis-package-state.saved
+          sudo ln -s .redis-package-state.saved \
+            /usr/local/redis/.redis-package-state
+          if sudo /usr/local/redis/scripts/uninstall.sh; then
+            echo "Symlinked installation state was unexpectedly accepted." >&2
+            exit 1
+          fi
+          sudo rm /usr/local/redis/.redis-package-state
+          sudo mv /usr/local/redis/.redis-package-state.saved \
+            /usr/local/redis/.redis-package-state
+
+          redis_cli SET redis-unofficial-service-test preserved >/dev/null
+          redis_cli SET redis-unofficial-expiry-test expires EX 1 >/dev/null
+          sleep 2
+          [[ "$(redis_cli EXISTS redis-unofficial-expiry-test)" == 0 ]]
+          [[ "$(redis_cli SAVE)" == "OK" ]]
+
+          custom_data_dir='/usr/local/redis/custom data-数据'
+          sudo install -d -o redis -g redis -m 0750 "$custom_data_dir"
+          sudo install -o redis -g redis -m 0640 \
+            /usr/local/redis/data/dump.rdb "$custom_data_dir/dump.rdb"
+          sudo sed -i \
+            's|^dir /usr/local/redis/data$|dir "/usr/local/redis/custom data-数据"|' \
+            /usr/local/redis/conf/redis.conf
+          sudo chown root:redis /usr/local/redis/conf/redis.conf
+          sudo chmod 0640 /usr/local/redis/conf/redis.conf
+
+      - name: Test update and data preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          redis_cli() {
+            sudo -u redis /usr/local/redis/bin/redis-cli \
+              -s /usr/local/redis/data/redis.sock "$@"
+          }
+          sudo /var/tmp/redis-package-root/redis/scripts/update.sh
+          sudo systemctl is-active --quiet redis.service
+          [[ "$(redis_cli GET redis-unofficial-service-test)" == "preserved" ]]
+          sudo grep -Fqx 'dir "/usr/local/redis/custom data-数据"' \
+            /usr/local/redis/conf/redis.conf
+          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+
+      - name: Test failed-update rollback
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          redis_cli() {
+            sudo -u redis /usr/local/redis/bin/redis-cli \
+              -s /usr/local/redis/data/redis.sock "$@"
+          }
+          sudo cp -a /var/tmp/redis-package-root /var/tmp/rollback-package
+          {
+            printf '%s\n' \
+              '#!/bin/sh' \
+              'if [ "${1:-}" = "--version" ]; then'
+            printf '  echo "Redis server v=%s sha=00000000:0 malloc=libc bits=64 build=0000000000000000"\n' \
+              "$REDIS_VERSION"
+            printf '%s\n' \
+              '  exit 0' \
+              'fi' \
+              'exit 1'
+          } | sudo tee /var/tmp/rollback-package/redis/bin/redis-server >/dev/null
+          sudo chmod 0755 /var/tmp/rollback-package/redis/bin/redis-server
+          if sudo /var/tmp/rollback-package/redis/scripts/update.sh; then
+            echo "Update unexpectedly succeeded with a failing Redis binary." >&2
+            exit 1
+          fi
+          sudo systemctl is-active --quiet redis.service
+          [[ "$(redis_cli GET redis-unofficial-service-test)" == "preserved" ]]
+          sudo grep -Fqx 'dir "/usr/local/redis/custom data-数据"' \
+            /usr/local/redis/conf/redis.conf
+          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+          sudo grep -Fq '/usr/local/redis/bin/redis-server' \
+            /etc/systemd/system/redis.service
+
+      - name: Test uninstall, reinstall, and purge
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/local/redis/scripts/uninstall.sh
+          [[ ! -e /usr/local/redis/bin/redis-server ]]
+          [[ -f /usr/local/redis/conf/redis.conf ]]
+          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+          [[ -f /usr/local/redis/.redis-package-state ]]
+          if systemctl cat redis.service >/dev/null 2>&1; then
+            echo "redis.service still exists after uninstall." >&2
+            exit 1
+          fi
+
+          sudo /var/tmp/redis-package-root/redis/scripts/install.sh
+          [[ "$(sudo -u redis /usr/local/redis/bin/redis-cli \
+            -s /usr/local/redis/data/redis.sock \
+            GET redis-unofficial-service-test)" == "preserved" ]]
+
+          created_user="$(sudo awk -F= '$1 == "CREATED_USER" { print $2 }' \
+            /usr/local/redis/.redis-package-state)"
+          sudo /usr/local/redis/scripts/uninstall.sh --purge
+          [[ ! -e /usr/local/redis ]]
+          if [[ "$created_user" == "1" ]]; then
+            if id redis >/dev/null 2>&1; then
+              echo "A project-created redis user still exists after purge." >&2
+              exit 1
+            fi
+          elif ! id redis >/dev/null 2>&1; then
+            echo "A pre-existing redis user was removed by purge." >&2
+            exit 1
+          fi
+
+          sudo /var/tmp/redis-package-root/redis/scripts/install.sh --no-service
+          sudo grep -Fqx 'SERVICE_MANAGER=none' \
+            /usr/local/redis/.redis-package-state
+          if systemctl cat redis.service >/dev/null 2>&1; then
+            echo "--no-service unexpectedly installed redis.service." >&2
+            exit 1
+          fi
+          sudo /usr/local/redis/scripts/uninstall.sh --purge
+
   release:
     name: Publish GitHub Release
-    needs: [prepare, build]
+    needs: [prepare, build, service_test]
     if: >-
       needs.prepare.outputs.should_build == 'true' &&
-      (github.event_name != 'workflow_dispatch' || inputs.publish_release == true)
+      inputs.publish_release == true &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: release
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
+      - name: Checkout reviewed packaging project
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
       - name: Download packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release-assets
           merge-multiple: true
 
-      - name: Verify package checksums
-        working-directory: release-assets
+      - name: Validate packages and create immutable release metadata
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
-          for checksum in *.sha256; do
-            sha256sum --check "$checksum"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 scripts/release/release_metadata.py create \
+            --asset-dir release-assets \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --packaging-revision "$GITHUB_SHA" \
+            --packaging-root "$GITHUB_WORKSPACE" \
+            --created "$created"
+          python3 scripts/release/release_metadata.py validate \
+            --asset-dir release-assets \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --packaging-revision "$GITHUB_SHA" \
+            --packaging-root "$GITHUB_WORKSPACE"
+
+      - name: Attest release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*
+
+      - name: Attest SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*.tar.gz
+          sbom-path: release-assets/redis-unofficial-builds-${{ needs.prepare.outputs.version }}.spdx.json
+
+      - name: Verify uploaded attestations before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 scripts/release/release_metadata.py validate \
+            --asset-dir release-assets \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --packaging-revision "$GITHUB_SHA" \
+            --packaging-root "$GITHUB_WORKSPACE"
+
+          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+          verify_attestation() {
+            local asset="$1"
+            local predicate_type="$2"
+            local attempt
+            for attempt in 1 2 3 4 5 6; do
+              if gh attestation verify "$asset" \
+                --repo "$GITHUB_REPOSITORY" \
+                --cert-identity "$attestation_identity" \
+                --signer-digest "$GITHUB_SHA" \
+                --source-digest "$GITHUB_SHA" \
+                --source-ref "refs/heads/$DEFAULT_BRANCH" \
+                --predicate-type "$predicate_type" \
+                --deny-self-hosted-runners >/dev/null; then
+                return 0
+              fi
+              (( attempt == 6 )) || sleep "$((attempt * 2))"
+            done
+            echo "Required attestation verification failed for $asset." >&2
+            return 1
+          }
+
+          for asset in release-assets/*; do
+            verify_attestation "$asset" https://slsa.dev/provenance/v1
+          done
+          for archive in release-assets/*.tar.gz; do
+            verify_attestation "$archive" https://spdx.dev/Document/v2.3
           done
 
       - name: Prepare release notes
@@ -238,56 +892,380 @@ jobs:
         run: |
           cat >release-notes.md <<EOF
           Redis ${REDIS_VERSION} unofficial binary builds.
+          Redis ${REDIS_VERSION} 非官方二进制构建。
 
-          Linux assets in this release:
+          Linux assets in this release / 本次 Release 的 Linux 安装包：
 
           - Architectures: x64 and ARM64
+          - 架构：x64、ARM64
           - Install prefix: \`/usr/local/redis\`
+          - 安装目录：\`/usr/local/redis\`
           - Archive root: \`redis/\`
           - Compatibility baseline: Rocky Linux 8 / glibc 2.28
+          - 兼容基线：Rocky Linux 8 / glibc 2.28；通常可在 glibc 2.28 及以上系统运行
+          - Service mode: systemd by default; \`--no-service\` performs a complete managed installation without requiring or registering systemd
+          - 服务模式：默认使用 systemd；\`--no-service\` 执行完整受管安装，但不要求或注册 systemd
           - TLS support: disabled, matching a default \`make\` build
+          - TLS：未启用，与默认 \`make\` 构建一致
+          - Build profile: core; bundled Redis 8 modules are not included
+          - 构建配置：core；不包含 Redis 8 捆绑模块
+          - Install, update, and uninstall scripts select Chinese or English from the system locale
+          - 安装、更新和卸载脚本根据系统 locale 自动选择中文或英文
           - Redis source: https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz
           - Redis source SHA256: \`${REDIS_SOURCE_SHA256}\`
+          - Release manifest: \`manifest.json\`
+          - Complete checksums: \`SHA256SUMS\`
+          - Release-package-level SPDX 2.3 inventory: \`redis-unofficial-builds-${REDIS_VERSION}.spdx.json\`
+          - 发布包级 SPDX 2.3 清单：\`redis-unofficial-builds-${REDIS_VERSION}.spdx.json\`
+          - GitHub artifact attestations cover the published archives and metadata
 
-          Verify and install x64:
+          A \`--no-service\` update or uninstall requires the administrator to
+          stop every process whose executable is exactly
+          \`/usr/local/redis/bin/redis-server\`; maintenance refuses to continue
+          while any such process remains.
+
+          使用 \`--no-service\` 安装时，更新或卸载前必须由管理员停止所有可执行文件
+          精确为 \`/usr/local/redis/bin/redis-server\` 的进程；只要仍有此类进程，
+          维护操作就会拒绝继续。
+
+          Verify the archive provenance and its package-level SPDX attestation
+          / 验证压缩包来源证明及包级 SPDX 证明：
+
+          \`\`\`bash
+          gh attestation verify \
+            Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz \
+            --repo ${GITHUB_REPOSITORY} \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --deny-self-hosted-runners
+
+          gh attestation verify \
+            Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz \
+            --repo ${GITHUB_REPOSITORY} \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --deny-self-hosted-runners
+          \`\`\`
+
+          Verify and install x64 as a systemd service / 校验并安装 x64 systemd 服务：
 
           \`\`\`bash
           sha256sum -c Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz.sha256
-          sudo tar -xzf Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz -C /usr/local
-          /usr/local/redis/bin/redis-server /usr/local/redis/conf/redis.conf
+          stage="\$(sudo mktemp -d /var/tmp/redis-unofficial-builds.XXXXXX)"
+          sudo chmod 0755 "\$stage"
+          sudo sh -c \
+            'umask 022; exec tar --no-same-owner --no-same-permissions -xzf "\$1" -C "\$2"' sh \
+            Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz "\$stage"
+          sudo "\$stage/redis/scripts/install.sh"
+          systemctl status redis.service
           \`\`\`
 
-          These are unofficial builds. Redis remains subject to its upstream license included in each archive.
+          Update a managed installation while preserving configuration and data
+          / 更新本项目管理的安装并保留配置和数据：
+
+          \`\`\`bash
+          stage="\$(sudo mktemp -d /var/tmp/redis-unofficial-builds.XXXXXX)"
+          sudo chmod 0755 "\$stage"
+          sudo sh -c \
+            'umask 022; exec tar --no-same-owner --no-same-permissions -xzf "\$1" -C "\$2"' sh \
+            Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz "\$stage"
+          sudo "\$stage/redis/scripts/update.sh"
+          \`\`\`
+
+          The automatic update backup does not copy the Redis data directory.
+          Take a storage snapshot before a production version upgrade.
+
+          自动更新备份不会复制 Redis 数据目录；生产版本升级前请另外创建存储快照。
+
+          For an existing manual installation, review its configuration and run
+          \`update.sh --adopt\`. The base systemd unit respects configured data and
+          log paths. Optional strict hardening is included as an example but is not
+          enabled automatically.
+
+          对于原有手工安装，请先检查配置，再运行 \`update.sh --adopt\`。基础
+          systemd 单元会遵循配置中的数据和日志路径；严格加固配置仅作为示例，
+          不会自动启用。
+
+          These are unofficial builds. Redis remains subject to its upstream license
+          included in each archive.
+
+          这些是非官方构建；Redis 仍遵循每个压缩包中附带的上游许可证。
           EOF
 
-      - name: Create or update release
+      - name: Create verified draft and publish once
         env:
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_EXISTS: ${{ needs.prepare.outputs.release_exists }}
-          IS_LATEST_TRACK: ${{ needs.prepare.outputs.is_latest_track }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "$RELEASE_EXISTS" == true ]]; then
-            gh release upload "$REDIS_VERSION" release-assets/* \
-              --clobber \
-              --repo "$GITHUB_REPOSITORY"
-            gh release edit "$REDIS_VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "Redis ${REDIS_VERSION} unofficial builds" \
-              --notes-file release-notes.md
-          else
-            latest_args=()
-            if [[ "$IS_LATEST_TRACK" == true ]]; then
-              latest_args+=(--latest)
-            fi
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          qualified_tag="refs/tags/${REDIS_VERSION}"
+          query='query($owner:String!,$name:String!,$tag:String!,$qualifiedTag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){id databaseId tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}} ref(qualifiedName:$qualifiedTag){name target{oid}}}}'
 
-            gh release create "$REDIS_VERSION" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "Redis ${REDIS_VERSION} unofficial builds" \
-              --notes-file release-notes.md \
-              "${latest_args[@]}"
-          fi
+          query_state() {
+            local output="$1"
+            gh api graphql \
+              -f owner="$owner" \
+              -f name="$repository_name" \
+              -f tag="$REDIS_VERSION" \
+              -f qualifiedTag="$qualified_tag" \
+              -f query="$query" \
+              >"$output"
+            jq -e '((.errors // []) | length) == 0 and .data.repository != null' \
+              "$output" >/dev/null
+          }
+
+          expected_assets=(
+            "Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz"
+            "Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-x64.tar.gz.sha256"
+            "Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-arm64.tar.gz"
+            "Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-arm64.tar.gz.sha256"
+            SHA256SUMS
+            manifest.json
+            "redis-unofficial-builds-${REDIS_VERSION}.spdx.json"
+          )
+          expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
+          : >expected-asset-content.jsonl
+          for asset in "${expected_assets[@]}"; do
+            asset_path="release-assets/$asset"
+            [[ -f "$asset_path" && ! -L "$asset_path" ]] || {
+              echo "Local release asset is not a regular file: $asset" >&2
+              exit 1
+            }
+            asset_size="$(stat -c '%s' -- "$asset_path")"
+            asset_sha256="$(sha256sum -- "$asset_path" | awk '{print $1}')"
+            jq -nc \
+              --arg name "$asset" \
+              --argjson size "$asset_size" \
+              --arg digest "sha256:${asset_sha256}" \
+              '{name: $name, size: $size, digest: $digest}' \
+              >>expected-asset-content.jsonl
+          done
+          jq -s 'sort_by(.name)' expected-asset-content.jsonl \
+            >expected-asset-content.json
+
+          fetch_release_asset_records() {
+            local output="$1"
+            local release_id="$2"
+            local raw="${output}.raw"
+            local content="${output}.content"
+            local attempt
+            for attempt in 1 2 3 4 5 6; do
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+                >"$raw"
+              if jq -e --argjson count "${#expected_assets[@]}" '
+                type == "array" and
+                length == $count and
+                all(.[];
+                  ((.id | type) == "number") and .id > 0 and
+                  ((.name | type) == "string") and
+                  .state == "uploaded" and
+                  ((.size | type) == "number") and .size >= 0 and
+                  ((.digest | type) == "string") and
+                  (.digest | test("^sha256:[0-9a-f]{64}$"))
+                )
+              ' "$raw" >/dev/null; then
+                jq '[.[] | {id, name, size, digest}] | sort_by(.name)' \
+                  "$raw" >"$output"
+                jq '[.[] | {name, size, digest}] | sort_by(.name)' \
+                  "$raw" >"$content"
+                if cmp -s expected-asset-content.json "$content"; then
+                  return 0
+                fi
+              fi
+              (( attempt == 6 )) || sleep "$((attempt * 2))"
+            done
+            echo "Remote Release asset identities or digests do not match the verified local files." >&2
+            return 1
+          }
+
+          query_state before-create.json
+          jq -e '.data.repository.release == null and .data.repository.ref == null' \
+            before-create.json >/dev/null || {
+              echo "Release or tag appeared after preparation; refusing to mutate it." >&2
+              exit 1
+            }
+
+          gh release create "$REDIS_VERSION" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Redis ${REDIS_VERSION} unofficial builds" \
+            --notes-file release-notes.md \
+            --draft
+
+          query_state draft-state.json
+          draft_assets="$(
+            jq -r '.data.repository.release.releaseAssets.nodes[].name' \
+              draft-state.json | LC_ALL=C sort
+          )"
+          jq -e '
+            .data.repository.release.tagName == $version and
+            .data.repository.release.isDraft and
+            (.data.repository.release.isPrerelease | not) and
+            (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+            (.data.repository.release.databaseId | type == "number")
+          ' --arg version "$REDIS_VERSION" \
+            draft-state.json >/dev/null
+          [[ "$draft_assets" == "$expected_asset_list" ]] || {
+            echo "Draft Release assets do not match the immutable contract." >&2
+            exit 1
+          }
+          draft_id="$(jq -er '.data.repository.release.databaseId' draft-state.json)"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${draft_id}" \
+            >draft-release.json
+          jq -e '
+            .id == $id and
+            .tag_name == $version and
+            .draft == true and
+            .prerelease == false and
+            .target_commitish == $revision
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            draft-release.json >/dev/null
+          fetch_release_asset_records draft-asset-records.json "$draft_id"
+
+          install -d -m 0700 published-assets
+          download_args=()
+          for asset in "${expected_assets[@]}"; do
+            download_args+=(--pattern "$asset")
+          done
+          gh release download "$REDIS_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            "${download_args[@]}" \
+            --dir published-assets
+          python3 scripts/release/release_metadata.py validate \
+            --asset-dir published-assets \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --packaging-revision "$GITHUB_SHA" \
+            --packaging-root "$GITHUB_WORKSPACE"
+
+          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+          verify_downloaded_attestation() {
+            local asset="$1"
+            local predicate_type="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              if gh attestation verify "$asset" \
+                --repo "$GITHUB_REPOSITORY" \
+                --cert-identity "$attestation_identity" \
+                --signer-digest "$GITHUB_SHA" \
+                --source-digest "$GITHUB_SHA" \
+                --source-ref "refs/heads/$DEFAULT_BRANCH" \
+                --predicate-type "$predicate_type" \
+                --deny-self-hosted-runners >/dev/null; then
+                return 0
+              fi
+              (( attempt == 3 )) || sleep "$((attempt * 2))"
+            done
+            echo "Release asset attestation verification failed for $asset." >&2
+            return 1
+          }
+          for asset in published-assets/*; do
+            verify_downloaded_attestation \
+              "$asset" https://slsa.dev/provenance/v1
+          done
+          for archive in published-assets/*.tar.gz; do
+            verify_downloaded_attestation \
+              "$archive" https://spdx.dev/Document/v2.3
+          done
+
+          query_state pre-publish-state.json
+          pre_publish_assets="$(
+            jq -r '.data.repository.release.releaseAssets.nodes[].name' \
+              pre-publish-state.json | LC_ALL=C sort
+          )"
+          jq -e '
+            .data.repository.release.databaseId == $id and
+            .data.repository.release.tagName == $version and
+            .data.repository.release.isDraft and
+            (.data.repository.release.isPrerelease | not) and
+            (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+            .data.repository.ref.target.oid == $revision
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            pre-publish-state.json >/dev/null
+          [[ "$pre_publish_assets" == "$expected_asset_list" ]] || {
+            echo "Draft Release changed during verification; refusing publication." >&2
+            exit 1
+          }
+          fetch_release_asset_records pre-publish-asset-records.json "$draft_id"
+          cmp -s draft-asset-records.json pre-publish-asset-records.json || {
+            echo "Draft Release asset IDs changed during verification; refusing publication." >&2
+            exit 1
+          }
+
+          gh api --method PATCH \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${draft_id}" \
+            -F draft=false \
+            -f make_latest=false \
+            >publish-response.json
+          jq -e '
+            .id == $id and
+            .tag_name == $version and
+            .draft == false and
+            .prerelease == false and
+            .target_commitish == $revision
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            publish-response.json >/dev/null
+          query_state published-state.json
+          published_assets="$(
+            jq -r '.data.repository.release.releaseAssets.nodes[].name' \
+              published-state.json | LC_ALL=C sort
+          )"
+          jq -e '
+            .data.repository.release.databaseId == $id and
+            .data.repository.release.tagName == $version and
+            (.data.repository.release.isDraft | not) and
+            (.data.repository.release.isPrerelease | not) and
+            (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+            .data.repository.ref.target.oid == $revision
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" --arg revision "$GITHUB_SHA" \
+            published-state.json >/dev/null
+          [[ "$published_assets" == "$expected_asset_list" ]] || {
+            echo "Published Release assets do not match the immutable contract." >&2
+            exit 1
+          }
+          fetch_release_asset_records published-asset-records.json "$draft_id"
+          cmp -s draft-asset-records.json published-asset-records.json || {
+            echo "Published Release asset IDs changed during publication." >&2
+            exit 1
+          }
+
+          install -d -m 0700 published-readback-assets
+          gh release download "$REDIS_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            "${download_args[@]}" \
+            --dir published-readback-assets
+          python3 scripts/release/release_metadata.py validate \
+            --asset-dir published-readback-assets \
+            --redis-version "$REDIS_VERSION" \
+            --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant "$PACKAGE_VARIANT" \
+            --min-glibc "$GLIBC_BASELINE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --packaging-revision "$GITHUB_SHA" \
+            --packaging-root "$GITHUB_WORKSPACE"
+          for asset in published-readback-assets/*; do
+            verify_downloaded_attestation \
+              "$asset" https://slsa.dev/provenance/v1
+          done
+          for archive in published-readback-assets/*.tar.gz; do
+            verify_downloaded_attestation \
+              "$archive" https://spdx.dev/Document/v2.3
+          done

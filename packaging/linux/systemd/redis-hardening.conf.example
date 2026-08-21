@@ -1,0 +1,14 @@
+# Optional systemd hardening for the default directory layout.
+# Copy this file to:
+#   /etc/systemd/system/redis.service.d/hardening.conf
+#
+# Before enabling it, add every configured Redis data, log, socket, TLS,
+# module, ACL, and include path to the appropriate allow-list. This example is
+# intentionally not installed automatically because those paths are user
+# configuration and may be outside /usr/local/redis.
+
+[Service]
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/usr/local/redis/data

@@ -1,4 +1,11 @@
+__pycache__/
+*.py[cod]
+
 /dist/
 *.tar.gz
 *.tar.gz.sha256
 
+# Local release-controller inputs and outputs
+/redis-hashes.txt
+/github-releases.json
+/release-plan/
