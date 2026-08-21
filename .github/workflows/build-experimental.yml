@@ -422,6 +422,14 @@ jobs:
                 done
                 return 1
               }
+              assert_equal() {
+                local expected="$1" actual="$2" message="$3"
+                if [[ "$actual" != "$expected" ]]; then
+                  printf "[acceptance] ERROR: %s (expected=%q actual=%q)\n" \
+                    "$message" "$expected" "$actual" >&2
+                  return 1
+                fi
+              }
               cleanup() {
                 if [[ -f "$prefix/.redis-package-state" ]]; then
                   "$package/scripts/uninstall.sh" --purge >/dev/null 2>&1 || true
@@ -443,8 +451,12 @@ jobs:
                 && -f "$prefix/data/dump.rdb" && -f "$prefix/.redis-package-state" ]]
               "$package/scripts/update.sh"
               wait_ready
-              [[ "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" == "$config_sha" ]]
-              [[ "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+              assert_equal "$config_sha" \
+                "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" \
+                "OpenRC recovery changed redis.conf"
+              assert_equal persisted \
+                "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" \
+                "OpenRC recovery did not reload persisted data"
               "$package/scripts/uninstall.sh" --purge
               [[ ! -e "$prefix" && ! -e /etc/init.d/redis-unofficial ]]
               "$package/scripts/uninstall.sh" --purge

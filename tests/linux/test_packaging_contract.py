@@ -41,6 +41,12 @@ class PackagingContractTests(unittest.TestCase):
             with self.subTest(script=script.relative_to(ROOT)):
                 subprocess.run(["bash", "-n", str(script)], check=True)
 
+    def test_symlink_metadata_checks_support_centos_7_stat(self) -> None:
+        common = (ROOT / "packaging/linux/scripts/common.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotRegex(common, r"\bstat\s+-c\s+[^\n]*\s-h(?:\s|$)")
+
     def test_build_uses_private_staging_tree(self) -> None:
         script = (ROOT / "scripts/linux/build-redis.sh").read_text(encoding="utf-8")
         self.assertNotIn('rm -rf "$INSTALL_PREFIX"', script)

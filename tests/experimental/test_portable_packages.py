@@ -421,6 +421,8 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('redis-cli" -s "$socket" save', musl_job.lower())
         self.assertIn('"$package/scripts/update.sh"', musl_job)
         self.assertIn('uninstall.sh" --purge', musl_job)
+        self.assertIn("OpenRC recovery changed redis.conf", musl_job)
+        self.assertIn("OpenRC recovery did not reload persisted data", musl_job)
 
         self.assertIn("Test launchd install, persistence, recovery, and purge", macos_job)
         self.assertIn("launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial", macos_job)

@@ -348,7 +348,7 @@ validate_package_root_security() {
           link_target="$(readlink -- "$entry")"
           [[ "$link_target" == "redis-server" ]] \
             || die_message unsafe_path "$entry"
-          [[ "$(stat -c '%u:%g' -h -- "$entry")" == "0:0" ]] \
+          [[ "$(stat -c '%u:%g' -- "$entry")" == "0:0" ]] \
             || die_message unsafe_path "$entry"
           ;;
         *) die_message unsafe_path "$entry" ;;
@@ -1121,7 +1121,7 @@ remove_stale_managed_service_enablement_links() {
     esac
     assert_no_symlink_path_components "$link_directory"
     assert_strict_root_path_chain "$link_directory"
-    if [[ "$(stat -c '%u:%g' -h -- "$link_path")" != "0:0" ]]; then
+    if [[ "$(stat -c '%u:%g' -- "$link_path")" != "0:0" ]]; then
       warn "Preserving non-root service enablement link: $link_path"
       continue
     fi
