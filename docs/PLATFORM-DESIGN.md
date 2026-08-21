@@ -213,7 +213,9 @@ the main [README](../README.md).
 
 - Lifecycle scripts run as root but require the extracted package tree to be
   root-owned, not group/world-writable, without extended ACLs, unexpected
-  symlinks, multiple hard links, special files, or special mode bits.
+  symlinks, multiple hard links, or special files. Regular files may not have
+  setuid, setgid, or sticky mode bits. Directories are constrained by ownership
+  and writability rather than a blanket special-mode-bit prohibition.
 - A new `redis` account is non-login and has only the `redis` group. An
   existing account is reused only with nonzero UID/GID, that primary and sole
   group, a `nologin`/`false` shell, and a canonical absolute home path.

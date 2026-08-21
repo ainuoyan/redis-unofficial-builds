@@ -129,7 +129,7 @@ while (($# > 0)); do
 done
 
 require_root
-require_commands awk cat chmod chown cp date dirname env find flock getconf getent grep groupadd head id install ls mktemp mv readlink realpath rm rmdir sed setpriv sha256sum sleep stat timeout uname useradd userdel groupdel
+require_commands awk cat chmod chown cp date dirname env find flock getconf getent grep groupadd head id install ls mktemp mv readlink realpath rm rmdir sed setpriv sha256sum sleep stat timeout uname useradd userdel groupdel wc
 acquire_lifecycle_lock
 validate_package_root_security "$PACKAGE_ROOT"
 validate_package_root "$PACKAGE_ROOT"
