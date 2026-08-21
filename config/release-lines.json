@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "upstream": {
+    "project": "redis/redis",
+    "hashes_repository": "redis/redis-hashes",
+    "hashes_ref": "master",
+    "hashes_path": "README",
+    "hashes_url": "https://raw.githubusercontent.com/redis/redis-hashes/master/README",
+    "source_url_template": "https://download.redis.io/releases/redis-{version}.tar.gz",
+    "allow_prerelease": false
+  },
+  "policy": {
+    "patch_updates": "auto_release",
+    "new_series": "candidate_then_pull_request",
+    "new_series_floor": "8.10",
+    "stop_after_eol": true,
+    "retain_existing_releases": true,
+    "controller_mode": "plan_only"
+  },
+  "series": [
+    {
+      "series": "6.2",
+      "release_type": "extended",
+      "eol": "2027-04-01"
+    },
+    {
+      "series": "7.2",
+      "release_type": "extended",
+      "eol": "2029-12-01"
+    },
+    {
+      "series": "7.4",
+      "release_type": "extended",
+      "eol": "2029-12-01"
+    },
+    {
+      "series": "8.0",
+      "release_type": "standard",
+      "eol": "2026-12-01"
+    },
+    {
+      "series": "8.2",
+      "release_type": "extended",
+      "eol": "2030-09-01"
+    },
+    {
+      "series": "8.4",
+      "release_type": "standard",
+      "eol": null
+    },
+    {
+      "series": "8.6",
+      "release_type": "standard",
+      "eol": null
+    },
+    {
+      "series": "8.8",
+      "release_type": "standard",
+      "eol": null
+    },
+    {
+      "series": "8.10",
+      "release_type": "standard",
+      "eol": null
+    }
+  ]
+}

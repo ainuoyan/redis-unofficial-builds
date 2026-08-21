@@ -1,0 +1,157 @@
+name: Plan Redis releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      redis_series:
+        description: Optional tracked series (do not combine with exact version)
+        required: false
+        type: string
+      redis_version:
+        description: Optional exact official version (do not combine with series)
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/resolve-versions.yml
+      - config/release-lines.json
+      - config/platforms.json
+      - scripts/release/**
+  schedule:
+    - cron: "23 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redis-release-plan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Resolve versions and missing assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      controller_mode: ${{ steps.resolve.outputs.controller_mode }}
+      has_planned_builds: ${{ steps.resolve.outputs.has_planned_builds }}
+      version_matrix: ${{ steps.resolve.outputs.version_matrix }}
+      build_matrix: ${{ steps.resolve.outputs.build_matrix }}
+      new_series_count: ${{ steps.resolve.outputs.new_series_count }}
+      blocked_release_count: ${{ steps.resolve.outputs.blocked_release_count }}
+      hashes_commit: ${{ steps.resolve.outputs.hashes_commit }}
+    steps:
+      - name: Checkout release controller
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate reviewed controller configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release/validate_configs.py \
+            --release-config config/release-lines.json \
+            --platform-config config/platforms.json \
+            --workflows-dir .github/workflows
+
+      - name: Download an immutable official Redis hashes snapshot
+        id: hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          hashes_repository="$(jq -er '.upstream.hashes_repository' config/release-lines.json)"
+          hashes_ref="$(jq -er '.upstream.hashes_ref' config/release-lines.json)"
+          hashes_path="$(jq -er '.upstream.hashes_path' config/release-lines.json)"
+          hashes_commit="$(
+            gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${hashes_repository}/commits/${hashes_ref}" \
+              --jq '.sha'
+          )"
+          if [[ ! "$hashes_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid Redis hashes snapshot Git OID." >&2
+            exit 1
+          fi
+          gh api \
+            -H 'Accept: application/vnd.github.raw+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${hashes_repository}/contents/${hashes_path}?ref=${hashes_commit}" \
+            >redis-hashes.txt
+          hashes_size="$(wc -c <redis-hashes.txt)"
+          if ((hashes_size == 0 || hashes_size > 16777216)); then
+            echo "Redis hashes snapshot has an invalid size: $hashes_size" >&2
+            exit 1
+          fi
+          echo "commit=$hashes_commit" >>"$GITHUB_OUTPUT"
+
+      - name: Read existing GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            >release-pages.json
+          jq '[ (add // [])[] | {
+            tag_name,
+            draft,
+            prerelease,
+            assets: [.assets[] | {name}]
+          } ]' release-pages.json >github-releases.json
+
+      - name: Generate plan-only matrices
+        id: resolve
+        env:
+          HASHES_COMMIT: ${{ steps.hashes.outputs.commit }}
+          REQUESTED_SERIES: ${{ inputs.redis_series }}
+          REQUESTED_VERSION: ${{ inputs.redis_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --release-config config/release-lines.json
+            --platform-config config/platforms.json
+            --hashes redis-hashes.txt
+            --github-releases github-releases.json
+            --output-dir release-plan
+            --github-output "$GITHUB_OUTPUT"
+            --as-of "$(date -u +%F)"
+            --hashes-commit "$HASHES_COMMIT"
+          )
+          if [[ -n "${REQUESTED_SERIES:-}" ]]; then
+            args+=(--series "$REQUESTED_SERIES")
+          fi
+          if [[ -n "${REQUESTED_VERSION:-}" ]]; then
+            args+=(--version "$REQUESTED_VERSION")
+          fi
+          python3 scripts/release/resolve_versions.py "${args[@]}"
+
+      - name: Enforce plan-only safety gate
+        env:
+          CONTROLLER_MODE: ${{ steps.resolve.outputs.controller_mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONTROLLER_MODE" != "plan_only" ]]; then
+            echo "Unexpected controller mode: $CONTROLLER_MODE" >&2
+            exit 1
+          fi
+          echo "No build workflow is dispatched by this controller."
+
+      - name: Publish plan in job summary
+        shell: bash
+        run: cat release-plan/summary.md >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: redis-release-plan
+          path: release-plan/
+          if-no-files-found: error
+          retention-days: 14

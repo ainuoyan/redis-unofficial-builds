@@ -1,0 +1,454 @@
+name: Build experimental platform artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      redis_version:
+        description: Exact stable Redis version (X.Y.Z)
+        required: true
+        type: string
+      source_sha256:
+        description: Optional official source SHA-256 cross-check
+        required: false
+        type: string
+      platform:
+        description: Experimental platform family
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - glibc2.17
+          - musl1.2
+          - macos12
+          - windows-msys2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-${{ inputs.redis_version }}-${{ inputs.platform }}
+  cancel-in-progress: false
+
+env:
+  MANYLINUX2014_X64: quay.io/pypa/manylinux2014_x86_64@sha256:95440e0e72dd3a81dc8d2cf59a84d57af661456620f5bc821ff92048d0e54ff9
+  MANYLINUX2014_ARM64: quay.io/pypa/manylinux2014_aarch64@sha256:b63ff749fee6f3f2a6b67ed3101a073db3211df1791da19e9acf96f43c0dd6ff
+  MUSLLINUX12_X64: quay.io/pypa/musllinux_1_2_x86_64@sha256:75327606c7666fc971bd9239c6b220fd205b4bb9563b588075164622609219ca
+  MUSLLINUX12_ARM64: quay.io/pypa/musllinux_1_2_aarch64@sha256:cea133e28484a93e9c40fc661256e8f1ec69b2887d0b64acbfaf48f26bbab103
+
+jobs:
+  prepare:
+    name: Verify official source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      source_sha256: ${{ steps.source.outputs.source_sha256 }}
+      hashes_commit: ${{ steps.source.outputs.hashes_commit }}
+    steps:
+      - name: Checkout reviewed packaging source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Resolve source from an immutable redis-hashes snapshot
+        id: source
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.redis_version }}
+          PROVIDED_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_VERSION"
+          [[ "$version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] || {
+            echo "Invalid canonical Redis version: $version" >&2
+            exit 1
+          }
+          if [[ -n "$PROVIDED_SOURCE_SHA256" && ! "$PROVIDED_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid provided source SHA-256." >&2
+            exit 1
+          fi
+          python3 scripts/release/validate_configs.py \
+            --release-config config/release-lines.json \
+            --platform-config config/platforms.json \
+            --workflows-dir .github/workflows
+
+          mapfile -t refs < <(git ls-remote https://github.com/redis/redis-hashes.git refs/heads/master)
+          [[ "${#refs[@]}" -eq 1 ]] || { echo "Unable to resolve one redis-hashes master ref." >&2; exit 1; }
+          read -r hashes_commit ref_name <<<"${refs[0]}"
+          [[ "$hashes_commit" =~ ^[0-9a-f]{40}$ && "$ref_name" == refs/heads/master ]] || {
+            echo "Invalid redis-hashes snapshot." >&2
+            exit 1
+          }
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 3 \
+            --connect-timeout 20 --max-time 120 \
+            "https://raw.githubusercontent.com/redis/redis-hashes/${hashes_commit}/README" \
+            --output redis-hashes.txt
+          [[ "$(wc -c <redis-hashes.txt)" -le 16777216 ]] || {
+            echo "redis-hashes snapshot exceeds the size limit." >&2
+            exit 1
+          }
+          source_record="$(python3 - "$version" <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts/release")
+          import resolve_versions
+
+          version = resolve_versions.parse_version(sys.argv[1])
+          hashes = resolve_versions.parse_hashes(Path("redis-hashes.txt"))
+          if version not in hashes:
+              raise SystemExit("No official stable SHA-256 record was found.")
+          record = hashes[version]
+          print(record["sha256"], record["hashes_source_url"])
+          PY
+          )"
+          read -r source_sha256 source_url <<<"$source_record"
+          [[ "$source_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid official source SHA-256." >&2; exit 1; }
+          case "$source_url" in
+            "http://download.redis.io/releases/redis-${version}.tar.gz"|\
+            "https://download.redis.io/releases/redis-${version}.tar.gz") ;;
+            *) echo "Unexpected official source URL: $source_url" >&2; exit 1 ;;
+          esac
+          [[ -z "$PROVIDED_SOURCE_SHA256" || "$PROVIDED_SOURCE_SHA256" == "$source_sha256" ]] || {
+            echo "Provided SHA-256 does not match redis-hashes." >&2
+            exit 1
+          }
+
+          mkdir source
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 5 \
+            --retry 3 --retry-connrefused --connect-timeout 20 --max-time 600 \
+            "https://download.redis.io/releases/redis-${version}.tar.gz" \
+            --output "source/redis-${version}.tar.gz"
+          printf '%s  %s\n' "$source_sha256" "source/redis-${version}.tar.gz" | sha256sum --check --strict
+          {
+            printf 'version=%s\n' "$version"
+            printf 'source_sha256=%s\n' "$source_sha256"
+            printf 'hashes_commit=%s\n' "$hashes_commit"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Upload verified source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-redis-source-${{ steps.source.outputs.version }}
+          path: source/redis-${{ steps.source.outputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  glibc217:
+    name: glibc 2.17 ${{ matrix.package_arch }}
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'glibc2.17'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine_arch: x86_64
+            package_arch: x64
+            image_env: MANYLINUX2014_X64
+          - runner: ubuntu-24.04-arm
+            machine_arch: aarch64
+            package_arch: arm64
+            image_env: MANYLINUX2014_ARM64
+    steps:
+      - name: Checkout reviewed packaging source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download verified source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-redis-source-${{ needs.prepare.outputs.version }}
+          path: source
+      - name: Build, test, and validate legacy package
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
+          IMAGE_ENV: ${{ matrix.image_env }}
+        run: |
+          set -euo pipefail
+          image="${!IMAGE_ENV}"
+          docker pull "$image"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:rw" \
+            --env REDIS_VERSION --env REDIS_SOURCE_SHA256 --env REDIS_HASHES_COMMIT \
+            --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH \
+            --env GITHUB_SHA --env GITHUB_SERVER_URL --env GITHUB_REPOSITORY --env GITHUB_RUN_ID \
+            --env BUILD_IMAGE="$image" \
+            "$image" /bin/bash -euo pipefail -c '
+              yum -y install procps-ng tcl util-linux which
+              useradd --create-home --shell /bin/bash redis-builder
+              install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
+              setpriv --reuid redis-builder --regid redis-builder --clear-groups --no-new-privs -- \
+                env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                HOME=/home/redis-builder LANG=C GITHUB_ACTIONS=true \
+                REDIS_VERSION="$REDIS_VERSION" REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" \
+                REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" PACKAGE_ARCH="$PACKAGE_ARCH" \
+                EXPECTED_MACHINE_ARCH="$EXPECTED_MACHINE_ARCH" \
+                PACKAGE_VARIANT=linux-glibc2.17-legacy GLIBC_BASELINE=2.17 \
+                BUILD_WORKFLOW_PATH=.github/workflows/build-experimental.yml \
+                REDIS_SOURCE_ARCHIVE="/workspace/source/redis-${REDIS_VERSION}.tar.gz" \
+                OUTPUT_DIR=/workspace/dist BUILD_IMAGE="$BUILD_IMAGE" \
+                GITHUB_SHA="$GITHUB_SHA" GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
+                GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+                /workspace/scripts/linux/build-redis.sh
+            '
+          archive="dist/Redis-Rzon-${REDIS_VERSION}-linux-glibc2.17-legacy-${PACKAGE_ARCH}.tar.gz"
+          python3 scripts/release/validate_release_asset.py \
+            --archive "$archive" --checksum "${archive}.sha256" \
+            --redis-version "$REDIS_VERSION" --source-sha256 "$REDIS_SOURCE_SHA256" \
+            --variant linux-glibc2.17-legacy --arch "$PACKAGE_ARCH" --min-glibc 2.17 \
+            --package-status experimental --build-workflow .github/workflows/build-experimental.yml \
+            --packaging-root "$GITHUB_WORKSPACE" --packaging-revision "$GITHUB_SHA"
+      - name: Upload experimental package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-glibc2.17-legacy-${{ matrix.package_arch }}
+          path: |
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-glibc2.17-legacy-${{ matrix.package_arch }}.tar.gz
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-glibc2.17-legacy-${{ matrix.package_arch }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  musl:
+    name: musl 1.2 ${{ matrix.package_arch }}
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'musl1.2'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine_arch: x86_64
+            package_arch: x64
+            image_env: MUSLLINUX12_X64
+          - runner: ubuntu-24.04-arm
+            machine_arch: aarch64
+            package_arch: arm64
+            image_env: MUSLLINUX12_ARM64
+    steps:
+      - name: Checkout reviewed packaging source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download verified source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-redis-source-${{ needs.prepare.outputs.version }}
+          path: source
+      - name: Build, test, and validate musl package
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
+          IMAGE_ENV: ${{ matrix.image_env }}
+        run: |
+          set -euo pipefail
+          image="${!IMAGE_ENV}"
+          docker pull "$image"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:rw" \
+            --env REDIS_VERSION --env REDIS_SOURCE_SHA256 --env REDIS_HASHES_COMMIT \
+            --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH --env GITHUB_SHA \
+            --env BUILD_ENVIRONMENT="$image" \
+            "$image" /bin/bash -euo pipefail -c '
+              apk add --no-cache bash coreutils findutils gcc libc-dev linux-headers make musl-dev python3 tcl util-linux
+              adduser -D -s /bin/bash redis-builder
+              install -d -o redis-builder -g redis-builder -m 0755 /workspace/dist
+              setpriv --reuid redis-builder --regid redis-builder --clear-groups --no-new-privs -- \
+                env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                HOME=/home/redis-builder LANG=C REDIS_VERSION="$REDIS_VERSION" \
+                REDIS_SOURCE_SHA256="$REDIS_SOURCE_SHA256" REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" \
+                REDIS_SOURCE_ARCHIVE="/workspace/source/redis-${REDIS_VERSION}.tar.gz" \
+                PACKAGE_VARIANT=linux-musl1.2 PACKAGE_ARCH="$PACKAGE_ARCH" \
+                EXPECTED_MACHINE_ARCH="$EXPECTED_MACHINE_ARCH" BUILD_ENVIRONMENT="$BUILD_ENVIRONMENT" \
+                PACKAGING_REVISION="$GITHUB_SHA" OUTPUT_DIR=/workspace/dist \
+                /workspace/scripts/experimental/build-portable-posix.sh
+            '
+      - name: Upload experimental package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-musl1.2-${{ matrix.package_arch }}
+          path: |
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-musl1.2-${{ matrix.package_arch }}.tar.gz
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-linux-musl1.2-${{ matrix.package_arch }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS 12+ ${{ matrix.package_arch }}
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'macos12'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            machine_arch: x86_64
+            package_arch: x64
+          - runner: macos-15
+            machine_arch: arm64
+            package_arch: arm64
+    steps:
+      - name: Checkout reviewed packaging source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download verified source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-redis-source-${{ needs.prepare.outputs.version }}
+          path: source
+      - name: Build, test, and validate macOS package
+        shell: bash
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+          EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
+          REDIS_SOURCE_ARCHIVE: ${{ github.workspace }}/source/redis-${{ needs.prepare.outputs.version }}.tar.gz
+          PACKAGE_VARIANT: macos12
+          BUILD_ENVIRONMENT: ${{ matrix.runner }} with MACOSX_DEPLOYMENT_TARGET=12.0
+          PACKAGING_REVISION: ${{ github.sha }}
+          OUTPUT_DIR: ${{ github.workspace }}/dist
+        run: scripts/experimental/build-portable-posix.sh
+      - name: Upload experimental package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Redis-Rzon-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}
+          path: |
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}.tar.gz
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows MSYS2 x64
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'windows-msys2'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout reviewed packaging source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download verified source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-redis-source-${{ needs.prepare.outputs.version }}
+          path: source
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build reviewed Windows service wrapper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish packaging/windows/service/RedisService/RedisService.csproj `
+            --configuration Release --runtime win-x64 `
+            --output service-publish
+          if (-not (Test-Path -LiteralPath service-publish/RedisService.exe -PathType Leaf)) {
+            throw 'RedisService.exe was not produced.'
+          }
+      - name: Set up MSYS2 toolchain
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: MSYS
+          update: false
+          install: >-
+            base-devel gcc make pkgconf python tcl
+      - name: Build, test, and validate Windows package
+        shell: msys2 {0}
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
+          PACKAGING_REVISION: ${{ github.sha }}
+          SERVICE_WRAPPER_WINDOWS: ${{ github.workspace }}\service-publish\RedisService.exe
+        run: |
+          set -euo pipefail
+          export REDIS_SOURCE_ARCHIVE="$PWD/source/redis-${REDIS_VERSION}.tar.gz"
+          export PACKAGE_VARIANT=windows-msys2
+          export PACKAGE_ARCH=x64
+          export EXPECTED_MACHINE_ARCH=x86_64
+          export BUILD_ENVIRONMENT='windows-2022 MSYS2 x64'
+          export OUTPUT_DIR="$PWD/dist"
+          export SERVICE_WRAPPER="$(cygpath -u "$SERVICE_WRAPPER_WINDOWS")"
+          export RUN_FULL_TESTS=false
+          scripts/experimental/build-portable-posix.sh
+      - name: Test Windows install, uninstall recovery, and purge
+        shell: pwsh
+        env:
+          REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = "dist/Redis-Rzon-$env:REDIS_VERSION-windows-msys2-x64.zip"
+          Expand-Archive -LiteralPath $archive -DestinationPath lifecycle-test
+          try {
+            & lifecycle-test/redis/scripts/Install-Redis.ps1
+            & lifecycle-test/redis/scripts/Update-Redis.ps1
+            $response = & 'C:\Program Files\Redis-Rzon\bin\redis-cli.exe' -h 127.0.0.1 -p 6379 ping
+            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
+              throw 'Installed Windows service did not answer PING.'
+            }
+            & lifecycle-test/redis/scripts/Uninstall-Redis.ps1
+            if (Get-Service -Name RedisRzon -ErrorAction SilentlyContinue) {
+              throw 'RedisRzon service remained after ordinary uninstall.'
+            }
+            foreach ($retained in @(
+                'C:\Program Files\Redis-Rzon\.redis-package-state.json',
+                'C:\Program Files\Redis-Rzon\conf',
+                'C:\Program Files\Redis-Rzon\data')) {
+              if (-not (Test-Path -LiteralPath $retained)) {
+                throw "Ordinary uninstall did not retain $retained."
+              }
+            }
+            & lifecycle-test/redis/scripts/Update-Redis.ps1
+            $response = & 'C:\Program Files\Redis-Rzon\bin\redis-cli.exe' -h 127.0.0.1 -p 6379 ping
+            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
+              throw 'Windows service recovery did not answer PING.'
+            }
+          } finally {
+            if (Test-Path -LiteralPath 'C:\Program Files\Redis-Rzon\.redis-package-state.json') {
+              & lifecycle-test/redis/scripts/Uninstall-Redis.ps1 -Purge
+            }
+          }
+          if (Get-Service -Name RedisRzon -ErrorAction SilentlyContinue) {
+            throw 'RedisRzon service remained after purge.'
+          }
+          if (Test-Path -LiteralPath 'C:\Program Files\Redis-Rzon') {
+            throw 'Redis install prefix remained after purge.'
+          }
+      - name: Upload experimental package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Redis-Rzon-${{ needs.prepare.outputs.version }}-windows-msys2-x64
+          path: |
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-windows-msys2-x64.zip
+            dist/Redis-Rzon-${{ needs.prepare.outputs.version }}-windows-msys2-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
