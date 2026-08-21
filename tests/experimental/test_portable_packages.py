@@ -423,6 +423,8 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('uninstall.sh" --purge', musl_job)
         self.assertIn("OpenRC recovery changed redis.conf", musl_job)
         self.assertIn("OpenRC recovery did not reload persisted data", musl_job)
+        self.assertIn("OpenRC lifecycle failed; collecting diagnostics", musl_job)
+        self.assertIn('tail -n 200 "$prefix/log/redis.log"', musl_job)
 
         self.assertIn("Test launchd install, persistence, recovery, and purge", macos_job)
         self.assertIn("launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial", macos_job)
@@ -432,6 +434,13 @@ class PortablePackageTests(unittest.TestCase):
 
         self.assertIn("Restart-Service -Name RedisUnofficial", windows_job)
         self.assertIn("redis-unofficial-acceptance-persistence", windows_job)
+
+    def test_musl_readiness_requires_a_stable_service(self) -> None:
+        common = (ROOT / "packaging/musl/scripts/common.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("consecutive_ready", common)
+        self.assertIn("consecutive_ready=$((consecutive_ready + 1))", common)
 
     def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")

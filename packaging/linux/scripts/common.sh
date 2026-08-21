@@ -703,7 +703,7 @@ run_unprivileged() (
   cd / || return 1
   exec setpriv \
     --reuid 65534 --regid 65534 --clear-groups --no-new-privs \
-    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+    --inh-caps=-all --bounding-set=-all -- \
     env -i \
       PATH=/usr/sbin:/usr/bin:/sbin:/bin \
       HOME=/nonexistent LANG=C LC_ALL=C USER=nobody LOGNAME=nobody \
@@ -717,7 +717,7 @@ run_as_redis_user() (
   cd / || return 1
   exec setpriv \
     --reuid "$uid" --regid "$gid" --clear-groups --no-new-privs \
-    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+    --inh-caps=-all --bounding-set=-all -- \
     env -i \
       PATH=/usr/sbin:/usr/bin:/sbin:/bin \
       HOME=/usr/local/redis/data LANG=C LC_ALL=C USER=redis LOGNAME=redis \

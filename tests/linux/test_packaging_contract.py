@@ -807,7 +807,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("--reuid 65534 --regid 65534", common)
         self.assertIn("--bounding-set=-all", common)
         self.assertIn("--inh-caps=-all", common)
-        self.assertIn("--ambient-caps=-all", common)
+        self.assertNotIn("--ambient-caps", common)
         self.assertIn("env -i", common)
         self.assertIn("HOME=/nonexistent", common)
         self.assertIn("HOME=/usr/local/redis/data", common)

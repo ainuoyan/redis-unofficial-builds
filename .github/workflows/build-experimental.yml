@@ -415,9 +415,15 @@ jobs:
               service=redis-unofficial
 
               wait_ready() {
-                local attempt
+                local attempt response consecutive_ready=0
                 for attempt in $(seq 1 30); do
-                  [[ "$("$prefix/bin/redis-cli" -s "$socket" ping 2>/dev/null || true)" == PONG ]] && return 0
+                  response="$("$prefix/bin/redis-cli" -s "$socket" ping 2>/dev/null || true)"
+                  if [[ "$response" == PONG ]]; then
+                    consecutive_ready=$((consecutive_ready + 1))
+                    (( consecutive_ready >= 2 )) && return 0
+                  else
+                    consecutive_ready=0
+                  fi
                   sleep 1
                 done
                 return 1
@@ -431,9 +437,22 @@ jobs:
                 fi
               }
               cleanup() {
+                local status="$?"
+                trap - EXIT
+                set +e
+                if (( status != 0 )); then
+                  printf "[acceptance] ERROR: OpenRC lifecycle failed; collecting diagnostics.\n" >&2
+                  rc-service "$service" status >&2
+                  ps -ef >&2
+                  if [[ -f "$prefix/log/redis.log" ]]; then
+                    printf "[acceptance] Redis log tail:\n" >&2
+                    tail -n 200 "$prefix/log/redis.log" >&2
+                  fi
+                fi
                 if [[ -f "$prefix/.redis-package-state" ]]; then
                   "$package/scripts/uninstall.sh" --purge >/dev/null 2>&1 || true
                 fi
+                exit "$status"
               }
               trap cleanup EXIT
 

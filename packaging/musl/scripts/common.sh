@@ -203,9 +203,15 @@ install_program_files() {
 }
 
 wait_ready() {
-  local root="$1"
+  local root="$1" response consecutive_ready=0
   for _ in $(seq 1 30); do
-    [[ "$("$root/bin/redis-cli" -s "$REDIS_SOCKET" ping 2>/dev/null || true)" == PONG ]] && return 0
+    response="$("$root/bin/redis-cli" -s "$REDIS_SOCKET" ping 2>/dev/null || true)"
+    if [[ "$response" == PONG ]]; then
+      consecutive_ready=$((consecutive_ready + 1))
+      (( consecutive_ready >= 2 )) && return 0
+    else
+      consecutive_ready=0
+    fi
     sleep 1
   done
   return 1
