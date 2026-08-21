@@ -235,6 +235,26 @@ class PortablePackageTests(unittest.TestCase):
                 baseline,
             )
 
+    def test_windows_patchset_files_are_checked_out_with_lf_endings(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import portable_contract
+
+        paths = portable_contract.patchset_paths("windows-msys2")
+        result = subprocess.run(
+            ["git", "check-attr", "-z", "eol", "--", *map(str, paths)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
+        fields = result.stdout.decode("utf-8").split("\0")
+        self.assertEqual(fields[-1], "")
+        records = {
+            fields[index]: fields[index + 2]
+            for index in range(0, len(fields) - 1, 3)
+        }
+        self.assertEqual(records, {str(path): "lf" for path in paths})
+
     def test_hashes_snapshot_is_bound_to_the_validated_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = self.create_and_validate(Path(directory), "macos12", "x64")

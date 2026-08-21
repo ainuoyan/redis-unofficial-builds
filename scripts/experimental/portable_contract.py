@@ -20,6 +20,7 @@ SAFE_MEMBER_RE = re.compile(r"^[A-Za-z0-9._+/-]+$")
 PACKAGE_PREFIX = "Redis"
 
 COMMON_PATCHSET_PATHS = (
+    ".gitattributes",
     ".github/workflows/build-experimental.yml",
     "scripts/experimental/build-portable-posix.sh",
     "scripts/experimental/create_portable_package.py",
