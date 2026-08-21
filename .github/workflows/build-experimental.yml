@@ -456,6 +456,18 @@ jobs:
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
               throw 'Windows service recovery did not answer PING.'
             }
+          } catch {
+            Write-Host 'Windows lifecycle test failed; collecting diagnostics before cleanup.'
+            & sc.exe queryex RedisUnofficial
+            foreach ($log in @(
+                'C:\Program Files\Redis-Unofficial\log\service-wrapper.log',
+                'C:\Program Files\Redis-Unofficial\log\redis.log')) {
+              if (Test-Path -LiteralPath $log -PathType Leaf) {
+                Write-Host "===== $log ====="
+                Get-Content -LiteralPath $log -Tail 200
+              }
+            }
+            throw
           } finally {
             if (Test-Path -LiteralPath 'C:\Program Files\Redis-Unofficial\.redis-package-state.json') {
               & lifecycle-test/redis/scripts/Uninstall-Redis.ps1 -Purge
