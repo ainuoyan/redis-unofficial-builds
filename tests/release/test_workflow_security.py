@@ -7,12 +7,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/build-linux.yml"
+EXPERIMENTAL_WORKFLOW_PATH = ROOT / ".github/workflows/build-experimental.yml"
 
 
 class WorkflowSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.experimental_workflow = EXPERIMENTAL_WORKFLOW_PATH.read_text(
+            encoding="utf-8"
+        )
 
     def test_all_actions_are_pinned_to_commit_shas(self) -> None:
         workflow_paths = sorted((ROOT / ".github/workflows").glob("*.yml"))
@@ -136,6 +140,19 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("setpriv", self.workflow)
         self.assertIn("--no-new-privs", self.workflow)
         self.assertIn("env -i", self.workflow)
+
+    def test_experimental_linux_builds_resolve_numeric_setpriv_ids(self) -> None:
+        workflow = self.experimental_workflow
+        self.assertEqual(
+            workflow.count('builder_uid="$(id -u redis-builder)"'), 2
+        )
+        self.assertEqual(
+            workflow.count('builder_gid="$(id -g redis-builder)"'), 2
+        )
+        self.assertEqual(workflow.count('--reuid "$builder_uid"'), 2)
+        self.assertEqual(workflow.count('--regid "$builder_gid"'), 2)
+        self.assertNotIn("--reuid redis-builder", workflow)
+        self.assertNotIn("--regid redis-builder", workflow)
 
     def test_service_gate_covers_local_socket_expiry_and_quoted_paths(self) -> None:
         self.assertIn("Fresh installation unexpectedly exposed TCP", self.workflow)
