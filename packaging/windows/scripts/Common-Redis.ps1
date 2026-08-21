@@ -202,9 +202,9 @@ protected-mode yes
 port 6379
 daemonize no
 supervised no
-dir "/c/Program Files/Redis-Unofficial/data"
-logfile "/c/Program Files/Redis-Unofficial/log/redis.log"
-pidfile "/c/Program Files/Redis-Unofficial/run/redis.pid"
+dir "data"
+logfile "log/redis.log"
+pidfile "run/redis.pid"
 '@
     [IO.File]::AppendAllText($Destination, $managed, (New-Object Text.UTF8Encoding($false)))
 }

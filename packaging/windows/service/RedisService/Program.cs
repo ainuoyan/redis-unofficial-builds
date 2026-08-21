@@ -118,7 +118,8 @@ internal static class Program
         };
         process.OutputDataReceived += (_, eventArgs) => LogRedisOutput("stdout", eventArgs.Data);
         process.ErrorDataReceived += (_, eventArgs) => LogRedisOutput("stderr", eventArgs.Data);
-        process.StartInfo.ArgumentList.Add(ToMsysPath(configPath));
+        process.StartInfo.ArgumentList.Add(
+            Path.GetRelativePath(prefix, configPath).Replace('\\', '/'));
         if (!process.Start())
         {
             throw new InvalidOperationException("Unable to start redis-server.exe.");
@@ -264,16 +265,6 @@ internal static class Program
             throw new InvalidOperationException($"The {description} path escapes the managed prefix.");
         }
         return path;
-    }
-
-    private static string ToMsysPath(string path)
-    {
-        string full = Path.GetFullPath(path);
-        if (full.Length < 3 || !char.IsAsciiLetter(full[0]) || full[1] != ':' || full[2] != '\\')
-        {
-            throw new InvalidOperationException("Only local drive paths are supported by the MSYS2 backend.");
-        }
-        return $"/{char.ToLowerInvariant(full[0])}/{full[3..].Replace('\\', '/')}";
     }
 
     private static void Log(string message)

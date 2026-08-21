@@ -20,6 +20,7 @@ CREATE = ROOT / "scripts/experimental/create_portable_package.py"
 VALIDATE = ROOT / "scripts/experimental/validate_portable_asset.py"
 BUILD_SCRIPT = ROOT / "scripts/experimental/build-portable-posix.sh"
 WINDOWS_SERVICE_SOURCE = ROOT / "packaging/windows/service/RedisService/Program.cs"
+WINDOWS_COMMON_SCRIPT = ROOT / "packaging/windows/scripts/Common-Redis.ps1"
 VERSION = "7.4.11"
 SOURCE_SHA256 = "a" * 64
 HASHES_COMMIT = "b" * 40
@@ -277,6 +278,16 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('LogRedisOutput("stdout", eventArgs.Data)', source)
         self.assertIn('LogRedisOutput("stderr", eventArgs.Data)', source)
         self.assertIn("exited before readiness with code", source)
+
+    def test_windows_service_uses_prefix_relative_msys_paths(self) -> None:
+        source = WINDOWS_SERVICE_SOURCE.read_text(encoding="utf-8")
+        common = WINDOWS_COMMON_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("Path.GetRelativePath(prefix, configPath)", source)
+        self.assertNotIn("ToMsysPath", source)
+        self.assertIn('dir "data"', common)
+        self.assertIn('logfile "log/redis.log"', common)
+        self.assertIn('pidfile "run/redis.pid"', common)
+        self.assertNotIn('/c/Program Files/Redis-Unofficial', common)
 
     def test_traversal_and_link_entries_are_rejected(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))
