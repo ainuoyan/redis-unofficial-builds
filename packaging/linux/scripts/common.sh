@@ -701,9 +701,10 @@ runtime_glibc_version() {
 
 run_unprivileged() (
   cd / || return 1
+  # The UID transition clears effective/permitted capabilities. Avoid newer
+  # setpriv capability-list syntax so the preflight also runs on CentOS 7.
   exec setpriv \
-    --reuid 65534 --regid 65534 --clear-groups --no-new-privs \
-    --inh-caps=-all --bounding-set=-all -- \
+    --reuid 65534 --regid 65534 --clear-groups --no-new-privs -- \
     env -i \
       PATH=/usr/sbin:/usr/bin:/sbin:/bin \
       HOME=/nonexistent LANG=C LC_ALL=C USER=nobody LOGNAME=nobody \
@@ -716,8 +717,7 @@ run_as_redis_user() (
   gid="$(getent group "$REDIS_GROUP" | awk -F: '{print $3}')"
   cd / || return 1
   exec setpriv \
-    --reuid "$uid" --regid "$gid" --clear-groups --no-new-privs \
-    --inh-caps=-all --bounding-set=-all -- \
+    --reuid "$uid" --regid "$gid" --clear-groups --no-new-privs -- \
     env -i \
       PATH=/usr/sbin:/usr/bin:/sbin:/bin \
       HOME=/usr/local/redis/data LANG=C LC_ALL=C USER=redis LOGNAME=redis \

@@ -218,7 +218,13 @@ wait_ready() {
 }
 
 refuse_nested_mounts() {
-  local count
-  count="$(findmnt -rn -R -o TARGET "$REDIS_PREFIX" 2>/dev/null | awk 'END { print NR + 0 }')"
+  local listing findmnt_status=0 count
+  listing="$(findmnt -rn -R -o TARGET "$REDIS_PREFIX" 2>/dev/null)" \
+    || findmnt_status=$?
+  case "$findmnt_status" in
+    0|1) ;;
+    *) die "Unable to inspect nested mounts under $REDIS_PREFIX." ;;
+  esac
+  count="$(printf '%s' "$listing" | awk 'NF { count++ } END { print count + 0 }')"
   (( count <= 1 )) || die "Refusing to remove an installation containing nested mounts."
 }

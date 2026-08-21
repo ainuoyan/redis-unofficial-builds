@@ -442,6 +442,36 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("consecutive_ready", common)
         self.assertIn("consecutive_ready=$((consecutive_ready + 1))", common)
 
+    def test_musl_mount_check_accepts_no_mount_and_rejects_errors(self) -> None:
+        common = ROOT / "packaging/musl/scripts/common.sh"
+        command = r'''
+source "$1"
+findmnt() {
+  printf '%s' "$MOCK_FINDMNT_OUTPUT"
+  return "$MOCK_FINDMNT_STATUS"
+}
+refuse_nested_mounts
+'''
+        cases = (
+            ("1", "", 0),
+            ("0", "/usr/local/redis\n", 0),
+            ("0", "/usr/local/redis\n/usr/local/redis/data\n", 1),
+            ("2", "", 1),
+        )
+        for status, output, expected in cases:
+            with self.subTest(status=status, output=output):
+                result = subprocess.run(
+                    ["bash", "-c", command, "bash", str(common)],
+                    env={
+                        "MOCK_FINDMNT_STATUS": status,
+                        "MOCK_FINDMNT_OUTPUT": output,
+                    },
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
         self.assertIn('license_root=/usr/share/doc/Cygwin', script)
