@@ -65,6 +65,9 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn('make -j"$(nproc)" build redis BUILD_TLS=no', script)
         self.assertIn('make -j"$(nproc)" BUILD_TLS=no', script)
         self.assertIn("make BUILD_TLS=no test", script)
+        self.assertIn(
+            'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
+        )
         self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
         self.assertNotIn("--daemonize yes", script)
         self.assertIn("smoke_pid=$!", script)

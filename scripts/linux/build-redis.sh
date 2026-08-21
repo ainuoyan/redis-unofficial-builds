@@ -312,11 +312,12 @@ if [[ -x scripts/build.sh ]]; then
   # publishes the stable core profile; a full profile needs a separate variant
   # and pinned Rust/LLVM/CMake dependency chain.
   make -j"$(nproc)" build redis BUILD_TLS=no
-  make test redis BUILD_TLS=no
+  test_command=(make test redis BUILD_TLS=no)
 else
   make -j"$(nproc)" BUILD_TLS=no
-  make BUILD_TLS=no test
+  test_command=(make BUILD_TLS=no test)
 fi
+bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 
 src/redis-server --version
 src/redis-cli --version

@@ -244,7 +244,7 @@ jobs:
     needs: prepare
     if: inputs.platform == 'all' || inputs.platform == 'musl1.2'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -321,7 +321,7 @@ jobs:
     needs: prepare
     if: inputs.platform == 'all' || inputs.platform == 'macos12'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

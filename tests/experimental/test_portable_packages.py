@@ -332,7 +332,20 @@ class PortablePackageTests(unittest.TestCase):
         )
         self.assertIn('./runtest --clients 1 --timeout 1200', script)
         self.assertIn('make test redis "${make_args[@]}"', script)
+        self.assertIn(
+            'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
+        )
         self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
+
+        workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
+            encoding="utf-8"
+        )
+        musl_job, remainder = workflow.split("\n  musl:\n", 1)[1].split(
+            "\n  macos:\n", 1
+        )
+        macos_job = remainder.split("\n  windows:\n", 1)[0]
+        self.assertIn("timeout-minutes: 90", musl_job)
+        self.assertIn("timeout-minutes: 90", macos_job)
 
     def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
