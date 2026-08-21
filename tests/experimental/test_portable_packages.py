@@ -206,6 +206,35 @@ class PortablePackageTests(unittest.TestCase):
             right = self.create_and_validate(Path(second), "macos12", "x64")
             self.assertEqual(hashlib.sha256(left.read_bytes()).digest(), hashlib.sha256(right.read_bytes()).digest())
 
+    def test_windows_patchset_hash_ignores_dotnet_build_outputs(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import portable_contract
+
+        with tempfile.TemporaryDirectory() as directory:
+            packaging_root = Path(directory)
+            for relative in portable_contract.patchset_paths("windows-msys2"):
+                destination = packaging_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / relative, destination)
+
+            baseline = portable_contract.packaging_patchset_sha256(
+                packaging_root, "windows-msys2"
+            )
+            for relative in (
+                Path("packaging/windows/service/RedisService/obj/project.assets.json"),
+                Path("packaging/windows/service/RedisService/bin/Release/RedisService.dll"),
+            ):
+                generated = packaging_root / relative
+                generated.parent.mkdir(parents=True, exist_ok=True)
+                generated.write_text("generated build output\n", encoding="utf-8")
+
+            self.assertEqual(
+                portable_contract.packaging_patchset_sha256(
+                    packaging_root, "windows-msys2"
+                ),
+                baseline,
+            )
+
     def test_hashes_snapshot_is_bound_to_the_validated_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = self.create_and_validate(Path(directory), "macos12", "x64")

@@ -29,6 +29,11 @@ COMMON_PATCHSET_PATHS = (
     "THIRD_PARTY_NOTICES.md",
 )
 
+WINDOWS_SERVICE_SOURCE_PATHS = (
+    "packaging/windows/service/RedisService/Program.cs",
+    "packaging/windows/service/RedisService/RedisService.csproj",
+)
+
 BACKENDS = {
     "linux-musl1.2": {
         "os": "linux",
@@ -124,25 +129,13 @@ def backend_assets(variant: str) -> dict[str, int]:
     return dict(backend["assets"])
 
 
-def patchset_paths(root: Path, variant: str) -> list[Path]:
+def patchset_paths(variant: str) -> list[Path]:
     backend = backend_for(variant)
     relative_paths = [Path(value) for value in COMMON_PATCHSET_PATHS]
     asset_root = Path(str(backend["asset_root"]))
     relative_paths.extend(asset_root / value for value in backend_assets(variant))
     if variant == "windows-msys2":
-        service_root = root / asset_root / "service/RedisService"
-        if not service_root.is_dir() or service_root.is_symlink():
-            raise ContractError("Windows service-wrapper source directory is missing or unsafe")
-        for current_root, directory_names, file_names in os.walk(
-            service_root, followlinks=False
-        ):
-            current = Path(current_root)
-            for directory_name in directory_names:
-                directory_path = current / directory_name
-                if directory_path.is_symlink():
-                    raise ContractError("Windows service-wrapper source contains a symlink")
-            for file_name in file_names:
-                relative_paths.append((current / file_name).relative_to(root))
+        relative_paths.extend(Path(value) for value in WINDOWS_SERVICE_SOURCE_PATHS)
     return sorted(set(relative_paths), key=lambda value: os.fsencode(value.as_posix()))
 
 
@@ -170,7 +163,7 @@ def require_regular_file(root: Path, relative: Path) -> Path:
 
 def packaging_patchset_sha256(root: Path, variant: str) -> str:
     records = []
-    for relative in patchset_paths(root, variant):
+    for relative in patchset_paths(variant):
         source = require_regular_file(root, relative)
         name = relative.as_posix()
         if any(character in name for character in ("\\", "\n", "\r")):
