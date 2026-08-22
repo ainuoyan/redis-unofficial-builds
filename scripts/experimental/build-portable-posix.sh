@@ -65,39 +65,19 @@ print(path)
 PY
 })"
 
-python3 - "$source_archive" "$REDIS_SOURCE_SHA256" "$REDIS_VERSION" <<'PY'
-import hashlib
+python3 - "$PROJECT_ROOT" "$source_archive" "$REDIS_SOURCE_SHA256" "$REDIS_VERSION" <<'PY'
 import pathlib
 import sys
-import tarfile
 
-archive = pathlib.Path(sys.argv[1])
-expected_digest = sys.argv[2]
-version = sys.argv[3]
-digest = hashlib.sha256()
-with archive.open("rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-        digest.update(chunk)
-if digest.hexdigest() != expected_digest:
-    raise SystemExit("Redis source archive SHA-256 mismatch")
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts/experimental"))
+import portable_contract
 
-prefix = f"redis-{version}/"
-with tarfile.open(archive, "r:gz") as source:
-    members = source.getmembers()
-    if not members or len(members) > 10000:
-        raise SystemExit("Redis source archive has an invalid member count")
-    for member in members:
-        name = member.name
-        canonical_name = name[:-1] if member.isdir() and name.endswith("/") else name
-        if canonical_name == prefix[:-1] and member.isdir():
-            continue
-        if not canonical_name.startswith(prefix) or "\\" in canonical_name:
-            raise SystemExit(f"unsafe Redis source member: {name!r}")
-        relative = canonical_name[len(prefix):]
-        if not relative or any(part in {"", ".", ".."} for part in relative.split("/")):
-            raise SystemExit(f"noncanonical Redis source member: {name!r}")
-        if not (member.isfile() or member.isdir()):
-            raise SystemExit(f"unsupported Redis source member type: {name!r}")
+try:
+    portable_contract.validate_source_archive(
+        pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+    )
+except portable_contract.ContractError as exc:
+    raise SystemExit(str(exc)) from exc
 PY
 
 temp_parent="${TMPDIR:-/tmp}"

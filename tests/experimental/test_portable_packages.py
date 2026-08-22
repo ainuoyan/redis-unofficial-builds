@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import shutil
 import stat
@@ -16,6 +17,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts/experimental"))
+import portable_contract  # noqa: E402
+
 CREATE = ROOT / "scripts/experimental/create_portable_package.py"
 VALIDATE = ROOT / "scripts/experimental/validate_portable_asset.py"
 BUILD_SCRIPT = ROOT / "scripts/experimental/build-portable-posix.sh"
@@ -79,6 +83,79 @@ def pe_fixture(*, include_version: bool) -> bytes:
 
 
 class PortablePackageTests(unittest.TestCase):
+    def write_source_archive(
+        self,
+        archive: Path,
+        *,
+        link_target: str = "../.skills",
+        include_link_descendant: bool = False,
+    ) -> str:
+        prefix = f"redis-{VERSION}"
+        with tarfile.open(archive, "w:gz") as output:
+            for name in (
+                prefix,
+                f"{prefix}/modules",
+                f"{prefix}/modules/redisearch",
+                f"{prefix}/modules/redisearch/src",
+                f"{prefix}/modules/redisearch/src/.claude",
+                f"{prefix}/modules/redisearch/src/.skills",
+            ):
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.DIRTYPE
+                output.addfile(member)
+            agents = tarfile.TarInfo(
+                f"{prefix}/modules/redisearch/src/AGENTS.md"
+            )
+            agents.size = 4
+            output.addfile(agents, io.BytesIO(b"test"))
+            skills = tarfile.TarInfo(
+                f"{prefix}/modules/redisearch/src/.claude/skills"
+            )
+            skills.type = tarfile.SYMTYPE
+            skills.linkname = link_target
+            output.addfile(skills)
+            claude = tarfile.TarInfo(
+                f"{prefix}/modules/redisearch/src/CLAUDE.md"
+            )
+            claude.type = tarfile.SYMTYPE
+            claude.linkname = "AGENTS.md"
+            output.addfile(claude)
+            if include_link_descendant:
+                descendant = tarfile.TarInfo(
+                    f"{prefix}/modules/redisearch/src/.claude/skills/injected"
+                )
+                descendant.size = 4
+                output.addfile(descendant, io.BytesIO(b"test"))
+        return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def test_source_archive_accepts_internal_terminal_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / f"redis-{VERSION}.tar.gz"
+            digest = self.write_source_archive(archive)
+            portable_contract.validate_source_archive(archive, digest, VERSION)
+
+    def test_source_archive_rejects_escaping_and_traversed_symlinks(self) -> None:
+        cases = (
+            ("/tmp/outside", False, "unsafe"),
+            ("../../../../../../outside", False, "escapes"),
+            ("../.skills", True, "descends through"),
+        )
+        for link_target, include_descendant, message in cases:
+            with self.subTest(link_target=link_target):
+                with tempfile.TemporaryDirectory() as directory:
+                    archive = Path(directory) / f"redis-{VERSION}.tar.gz"
+                    digest = self.write_source_archive(
+                        archive,
+                        link_target=link_target,
+                        include_link_descendant=include_descendant,
+                    )
+                    with self.assertRaisesRegex(
+                        portable_contract.ContractError, message
+                    ):
+                        portable_contract.validate_source_archive(
+                            archive, digest, VERSION
+                        )
+
     def test_repository_files_do_not_contain_removed_brand_token(self) -> None:
         forbidden = ("r" + "zon").casefold()
         for path in ROOT.rglob("*"):
@@ -220,9 +297,6 @@ class PortablePackageTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(left.read_bytes()).digest(), hashlib.sha256(right.read_bytes()).digest())
 
     def test_windows_patchset_hash_ignores_dotnet_build_outputs(self) -> None:
-        sys.path.insert(0, str(ROOT / "scripts/experimental"))
-        import portable_contract
-
         with tempfile.TemporaryDirectory() as directory:
             packaging_root = Path(directory)
             for relative in portable_contract.patchset_paths("windows-msys2"):
@@ -249,9 +323,6 @@ class PortablePackageTests(unittest.TestCase):
             )
 
     def test_windows_patchset_files_are_checked_out_with_lf_endings(self) -> None:
-        sys.path.insert(0, str(ROOT / "scripts/experimental"))
-        import portable_contract
-
         paths = portable_contract.patchset_paths("windows-msys2")
         result = subprocess.run(
             ["git", "check-attr", "-z", "eol", "--", *map(str, paths)],
