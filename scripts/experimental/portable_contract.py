@@ -24,6 +24,8 @@ PACKAGE_PREFIX = "Redis"
 COMMON_PATCHSET_PATHS = (
     ".gitattributes",
     ".github/workflows/build-experimental.yml",
+    "packaging/linux/patches/apply_upstream_test_fixes.py",
+    "packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch",
     "scripts/experimental/build-portable-posix.sh",
     "scripts/experimental/create_portable_package.py",
     "scripts/experimental/portable_contract.py",

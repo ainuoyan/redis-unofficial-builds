@@ -3,6 +3,7 @@ set -euo pipefail
 umask 022
 
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly UPSTREAM_TEST_FIX_HELPER="$PROJECT_ROOT/packaging/linux/patches/apply_upstream_test_fixes.py"
 readonly REDIS_VERSION="${REDIS_VERSION:?REDIS_VERSION is required}"
 readonly REDIS_SOURCE_SHA256="${REDIS_SOURCE_SHA256:?REDIS_SOURCE_SHA256 is required}"
 readonly REDIS_HASHES_COMMIT="${REDIS_HASHES_COMMIT:?REDIS_HASHES_COMMIT is required}"
@@ -39,6 +40,10 @@ esac
 [[ "$SOURCE_DATE_EPOCH" == 0 ]] \
   || { echo "SOURCE_DATE_EPOCH must be zero." >&2; exit 1; }
 case "$RUN_FULL_TESTS" in true|false) ;; *) echo "Invalid RUN_FULL_TESTS value." >&2; exit 1 ;; esac
+[[ -f "$UPSTREAM_TEST_FIX_HELPER" && ! -L "$UPSTREAM_TEST_FIX_HELPER" ]] || {
+  echo "Upstream test-fix helper is missing or unsafe." >&2
+  exit 1
+}
 
 if (( EUID == 0 )); then
   echo "Refusing to execute upstream Redis code as root." >&2
@@ -113,6 +118,9 @@ source_root="$work_dir/redis-${REDIS_VERSION}"
   echo "Redis source root is missing after extraction." >&2
   exit 1
 }
+python3 "$UPSTREAM_TEST_FIX_HELPER" \
+  --redis-version "$REDIS_VERSION" \
+  --source-root "$source_root"
 cd "$source_root"
 
 make_args=(BUILD_TLS=no)

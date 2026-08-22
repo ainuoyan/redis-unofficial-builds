@@ -3,6 +3,8 @@
 /THIRD_PARTY_NOTICES.md text eol=lf
 /scripts/experimental/*.py text eol=lf
 /scripts/experimental/*.sh text eol=lf
+/packaging/linux/patches/*.py text eol=lf
+/packaging/linux/patches/*.patch text eol=lf
 /packaging/windows/scripts/*.ps1 text eol=lf
 /packaging/windows/service/RedisService/*.cs text eol=lf
 /packaging/windows/service/RedisService/*.csproj text eol=lf

@@ -468,6 +468,21 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn(
             'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
         )
+        helper_call = (
+            'python3 "$UPSTREAM_TEST_FIX_HELPER" \\\n'
+            '  --redis-version "$REDIS_VERSION" \\\n'
+            '  --source-root "$source_root"'
+        )
+        self.assertIn(helper_call, script)
+        self.assertLess(script.index(helper_call), script.index('cd "$source_root"'))
+        self.assertIn(
+            Path("packaging/linux/patches/apply_upstream_test_fixes.py"),
+            portable_contract.patchset_paths("linux-musl1.2"),
+        )
+        self.assertIn(
+            Path("packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch"),
+            portable_contract.patchset_paths("macos12"),
+        )
         self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
 
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
