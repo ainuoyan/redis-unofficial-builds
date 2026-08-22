@@ -231,7 +231,7 @@ jobs:
             -f name="$repository_name" \
             -f tag="$version" \
             -f qualifiedTag="$qualified_tag" \
-            -f query='query($owner:String!,$name:String!,$tag:String!,$qualifiedTag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){id tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}} ref(qualifiedName:$qualifiedTag){name target{oid}}}}' \
+            -f query='query($owner:String!,$name:String!,$tag:String!,$qualifiedTag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){id databaseId tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}} ref(qualifiedName:$qualifiedTag){name target{oid}}}}' \
             >release-state.json
           jq -e '((.errors // []) | length) == 0 and .data.repository != null' \
             release-state.json >/dev/null
@@ -240,21 +240,6 @@ jobs:
           release_complete=false
           if jq -e '.data.repository.release != null' release-state.json >/dev/null; then
             release_exists=true
-            jq -e '
-              .data.repository.release.tagName == $version and
-              (.data.repository.release.isDraft | not) and
-              (.data.repository.release.isPrerelease | not) and
-              (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not)
-            ' --arg version "$version" release-state.json >/dev/null || {
-              if [[ "$(jq -r '.data.repository.release.isDraft' release-state.json)" == "true" ]]; then
-                echo "A draft Release for Redis $version already exists (leftover from a failed publish run or a manual draft)." >&2
-                echo "Recovery: review it, then delete it with 'gh release delete $version --yes' and re-run this workflow." >&2
-              else
-                echo "Existing Redis Release is prerelease, malformed, or too large." >&2
-              fi
-              exit 1
-            }
-
             expected_assets=(
               "Redis-${version}-${PACKAGE_VARIANT}-x64.tar.gz"
               "Redis-${version}-${PACKAGE_VARIANT}-x64.tar.gz.sha256"
@@ -274,64 +259,108 @@ jobs:
               exit 1
             fi
 
-            install -d -m 0700 existing-release-assets
-            download_args=()
-            for asset in "${expected_assets[@]}"; do
-              download_args+=(--pattern "$asset")
-            done
-            gh release download "$version" \
-              --repo "$GITHUB_REPOSITORY" \
-              "${download_args[@]}" \
-              --dir existing-release-assets
-            python3 scripts/release/release_metadata.py validate \
-              --asset-dir existing-release-assets \
-              --redis-version "$version" \
-              --source-sha256 "$source_sha256" \
-              --variant "$PACKAGE_VARIANT" \
-              --min-glibc "$GLIBC_BASELINE" \
-              --repository "$GITHUB_REPOSITORY"
-            release_revision="$(
-              jq -er '.build.revision | select(type == "string")' \
-                existing-release-assets/manifest.json
-            )"
-            tag_revision="$(jq -er '.data.repository.ref.target.oid' release-state.json)"
-            if [[ "$tag_revision" != "$release_revision" ]]; then
-              echo "Existing Release tag does not identify its packaging revision." >&2
-              exit 1
-            fi
+            if jq -e '.data.repository.release.isDraft' \
+              release-state.json >/dev/null; then
+              [[ "${PUBLISH_RELEASE:-false}" == true ]] || {
+                echo "A draft Release can only be resumed by an explicit publishing run." >&2
+                exit 1
+              }
+              jq -e '
+                .data.repository.release.tagName == $version and
+                (.data.repository.release.isPrerelease | not) and
+                (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+                (
+                  .data.repository.ref == null or
+                  .data.repository.ref.target.oid == $revision
+                )
+              ' --arg version "$version" \
+                --arg revision "$GITHUB_SHA" \
+                release-state.json >/dev/null
+              draft_database_id="$(
+                jq -er '.data.repository.release.databaseId' release-state.json
+              )"
+              gh api "repos/${GITHUB_REPOSITORY}/releases/${draft_database_id}" \
+                >draft-release.json
+              jq -e '
+                .id == $id and
+                .tag_name == $version and
+                .draft == true and
+                .prerelease == false and
+                .target_commitish == $revision
+              ' --argjson id "$draft_database_id" \
+                --arg version "$version" \
+                --arg revision "$GITHUB_SHA" \
+                draft-release.json >/dev/null
+              echo "A compatible draft Release will be verified and resumed."
+            else
+              jq -e '
+                .data.repository.release.tagName == $version and
+                (.data.repository.release.isPrerelease | not) and
+                (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not)
+              ' --arg version "$version" release-state.json >/dev/null || {
+                echo "Existing Redis Release is prerelease, malformed, or too large." >&2
+                exit 1
+              }
 
-            attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
-            verify_attestation() {
-              local asset="$1"
-              local predicate_type="$2"
-              local attempt
-              for attempt in 1 2 3; do
-                if gh attestation verify "$asset" \
-                  --repo "$GITHUB_REPOSITORY" \
-                  --cert-identity "$attestation_identity" \
-                  --signer-digest "$release_revision" \
-                  --source-digest "$release_revision" \
-                  --source-ref "refs/heads/$DEFAULT_BRANCH" \
-                  --predicate-type "$predicate_type" \
-                  --deny-self-hosted-runners >/dev/null; then
-                  return 0
-                fi
-                (( attempt == 3 )) || sleep "$((attempt * 2))"
+              install -d -m 0700 existing-release-assets
+              download_args=()
+              for asset in "${expected_assets[@]}"; do
+                download_args+=(--pattern "$asset")
               done
-              echo "Required attestation verification failed for $asset." >&2
-              return 1
-            }
-            for asset in "${expected_assets[@]}"; do
-              verify_attestation \
-                "existing-release-assets/$asset" \
-                https://slsa.dev/provenance/v1
-            done
-            for package_arch in x64 arm64; do
-              verify_attestation \
-                "existing-release-assets/Redis-${version}-${PACKAGE_VARIANT}-${package_arch}.tar.gz" \
-                https://spdx.dev/Document/v2.3
-            done
-            release_complete=true
+              gh release download "$version" \
+                --repo "$GITHUB_REPOSITORY" \
+                "${download_args[@]}" \
+                --dir existing-release-assets
+              python3 scripts/release/release_metadata.py validate \
+                --asset-dir existing-release-assets \
+                --redis-version "$version" \
+                --source-sha256 "$source_sha256" \
+                --variant "$PACKAGE_VARIANT" \
+                --min-glibc "$GLIBC_BASELINE" \
+                --repository "$GITHUB_REPOSITORY"
+              release_revision="$(
+                jq -er '.build.revision | select(type == "string")' \
+                  existing-release-assets/manifest.json
+              )"
+              tag_revision="$(jq -er '.data.repository.ref.target.oid' release-state.json)"
+              if [[ "$tag_revision" != "$release_revision" ]]; then
+                echo "Existing Release tag does not identify its packaging revision." >&2
+                exit 1
+              fi
+
+              attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+              verify_attestation() {
+                local asset="$1"
+                local predicate_type="$2"
+                local attempt
+                for attempt in 1 2 3; do
+                  if gh attestation verify "$asset" \
+                    --repo "$GITHUB_REPOSITORY" \
+                    --cert-identity "$attestation_identity" \
+                    --signer-digest "$release_revision" \
+                    --source-digest "$release_revision" \
+                    --source-ref "refs/heads/$DEFAULT_BRANCH" \
+                    --predicate-type "$predicate_type" \
+                    --deny-self-hosted-runners >/dev/null; then
+                    return 0
+                  fi
+                  (( attempt == 3 )) || sleep "$((attempt * 2))"
+                done
+                echo "Required attestation verification failed for $asset." >&2
+                return 1
+              }
+              for asset in "${expected_assets[@]}"; do
+                verify_attestation \
+                  "existing-release-assets/$asset" \
+                  https://slsa.dev/provenance/v1
+              done
+              for package_arch in x64 arm64; do
+                verify_attestation \
+                  "existing-release-assets/Redis-${version}-${PACKAGE_VARIANT}-${package_arch}.tar.gz" \
+                  https://spdx.dev/Document/v2.3
+              done
+              release_complete=true
+            fi
           elif jq -e '.data.repository.ref != null' release-state.json >/dev/null; then
             echo "Tag $version already exists without a current immutable Release." >&2
             exit 1
@@ -1105,18 +1134,33 @@ jobs:
           }
 
           query_state before-create.json
-          jq -e '.data.repository.release == null and .data.repository.ref == null' \
-            before-create.json >/dev/null || {
-              echo "Release or tag appeared after preparation; refusing to mutate it." >&2
-              exit 1
-            }
-
-          gh release create "$REDIS_VERSION" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Redis ${REDIS_VERSION} unofficial builds" \
-            --notes-file release-notes.md \
-            --draft
+          if jq -e \
+            '.data.repository.release == null and .data.repository.ref == null' \
+            before-create.json >/dev/null; then
+            gh release create "$REDIS_VERSION" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Redis ${REDIS_VERSION} unofficial builds" \
+              --notes-file release-notes.md \
+              --draft
+          elif jq -e '
+            .data.repository.release.tagName == $version and
+            .data.repository.release.isDraft and
+            (.data.repository.release.isPrerelease | not) and
+            (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+            (.data.repository.release.databaseId | type == "number") and
+            (
+              .data.repository.ref == null or
+              .data.repository.ref.target.oid == $revision
+            )
+          ' --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            before-create.json >/dev/null; then
+            echo "Reusing an existing verified draft after an interrupted publication."
+          else
+            echo "A published Release, an incompatible draft, or a conflicting tag already exists." >&2
+            exit 1
+          fi
 
           query_state draft-state.json
           draft_assets="$(
@@ -1199,6 +1243,39 @@ jobs:
               "$archive" https://spdx.dev/Document/v2.3
           done
 
+          query_state pre-tag-state.json
+          jq -e '
+            .data.repository.release.databaseId == $id and
+            .data.repository.release.tagName == $version and
+            .data.repository.release.isDraft and
+            (.data.repository.release.isPrerelease | not) and
+            (.data.repository.release.releaseAssets.pageInfo.hasNextPage | not) and
+            (
+              .data.repository.ref == null or
+              .data.repository.ref.target.oid == $revision
+            )
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            pre-tag-state.json >/dev/null
+
+          if jq -e '.data.repository.ref == null' \
+            pre-tag-state.json >/dev/null; then
+            gh api --method POST \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="$qualified_tag" \
+              -f sha="$GITHUB_SHA" \
+              >create-tag-response.json
+            jq -e '
+              .ref == $tag and
+              .object.type == "commit" and
+              .object.sha == $revision
+            ' --arg tag "$qualified_tag" \
+              --arg revision "$GITHUB_SHA" \
+              create-tag-response.json >/dev/null
+          fi
+
           query_state pre-publish-state.json
           pre_publish_assets="$(
             jq -r '.data.repository.release.releaseAssets.nodes[].name' \
@@ -1215,6 +1292,18 @@ jobs:
             --arg version "$REDIS_VERSION" \
             --arg revision "$GITHUB_SHA" \
             pre-publish-state.json >/dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${draft_id}" \
+            >pre-publish-release.json
+          jq -e '
+            .id == $id and
+            .tag_name == $version and
+            .draft == true and
+            .prerelease == false and
+            .target_commitish == $revision
+          ' --argjson id "$draft_id" \
+            --arg version "$REDIS_VERSION" \
+            --arg revision "$GITHUB_SHA" \
+            pre-publish-release.json >/dev/null
           [[ "$pre_publish_assets" == "$expected_asset_list" ]] || {
             echo "Draft Release changed during verification; refusing publication." >&2
             exit 1
