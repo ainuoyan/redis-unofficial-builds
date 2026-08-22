@@ -9,7 +9,10 @@ from pathlib import Path
 
 
 DLADDR_BLOCK_START = "void dumpX86Calls(void *addr, size_t len) {"
-DLADDR_BLOCK_END = "\nvoid invalidFunctionWasCalled(void) {}"
+DLADDR_BLOCK_ENDS = (
+    "\nvoid invalidFunctionWasCalled(void) {}",
+    "\nvoid invalidFunctionWasCalled() {}",
+)
 DLADDR_GUARD = "#if !defined(__CYGWIN__) && !defined(__MSYS__)\n"
 DLADDR_FALLBACK = (
     "\n#else\n"
@@ -37,8 +40,12 @@ def remove_optional_module_tests_target(makefile: Path) -> int:
 
 def guard_unsupported_dladdr_diagnostics(debug_c: Path) -> int:
     text = debug_c.read_text(encoding="utf-8")
+    block_ends = [marker for marker in DLADDR_BLOCK_ENDS if marker in text]
+    if len(block_ends) != 1:
+        raise ValueError("refusing an ambiguous dumpCodeAroundEIP implementation")
+    block_end = block_ends[0]
     guarded_start = DLADDR_GUARD + DLADDR_BLOCK_START
-    guarded_end = DLADDR_FALLBACK + DLADDR_BLOCK_END
+    guarded_end = DLADDR_FALLBACK + block_end
     if guarded_start in text or DLADDR_FALLBACK in text:
         if text.count(guarded_start) != 1 or text.count(guarded_end) != 1:
             raise ValueError("refusing an incomplete dladdr diagnostics guard")
@@ -46,11 +53,11 @@ def guard_unsupported_dladdr_diagnostics(debug_c: Path) -> int:
 
     if text.count(DLADDR_BLOCK_START) != 1:
         raise ValueError("refusing an ambiguous dumpX86Calls implementation")
-    if text.count(DLADDR_BLOCK_END) != 1:
+    if text.count(block_end) != 1:
         raise ValueError("refusing an ambiguous dumpCodeAroundEIP implementation")
 
     start = text.index(DLADDR_BLOCK_START)
-    end = text.index(DLADDR_BLOCK_END, start)
+    end = text.index(block_end, start)
     if end <= start:
         raise ValueError("refusing an invalid dladdr diagnostics layout")
     updated = text[:start] + DLADDR_GUARD + text[start:end] + DLADDR_FALLBACK + text[end:]
