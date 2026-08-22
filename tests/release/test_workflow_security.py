@@ -247,6 +247,27 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn('dir \"/usr/local/redis/custom data-数据\"', self.workflow)
         self.assertIn("redis.sock", self.workflow)
 
+        install_step = self.workflow.split(
+            "      - name: Test installation and service\n", 1
+        )[1].split("\n      - name: Test update and data preservation", 1)[0]
+        custom_dir_config = install_step.index(
+            "'s|^dir /usr/local/redis/data$|dir "
+        )
+        persisted_data = install_step.index(
+            "redis_cli SET redis-unofficial-service-test preserved"
+        )
+        self.assertLess(custom_dir_config, persisted_data)
+        self.assertNotIn(
+            '/usr/local/redis/data/dump.rdb "$custom_data_dir/dump.rdb"',
+            install_step,
+        )
+        self.assertIn(
+            "Service was not active after the update.", self.workflow
+        )
+        self.assertIn(
+            "Redis data was not preserved by the update.", self.workflow
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

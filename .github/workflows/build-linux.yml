@@ -658,21 +658,22 @@ jobs:
           sudo mv /usr/local/redis/.redis-package-state.saved \
             /usr/local/redis/.redis-package-state
 
-          redis_cli SET redis-unofficial-service-test preserved >/dev/null
-          redis_cli SET redis-unofficial-expiry-test expires EX 1 >/dev/null
-          sleep 2
-          [[ "$(redis_cli EXISTS redis-unofficial-expiry-test)" == 0 ]]
-          [[ "$(redis_cli SAVE)" == "OK" ]]
-
           custom_data_dir='/usr/local/redis/custom data-数据'
           sudo install -d -o redis -g redis -m 0750 "$custom_data_dir"
-          sudo install -o redis -g redis -m 0640 \
-            /usr/local/redis/data/dump.rdb "$custom_data_dir/dump.rdb"
           sudo sed -i \
             's|^dir /usr/local/redis/data$|dir "/usr/local/redis/custom data-数据"|' \
             /usr/local/redis/conf/redis.conf
           sudo chown root:redis /usr/local/redis/conf/redis.conf
           sudo chmod 0640 /usr/local/redis/conf/redis.conf
+          sudo systemctl restart redis.service
+          wait_for_socket
+
+          redis_cli SET redis-unofficial-service-test preserved >/dev/null
+          redis_cli SET redis-unofficial-expiry-test expires EX 1 >/dev/null
+          sleep 2
+          [[ "$(redis_cli EXISTS redis-unofficial-expiry-test)" == 0 ]]
+          [[ "$(redis_cli SAVE)" == "OK" ]]
+          [[ -f "$custom_data_dir/dump.rdb" ]]
 
       - name: Test update and data preservation
         shell: bash
@@ -683,11 +684,25 @@ jobs:
               -s /usr/local/redis/data/redis.sock "$@"
           }
           sudo /var/tmp/redis-package-root/redis/scripts/update.sh
-          sudo systemctl is-active --quiet redis.service
-          [[ "$(redis_cli GET redis-unofficial-service-test)" == "preserved" ]]
-          sudo grep -Fqx 'dir "/usr/local/redis/custom data-数据"' \
-            /usr/local/redis/conf/redis.conf
-          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+          if ! sudo systemctl is-active --quiet redis.service; then
+            echo "Service was not active after the update." >&2
+            sudo systemctl status --no-pager redis.service >&2 || true
+            exit 1
+          fi
+          preserved_value="$(redis_cli GET redis-unofficial-service-test)"
+          if [[ "$preserved_value" != "preserved" ]]; then
+            echo "Redis data was not preserved by the update." >&2
+            exit 1
+          fi
+          if ! sudo grep -Fqx 'dir "/usr/local/redis/custom data-数据"' \
+            /usr/local/redis/conf/redis.conf; then
+            echo "The custom Redis data directory was not preserved." >&2
+            exit 1
+          fi
+          if [[ ! -f '/usr/local/redis/custom data-数据/dump.rdb' ]]; then
+            echo "The custom Redis snapshot was not preserved." >&2
+            exit 1
+          fi
 
       - name: Test failed-update rollback
         shell: bash
