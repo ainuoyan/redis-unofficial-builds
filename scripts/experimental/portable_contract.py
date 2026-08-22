@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import posixpath
 import re
 import stat
+import tarfile
 from pathlib import Path
 
 
@@ -102,6 +104,98 @@ GENERATED_REGULAR_MEMBERS = {
 
 class ContractError(RuntimeError):
     """Raised when an experimental package violates its checked-in contract."""
+
+
+def validate_source_archive(
+    archive: Path, expected_digest: str, version: str
+) -> None:
+    """Validate a verified upstream tarball before system-tar extraction."""
+    if SHA256_RE.fullmatch(expected_digest) is None:
+        raise ContractError("invalid Redis source SHA-256")
+    if VERSION_RE.fullmatch(version) is None:
+        raise ContractError(f"invalid canonical Redis version: {version}")
+    try:
+        mode = archive.lstat().st_mode
+    except OSError as exc:
+        raise ContractError("Redis source archive is unavailable") from exc
+    if not stat.S_ISREG(mode) or archive.is_symlink():
+        raise ContractError("Redis source archive must be a regular file")
+
+    digest = hashlib.sha256()
+    with archive.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != expected_digest:
+        raise ContractError("Redis source archive SHA-256 mismatch")
+
+    prefix = f"redis-{version}/"
+    try:
+        with tarfile.open(archive, "r:gz") as source:
+            members = source.getmembers()
+    except (OSError, tarfile.TarError) as exc:
+        raise ContractError("Redis source archive is invalid") from exc
+    if not members or len(members) > 10000:
+        raise ContractError("Redis source archive has an invalid member count")
+
+    root_seen = False
+    members_by_relative: dict[str, tarfile.TarInfo] = {}
+    for member in members:
+        name = member.name
+        canonical_name = name[:-1] if member.isdir() and name.endswith("/") else name
+        if canonical_name == prefix[:-1] and member.isdir():
+            if root_seen:
+                raise ContractError("Redis source archive has a duplicate root")
+            root_seen = True
+            continue
+        if not canonical_name.startswith(prefix) or "\\" in canonical_name:
+            raise ContractError(f"unsafe Redis source member: {name!r}")
+        relative = canonical_name[len(prefix) :]
+        if not relative or any(
+            part in {"", ".", ".."} for part in relative.split("/")
+        ):
+            raise ContractError(f"noncanonical Redis source member: {name!r}")
+        if relative in members_by_relative:
+            raise ContractError(f"duplicate Redis source member: {name!r}")
+        if not (member.isfile() or member.isdir() or member.issym()):
+            raise ContractError(f"unsupported Redis source member type: {name!r}")
+        members_by_relative[relative] = member
+
+    if not root_seen:
+        raise ContractError("Redis source archive root is missing")
+
+    for relative, member in members_by_relative.items():
+        if not member.issym():
+            continue
+        linkname = member.linkname
+        if (
+            not linkname
+            or posixpath.isabs(linkname)
+            or "\\" in linkname
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in linkname
+            )
+        ):
+            raise ContractError(f"unsafe Redis source link target: {relative!r}")
+        target = posixpath.normpath(
+            posixpath.join(posixpath.dirname(relative), linkname)
+        )
+        if target in {"", ".", ".."} or target.startswith("../"):
+            raise ContractError(f"Redis source link escapes the source root: {relative!r}")
+        target_member = members_by_relative.get(target)
+        if target_member is None or not (target_member.isfile() or target_member.isdir()):
+            raise ContractError(
+                f"Redis source link target is not a regular member: {relative!r}"
+            )
+        descendant_prefix = f"{relative}/"
+        if any(
+            candidate.startswith(descendant_prefix)
+            for candidate in members_by_relative
+            if candidate != relative
+        ):
+            raise ContractError(
+                f"Redis source member descends through a link: {relative!r}"
+            )
 
 
 def backend_for(variant: str) -> dict[str, object]:
