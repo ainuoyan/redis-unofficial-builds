@@ -386,6 +386,7 @@ jobs:
             file \
             findutils \
             gcc \
+            gcc-c++ \
             git \
             gzip \
             make \
