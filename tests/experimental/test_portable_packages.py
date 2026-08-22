@@ -590,8 +590,16 @@ class PortablePackageTests(unittest.TestCase):
             Path("packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch"),
             portable_contract.patchset_paths("macos12"),
         )
+        self.assertIn(
+            Path("packaging/linux/patches/redis-8.10.1-hfe-test-timeout.patch"),
+            portable_contract.patchset_paths("macos12"),
+        )
         self.assertNotIn(
             Path("packaging/linux/patches/apply_upstream_test_fixes.py"),
+            portable_contract.patchset_paths("windows-msys2"),
+        )
+        self.assertNotIn(
+            Path("packaging/linux/patches/redis-8.10.1-hfe-test-timeout.patch"),
             portable_contract.patchset_paths("windows-msys2"),
         )
         self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
