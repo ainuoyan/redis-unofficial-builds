@@ -24,7 +24,6 @@ Release-published package.
 | `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Experimental artifact only |
 | `macos12` | `x64` / `arm64` | macOS 12+, launchd | Experimental artifact only |
 | `windows-msys2` | `x64` | Windows Server 2022 test runner, Windows SCM | Experimental artifact only |
-| `windows-cygwin` | `x64` | Windows Service Control Manager | Design only |
 
 The implemented publication target remains glibc 2.28 Linux only. A glibc
 2.28 package normally runs on a newer glibc system of the same architecture;
@@ -50,8 +49,8 @@ references
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 at fixed commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9).
-No stable Windows Release, Windows production support, Cygwin package, or
-native Windows ARM64 support is currently claimed. See
+No stable Windows Release, Windows production support, or native Windows ARM64
+support is currently claimed. See
 [Windows issue coverage](docs/WINDOWS-ISSUE-COVERAGE.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).
 

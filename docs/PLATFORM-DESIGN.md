@@ -41,7 +41,6 @@ marks remain subject to the official
 | `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Experimental artifact only** |
 | `macos12` | x64, ARM64 | Native macOS 15 runners, deployment target 12.0 | launchd | **Experimental artifact only** |
 | `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Experimental artifact only**; primary Windows backend |
-| `windows-cygwin` | x64 | Pinned Cygwin toolchain/runtime | Windows SCM | Design only; compatibility backend |
 
 Only `linux-glibc2.28` rows are controller-enabled. Experimental rows name the
 manual `build-experimental.yml` workflow but remain controller-disabled. All
@@ -333,7 +332,7 @@ uninstall; maintenance fails closed while any such process remains.
   default. `--purge` removes the fixed prefix subject to account and mount
   safety checks.
 
-## Experimental and designed backends
+## Experimental backends
 
 ### glibc 2.17 legacy
 
@@ -386,10 +385,8 @@ implementation and incorporates no source file from that project. Attribution
 and any future incorporation requirements are recorded
 in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-MSYS2 is the experimental primary backend and Cygwin remains design only.
-Their path conversion rules cannot be shared blindly: MSYS2 uses `/c/...`,
-while Cygwin uses `/cygdrive/c/...`. The service wrapper must keep Redis in
-foreground mode, validate configuration paths, propagate startup/child-exit
+MSYS2 is the experimental Windows backend. The service wrapper must keep Redis
+in foreground mode, validate configuration paths, propagate startup/child-exit
 failure to the Service Control Manager, perform real readiness checks, use
 bounded graceful shutdown and process-tree fallback, exclude credentials from
 arguments/logs, record diagnostic output, and maintain protected installation

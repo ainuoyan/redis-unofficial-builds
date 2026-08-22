@@ -62,9 +62,6 @@ REQUIRED_DESIGN_PLATFORM_CONTRACTS = {
     "windows-msys2-x64": (
         "windows-msys2", "windows", "x64", "zip", "experimental"
     ),
-    "windows-cygwin-x64": (
-        "windows-cygwin", "windows", "x64", "zip", "designed"
-    ),
 }
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
