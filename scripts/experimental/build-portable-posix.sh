@@ -40,10 +40,6 @@ esac
 [[ "$SOURCE_DATE_EPOCH" == 0 ]] \
   || { echo "SOURCE_DATE_EPOCH must be zero." >&2; exit 1; }
 case "$RUN_FULL_TESTS" in true|false) ;; *) echo "Invalid RUN_FULL_TESTS value." >&2; exit 1 ;; esac
-[[ -f "$UPSTREAM_TEST_FIX_HELPER" && ! -L "$UPSTREAM_TEST_FIX_HELPER" ]] || {
-  echo "Upstream test-fix helper is missing or unsafe." >&2
-  exit 1
-}
 
 if (( EUID == 0 )); then
   echo "Refusing to execute upstream Redis code as root." >&2
@@ -118,9 +114,15 @@ source_root="$work_dir/redis-${REDIS_VERSION}"
   echo "Redis source root is missing after extraction." >&2
   exit 1
 }
-python3 "$UPSTREAM_TEST_FIX_HELPER" \
-  --redis-version "$REDIS_VERSION" \
-  --source-root "$source_root"
+if [[ "$RUN_FULL_TESTS" == true ]]; then
+  [[ -f "$UPSTREAM_TEST_FIX_HELPER" && ! -L "$UPSTREAM_TEST_FIX_HELPER" ]] || {
+    echo "Upstream test-fix helper is missing or unsafe." >&2
+    exit 1
+  }
+  python3 "$UPSTREAM_TEST_FIX_HELPER" \
+    --redis-version "$REDIS_VERSION" \
+    --source-root "$source_root"
+fi
 cd "$source_root"
 
 make_args=(BUILD_TLS=no)
