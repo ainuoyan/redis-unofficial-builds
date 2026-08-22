@@ -158,13 +158,14 @@ write_state() {
   local version="$1" temporary
   temporary="$REDIS_STATE_FILE.tmp.$$"
   {
-    printf 'STATE_FORMAT=1\n'
+    printf 'STATE_FORMAT=2\n'
     printf 'PACKAGE_ID=redis-unofficial-builds\n'
     printf 'PACKAGE_STATUS=experimental\n'
     printf 'INSTALL_PREFIX=%s\n' "$REDIS_PREFIX"
     printf 'REDIS_VERSION=%s\n' "$version"
     printf 'PACKAGE_VARIANT=linux-musl1.2\n'
     printf 'SERVICE_MANAGER=openrc\n'
+    printf 'SERVICE_ID=%s\n' "$REDIS_SERVICE"
   } >"$temporary"
   chmod 0600 "$temporary"
   chown root:root "$temporary"
@@ -174,11 +175,12 @@ write_state() {
 validate_state() {
   [[ -f "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" \
     && "$(stat -c '%u:%g:%a:%h' "$REDIS_STATE_FILE")" == 0:0:600:1 \
-    && "$(metadata_value "$REDIS_STATE_FILE" STATE_FORMAT)" == 1 \
+    && "$(metadata_value "$REDIS_STATE_FILE" STATE_FORMAT)" == 2 \
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_ID)" == redis-unofficial-builds \
     && "$(metadata_value "$REDIS_STATE_FILE" INSTALL_PREFIX)" == "$REDIS_PREFIX" \
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_VARIANT)" == linux-musl1.2 \
-    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == openrc ]] \
+    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == openrc \
+    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_ID)" == "$REDIS_SERVICE" ]] \
     || die "The existing installation state is missing or invalid."
 }
 

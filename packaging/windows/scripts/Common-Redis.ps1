@@ -161,7 +161,7 @@ function Read-RedisState {
     if (-not [IO.File]::Exists($script:RedisStateFile)) { return $null }
     Assert-NoReparsePoint -Path $script:RedisStateFile
     $state = [IO.File]::ReadAllText($script:RedisStateFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
-    if ($state.StateFormat -ne 1 -or $state.PackageId -cne 'redis-unofficial-builds' -or
+    if ($state.StateFormat -ne 2 -or $state.PackageId -cne 'redis-unofficial-builds' -or
         $state.InstallPrefix -cne $script:RedisPrefix -or $state.PackageVariant -cne 'windows-msys2' -or
         $state.ServiceName -cne $script:RedisServiceName -or
         $state.RedisVersion -notmatch '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$') {
@@ -173,7 +173,7 @@ function Read-RedisState {
 function Write-RedisState {
     param([Parameter(Mandatory = $true)][string]$Version)
     $state = [ordered]@{
-        StateFormat = 1
+        StateFormat = 2
         PackageId = 'redis-unofficial-builds'
         PackageStatus = 'experimental'
         InstallPrefix = $script:RedisPrefix
@@ -259,7 +259,7 @@ function New-RedisService {
     if ($null -ne (Get-RedisService)) { throw 'RedisUnofficial service already exists.' }
     $wrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
     $binaryPath = '"' + $wrapper + '" --service'
-    New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis Unofficial (experimental)' `
+    New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis unofficial (experimental)' `
         -Description 'Experimental MSYS2 Redis package from redis-unofficial-builds' -StartupType Automatic | Out-Null
     & sc.exe config $script:RedisServiceName start= delayed-auto | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure delayed service start.' }

@@ -1,6 +1,6 @@
 #!/sbin/openrc-run
 
-name="Redis Unofficial experimental service"
+name="Redis unofficial experimental service"
 description="Redis server from redis-unofficial-builds"
 command="/usr/local/redis/bin/redis-server"
 command_args="/usr/local/redis/conf/redis.conf"

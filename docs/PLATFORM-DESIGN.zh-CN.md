@@ -42,6 +42,9 @@ Redis 名称与标识仍受官方
 RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。实验性 Windows 包使用
 `.zip` 和固定目录 `C:\Program Files\Redis-Unofficial`。
 
+当前运行身份清理之前创建的实验性安装会被新更新脚本明确拒绝。请先备份配置与
+数据，使用已安装包内的生命周期脚本卸载，再执行全新安装。
+
 ### ABI 原则
 
 - glibc 2.28 二进制不能假定可在 glibc 2.17 上运行。legacy 包必须单独构建，并

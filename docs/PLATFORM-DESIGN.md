@@ -49,6 +49,11 @@ Linux archive designs use `.tar.gz` rather than an RPM, DEB, Snap, or APK and
 use the fixed prefix `/usr/local/redis`. The experimental Windows package uses
 `.zip` and the fixed prefix `C:\Program Files\Redis-Unofficial`.
 
+Experimental installations created before the current runtime-identity
+cleanup are intentionally rejected by the new update scripts. Back up
+configuration and data, uninstall with the lifecycle scripts from the
+installed package, and then perform a fresh install.
+
 ### ABI principles
 
 - A glibc 2.28 binary cannot be assumed to run on glibc 2.17. The legacy

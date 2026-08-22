@@ -79,6 +79,19 @@ def pe_fixture(*, include_version: bool) -> bytes:
 
 
 class PortablePackageTests(unittest.TestCase):
+    def test_repository_files_do_not_contain_removed_brand_token(self) -> None:
+        forbidden = ("r" + "zon").casefold()
+        for path in ROOT.rglob("*"):
+            relative = path.relative_to(ROOT).as_posix()
+            if ".git" in path.parts or not path.is_file():
+                continue
+            self.assertNotIn(forbidden, relative.casefold(), relative)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            self.assertNotIn(forbidden, text.casefold(), relative)
+
     def make_source(self, root: Path) -> Path:
         source = root / "source"
         (source / "deps/example").mkdir(parents=True)
@@ -446,6 +459,24 @@ class PortablePackageTests(unittest.TestCase):
         )
         self.assertIn("consecutive_ready", common)
         self.assertIn("consecutive_ready=$((consecutive_ready + 1))", common)
+
+    def test_runtime_identity_is_bound_to_install_state(self) -> None:
+        musl = (ROOT / "packaging/musl/scripts/common.sh").read_text(
+            encoding="utf-8"
+        )
+        macos = (ROOT / "packaging/macos/scripts/common.sh").read_text(
+            encoding="utf-8"
+        )
+        windows = WINDOWS_COMMON_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("printf 'STATE_FORMAT=2", musl)
+        self.assertIn("printf 'SERVICE_ID=%s", musl)
+        self.assertIn('metadata_value "$REDIS_STATE_FILE" SERVICE_ID', musl)
+        self.assertIn("printf 'STATE_FORMAT=2", macos)
+        self.assertIn("printf 'SERVICE_ID=%s", macos)
+        self.assertIn('metadata_value "$REDIS_STATE_FILE" SERVICE_ID', macos)
+        self.assertIn("StateFormat -ne 2", windows)
+        self.assertIn("StateFormat = 2", windows)
 
     def test_musl_mount_check_accepts_no_mount_and_rejects_errors(self) -> None:
         common = ROOT / "packaging/musl/scripts/common.sh"

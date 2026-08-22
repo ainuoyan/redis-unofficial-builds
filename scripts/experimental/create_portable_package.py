@@ -294,6 +294,13 @@ Install prefix: {backend['install_prefix']}
 Before extraction, verify the adjacent .sha256 record against this archive.
 解压前请先使用相邻的 .sha256 记录校验压缩包。
 
+Packages created before the current runtime-identity cleanup are not in-place
+upgrade compatible. Back up conf/ and data/, uninstall with the scripts from
+the installed package, and then perform a fresh install.
+
+当前运行身份清理之前创建的包不支持原地升级。请先备份 conf/ 与 data/，使用已安装
+包内的脚本完成卸载，再执行全新安装。
+
 {lifecycle}
 
 This artifact is produced only by the manual experimental workflow. It is not

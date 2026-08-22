@@ -49,6 +49,10 @@ ARM64 支持。详见
 
 ### 实验性手工 artifact
 
+> **实验性运行身份迁移：** 当前命名清理之前生成的包不支持原地升级。请先备份
+> `conf/` 与 `data/`，使用已安装包自带的脚本完成卸载，再用新构建的 artifact
+> 执行全新安装。
+
 可手工触发 `.github/workflows/build-experimental.yml`，输入一个精确的官方稳定版
 Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交，再按所选平台原生
 构建、校验包内内容，并上传保留 7 天的 Actions artifact：

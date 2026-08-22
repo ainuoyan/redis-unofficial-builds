@@ -57,6 +57,11 @@ native Windows ARM64 support is currently claimed. See
 
 ### Experimental manual artifacts
 
+> **Experimental identity migration:** packages created before the current
+> naming cleanup are not in-place upgrade compatible. Back up `conf/` and
+> `data/`, uninstall with the scripts bundled in the installed package, and
+> then perform a fresh install from a newly built artifact.
+
 `.github/workflows/build-experimental.yml` can be triggered manually for an
 exact official stable Redis version. It verifies that version against an
 immutable `redis/redis-hashes` commit, builds each selected architecture

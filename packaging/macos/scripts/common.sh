@@ -136,7 +136,7 @@ ensure_service_account() {
     gid="$(unused_directory_id group)" || die "No unused system GID is available."
     dscl . -create "/Groups/$REDIS_GROUP"
     dscl . -create "/Groups/$REDIS_GROUP" PrimaryGroupID "$gid"
-    dscl . -create "/Groups/$REDIS_GROUP" RealName "Redis Unofficial service"
+    dscl . -create "/Groups/$REDIS_GROUP" RealName "Redis unofficial service"
     dscl . -create "/Groups/$REDIS_GROUP" Password '*'
   fi
   if dscl . -read "/Users/$REDIS_USER" >/dev/null 2>&1; then
@@ -152,7 +152,7 @@ ensure_service_account() {
     dscl . -create "/Users/$REDIS_USER" PrimaryGroupID "$gid"
     dscl . -create "/Users/$REDIS_USER" UserShell /usr/bin/false
     dscl . -create "/Users/$REDIS_USER" NFSHomeDirectory /var/empty
-    dscl . -create "/Users/$REDIS_USER" RealName "Redis Unofficial service"
+    dscl . -create "/Users/$REDIS_USER" RealName "Redis unofficial service"
     dscl . -create "/Users/$REDIS_USER" Password '*'
   fi
 }
@@ -180,13 +180,14 @@ write_state() {
   local version="$1" temporary
   temporary="$REDIS_STATE_FILE.tmp.$$"
   {
-    printf 'STATE_FORMAT=1\n'
+    printf 'STATE_FORMAT=2\n'
     printf 'PACKAGE_ID=redis-unofficial-builds\n'
     printf 'PACKAGE_STATUS=experimental\n'
     printf 'INSTALL_PREFIX=%s\n' "$REDIS_PREFIX"
     printf 'REDIS_VERSION=%s\n' "$version"
     printf 'PACKAGE_VARIANT=macos12\n'
     printf 'SERVICE_MANAGER=launchd\n'
+    printf 'SERVICE_ID=%s\n' "$REDIS_LABEL"
   } >"$temporary"
   chmod 0600 "$temporary"
   chown root:wheel "$temporary"
@@ -196,11 +197,12 @@ write_state() {
 validate_state() {
   [[ -f "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" \
     && "$(stat -f '%u:%g:%Lp:%l' "$REDIS_STATE_FILE")" == 0:0:600:1 \
-    && "$(metadata_value "$REDIS_STATE_FILE" STATE_FORMAT)" == 1 \
+    && "$(metadata_value "$REDIS_STATE_FILE" STATE_FORMAT)" == 2 \
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_ID)" == redis-unofficial-builds \
     && "$(metadata_value "$REDIS_STATE_FILE" INSTALL_PREFIX)" == "$REDIS_PREFIX" \
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_VARIANT)" == macos12 \
-    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == launchd ]] \
+    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == launchd \
+    && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_ID)" == "$REDIS_LABEL" ]] \
     || die "The existing installation state is missing or invalid."
 }
 
