@@ -32,6 +32,17 @@ MAX_MEMBER_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_MEMBERS = 1024
 MAX_COMPRESSION_RATIO = 500
+MAX_ELF_DYNAMIC_BYTES = 1024 * 1024
+MAX_ELF_STRING_BYTES = 16 * 1024 * 1024
+ELF_PT_LOAD = 1
+ELF_PT_DYNAMIC = 2
+ELF_PT_INTERP = 3
+ELF_DT_NULL = 0
+ELF_DT_NEEDED = 1
+ELF_DT_STRTAB = 5
+ELF_DT_STRSZ = 10
+ELF_DT_VERNEED = 0x6FFFFFFE
+ELF_DT_VERNEEDNUM = 0x6FFFFFFF
 CHECKSUM_RE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._-]+)\n$")
 METADATA_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=([^\x00-\x1f\x7f]*)$")
 WINDOWS_DLL_RE = re.compile(r"^redis/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,126}\.dll$", re.I)
@@ -255,6 +266,130 @@ def build_info_value(data: bytes, key: str) -> str:
     return values[0]
 
 
+def elf_file_offset(
+    load_segments: list[tuple[int, int, int]], address: int, size: int
+) -> int:
+    matches = []
+    for file_offset, virtual_address, file_size in load_segments:
+        if virtual_address <= address:
+            relative = address - virtual_address
+            if relative <= file_size and size <= file_size - relative:
+                matches.append(file_offset + relative)
+    if len(matches) != 1:
+        raise ContractError("Redis ELF runtime table is not mapped by one load segment")
+    return matches[0]
+
+
+def validate_musl_dynamic_runtime(
+    data: bytes,
+    arch: str,
+    load_segments: list[tuple[int, int, int]],
+    dynamic_segments: list[tuple[int, int]],
+) -> None:
+    if len(dynamic_segments) != 1:
+        raise ContractError("Redis ELF does not contain one dynamic runtime table")
+    dynamic_offset, dynamic_size = dynamic_segments[0]
+    if (
+        dynamic_size == 0
+        or dynamic_size > MAX_ELF_DYNAMIC_BYTES
+        or dynamic_size % 16 != 0
+    ):
+        raise ContractError("Redis ELF dynamic runtime table is invalid")
+
+    entries: list[tuple[int, int]] = []
+    for offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
+        tag, value = struct.unpack_from("<qQ", data, offset)
+        if tag == ELF_DT_NULL:
+            break
+        entries.append((tag, value))
+    else:
+        raise ContractError("Redis ELF dynamic runtime table is unterminated")
+
+    def one_value(tag: int, description: str) -> int:
+        values = [value for entry_tag, value in entries if entry_tag == tag]
+        if len(values) != 1:
+            raise ContractError(f"Redis ELF does not contain one {description}")
+        return values[0]
+
+    string_address = one_value(ELF_DT_STRTAB, "dynamic string-table address")
+    string_size = one_value(ELF_DT_STRSZ, "dynamic string-table size")
+    if string_size == 0 or string_size > min(len(data), MAX_ELF_STRING_BYTES):
+        raise ContractError("Redis ELF dynamic string table is invalid")
+    string_offset = elf_file_offset(load_segments, string_address, string_size)
+    string_table = data[string_offset : string_offset + string_size]
+
+    def dynamic_string(index: int) -> str:
+        if index >= len(string_table):
+            raise ContractError("Redis ELF dynamic string index is out of bounds")
+        end = string_table.find(b"\x00", index)
+        if end < 0:
+            raise ContractError("Redis ELF dynamic string is unterminated")
+        try:
+            return string_table[index:end].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ContractError("Redis ELF dynamic string is not ASCII") from exc
+
+    dependencies = [
+        dynamic_string(value) for tag, value in entries if tag == ELF_DT_NEEDED
+    ]
+    expected_libc = {
+        "x64": "libc.musl-x86_64.so.1",
+        "arm64": "libc.musl-aarch64.so.1",
+    }[arch]
+    if expected_libc not in dependencies or any(
+        dependency.rsplit("/", 1)[-1] == "libc.so.6" for dependency in dependencies
+    ):
+        raise ContractError("Redis ELF dynamic dependencies do not identify musl")
+
+    version_addresses = [value for tag, value in entries if tag == ELF_DT_VERNEED]
+    version_counts = [value for tag, value in entries if tag == ELF_DT_VERNEEDNUM]
+    if bool(version_addresses) != bool(version_counts):
+        raise ContractError("Redis ELF version requirements are incomplete")
+    if not version_addresses:
+        return
+    if len(version_addresses) != 1 or len(version_counts) != 1:
+        raise ContractError("Redis ELF contains duplicate version requirements")
+    count = version_counts[0]
+    if count == 0 or count > 4096:
+        raise ContractError("Redis ELF version requirement count is invalid")
+
+    address = version_addresses[0]
+    for requirement_index in range(count):
+        offset = elf_file_offset(load_segments, address, 16)
+        version, auxiliary_count, file_index, auxiliary_offset, next_offset = (
+            struct.unpack_from("<HHIII", data, offset)
+        )
+        if (
+            version != 1
+            or auxiliary_count == 0
+            or auxiliary_count > 4096
+            or auxiliary_offset < 16
+        ):
+            raise ContractError("Redis ELF version requirement record is invalid")
+        dependency = dynamic_string(file_index)
+        auxiliary_address = address + auxiliary_offset
+        for auxiliary_index in range(auxiliary_count):
+            auxiliary_file_offset = elf_file_offset(load_segments, auxiliary_address, 16)
+            _, _, _, name_index, auxiliary_next = struct.unpack_from(
+                "<IHHII", data, auxiliary_file_offset
+            )
+            requirement = dynamic_string(name_index)
+            if dependency == "libc.so.6" or requirement.startswith("GLIBC_"):
+                raise ContractError("Redis ELF has a glibc runtime requirement")
+            if auxiliary_index + 1 < auxiliary_count:
+                if auxiliary_next < 16:
+                    raise ContractError("Redis ELF version auxiliary chain is invalid")
+                auxiliary_address += auxiliary_next
+            elif auxiliary_next != 0:
+                raise ContractError("Redis ELF version auxiliary chain is unterminated")
+        if requirement_index + 1 < count:
+            if next_offset < 16:
+                raise ContractError("Redis ELF version requirement chain is invalid")
+            address += next_offset
+        elif next_offset != 0:
+            raise ContractError("Redis ELF version requirement chain is unterminated")
+
+
 def validate_elf(data: bytes, arch: str, version: str) -> None:
     if len(data) < 64 or data[:4] != b"\x7fELF" or data[4:7] != b"\x02\x01\x01":
         raise ContractError("Redis binary is not a supported ELF64 file")
@@ -274,17 +409,35 @@ def validate_elf(data: bytes, arch: str, version: str) -> None:
     if program_offset > len(data) or program_count * program_size > len(data) - program_offset:
         raise ContractError("Redis ELF program-header table is truncated")
     interpreters = []
+    load_segments: list[tuple[int, int, int]] = []
+    dynamic_segments: list[tuple[int, int]] = []
     for index in range(program_count):
         offset = program_offset + index * program_size
-        program_type, _, file_offset, _, _, file_size, _, _ = struct.unpack_from(
-            "<IIQQQQQQ", data, offset
-        )
+        (
+            program_type,
+            _,
+            file_offset,
+            virtual_address,
+            _,
+            file_size,
+            memory_size,
+            _,
+        ) = struct.unpack_from("<IIQQQQQQ", data, offset)
         if file_offset > len(data) or file_size > len(data) - file_offset:
             raise ContractError("Redis ELF program segment is out of bounds")
-        if program_type == 3:
+        if memory_size < file_size:
+            raise ContractError("Redis ELF program segment has an invalid memory size")
+        if program_type == ELF_PT_LOAD:
+            load_segments.append((file_offset, virtual_address, file_size))
+        elif program_type == ELF_PT_DYNAMIC:
+            dynamic_segments.append((file_offset, file_size))
+        if program_type == ELF_PT_INTERP:
             interpreters.append(data[file_offset : file_offset + file_size])
-    if interpreters != [expected_interpreter] or b"GLIBC_" in data:
-        raise ContractError("Redis ELF does not describe the expected musl runtime")
+    if interpreters != [expected_interpreter]:
+        raise ContractError("Redis ELF does not use the expected musl interpreter")
+    validate_musl_dynamic_runtime(
+        data, arch, load_segments, dynamic_segments
+    )
     if b"\x00" + version.encode("ascii") + b"\x00" not in data:
         raise ContractError("Redis ELF does not contain the declared version")
 
