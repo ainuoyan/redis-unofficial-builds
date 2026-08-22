@@ -1,69 +1,54 @@
 #!/usr/bin/env python3
-"""Apply narrowly scoped Redis upstream test-only fixes.
+"""Apply the reviewed Redis 8.0 TCP deadlock test fix.
 
-The Redis 8.0 maxmemory test can deadlock on slow TCP stacks because it sends
-one million deferred commands before reading any response. Redis fixed this in
-https://github.com/redis/redis/commit/5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a.
-
-This helper applies only that reviewed hunk, only to Redis 8.0.x, and fails
-closed if the official source no longer matches either known state.
+Redis fixed deferred-client deadlocks in the maxmemory and memory-efficiency
+tests in https://github.com/redis/redis/commit/
+5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a. This helper applies the vendored
+test-only patch to Redis 8.0.x and fails closed for every unknown source state.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import stat
-import tempfile
+import subprocess
 from pathlib import Path
 
 
 UPSTREAM_FIX_COMMIT = "5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a"
+PATCH_FILE = Path(__file__).with_name("redis-8.0-test-tcp-deadlock.patch")
+PATCH_TARGETS = (
+    Path("tests/unit/maxmemory.tcl"),
+    Path("tests/unit/memefficiency.tcl"),
+)
 MAX_TEST_FILE_BYTES = 4 * 1024 * 1024
+MAX_PATCH_FILE_BYTES = 1024 * 1024
 VERSION_PATTERN = re.compile(
     r"(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})"
 )
-
-UNPATCHED_MAXMEMORY_BLOCK = """\
-                set rd_master [redis_deferring_client -1]
-                for {set k 0} {$k < $cmd_count} {incr k} {
-                    $rd_master setrange key:0 0 [string repeat A $payload_len]
-                }
-                for {set k 0} {$k < $cmd_count} {incr k} {
-                    $rd_master read
-                }
-"""
-
-PATCHED_MAXMEMORY_BLOCK = """\
-                set rd_master [redis_deferring_client -1]
-                # Send commands in batches and read responses to avoid TCP deadlock.
-                # Without interleaving reads, the client's send buffer fills up when
-                # the server's output buffers are full (because we're not reading),
-                # causing flush to block indefinitely on slow machines.
-                set batch_size 10000
-                for {set k 0} {$k < $cmd_count} {incr k} {
-                    $rd_master setrange key:0 0 [string repeat A $payload_len]
-                    if {($k + 1) % $batch_size == 0} {
-                        # Drain responses to prevent TCP buffer deadlock
-                        for {set j 0} {$j < $batch_size} {incr j} {
-                            $rd_master read
-                        }
-                    }
-                }
-                # Read any remaining responses
-                set remaining [expr {$cmd_count % $batch_size}]
-                for {set k 0} {$k < $remaining} {incr k} {
-                    $rd_master read
-                }
-"""
 
 
 class FixError(RuntimeError):
     """Raised when the source tree does not satisfy the patch contract."""
 
 
-def _validate_target(source_root: Path) -> Path:
+def _validate_regular_file(path: Path, description: str, maximum_size: int) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise FixError(f"{description} is unavailable") from exc
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise FixError(f"{description} must be a regular non-symlink file")
+    if metadata.st_nlink != 1:
+        raise FixError(f"{description} must not have multiple hard links")
+    if metadata.st_size <= 0 or metadata.st_size > maximum_size:
+        raise FixError(f"{description} has an invalid size")
+    if metadata.st_mode & 0o022:
+        raise FixError(f"{description} must not be group- or world-writable")
+
+
+def _validate_source_root(source_root: Path) -> Path:
     try:
         resolved_root = source_root.resolve(strict=True)
     except OSError as exc:
@@ -71,47 +56,54 @@ def _validate_target(source_root: Path) -> Path:
     if source_root.is_symlink() or not resolved_root.is_dir():
         raise FixError("source root must be a real directory")
 
-    tests_dir = resolved_root / "tests"
-    unit_dir = tests_dir / "unit"
-    for directory in (tests_dir, unit_dir):
-        try:
-            metadata = directory.lstat()
-        except OSError as exc:
-            raise FixError("maxmemory.tcl parent directories are unavailable") from exc
-        if not stat.S_ISDIR(metadata.st_mode) or directory.is_symlink():
-            raise FixError("maxmemory.tcl parent directories must not be symlinks")
+    checked_directories: set[Path] = set()
+    for relative_target in PATCH_TARGETS:
+        target = resolved_root / relative_target
+        for directory in (target.parent.parent, target.parent):
+            if directory in checked_directories:
+                continue
+            checked_directories.add(directory)
+            try:
+                metadata = directory.lstat()
+            except OSError as exc:
+                raise FixError("test parent directories are unavailable") from exc
+            if not stat.S_ISDIR(metadata.st_mode) or directory.is_symlink():
+                raise FixError("test parent directories must not be symlinks")
+        _validate_regular_file(target, relative_target.as_posix(), MAX_TEST_FILE_BYTES)
+    return resolved_root
 
-    target = unit_dir / "maxmemory.tcl"
+
+def _validate_patch_file() -> None:
+    parent = PATCH_FILE.parent
     try:
-        metadata = target.lstat()
+        parent_metadata = parent.lstat()
     except OSError as exc:
-        raise FixError("maxmemory.tcl is unavailable") from exc
-    if not stat.S_ISREG(metadata.st_mode) or target.is_symlink():
-        raise FixError("maxmemory.tcl must be a regular non-symlink file")
-    if metadata.st_nlink != 1:
-        raise FixError("maxmemory.tcl must not have multiple hard links")
-    if metadata.st_size <= 0 or metadata.st_size > MAX_TEST_FILE_BYTES:
-        raise FixError("maxmemory.tcl has an invalid size")
-    if metadata.st_mode & 0o022:
-        raise FixError("maxmemory.tcl must not be group- or world-writable")
-    return target
+        raise FixError("upstream test patch parent is unavailable") from exc
+    if not stat.S_ISDIR(parent_metadata.st_mode) or parent.is_symlink():
+        raise FixError("upstream test patch parent must be a real directory")
+    _validate_regular_file(PATCH_FILE, "upstream test patch", MAX_PATCH_FILE_BYTES)
 
 
-def _replace_atomically(target: Path, content: str, mode: int) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".maxmemory.tcl.", dir=target.parent
-    )
-    temporary_path = Path(temporary_name)
+def _run_git_apply(source_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary_path, stat.S_IMODE(mode))
-        os.replace(temporary_path, target)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+        return subprocess.run(
+            [
+                "git",
+                "apply",
+                "--no-index",
+                *arguments,
+                str(PATCH_FILE),
+            ],
+            cwd=source_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise FixError("unable to execute git apply for the upstream test patch") from exc
 
 
 def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
@@ -122,34 +114,23 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
     if (major, minor) != (8, 0):
         return f"not-required:{UPSTREAM_FIX_COMMIT}"
 
-    target = _validate_target(source_root)
-    try:
-        original = target.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise FixError("maxmemory.tcl must be readable UTF-8") from exc
+    resolved_root = _validate_source_root(source_root)
+    _validate_patch_file()
 
-    unpatched_count = original.count(UNPATCHED_MAXMEMORY_BLOCK)
-    patched_count = original.count(PATCHED_MAXMEMORY_BLOCK)
-    if unpatched_count == 0 and patched_count == 1:
+    forward_check = _run_git_apply(resolved_root, "--check")
+    if forward_check.returncode == 0:
+        application = _run_git_apply(resolved_root)
+        if application.returncode != 0:
+            raise FixError("upstream test patch application failed")
+        reverse_check = _run_git_apply(resolved_root, "--reverse", "--check")
+        if reverse_check.returncode != 0:
+            raise FixError("upstream test patch verification failed")
+        return f"applied:{UPSTREAM_FIX_COMMIT}"
+
+    reverse_check = _run_git_apply(resolved_root, "--reverse", "--check")
+    if reverse_check.returncode == 0:
         return f"present:{UPSTREAM_FIX_COMMIT}"
-    if unpatched_count != 1 or patched_count != 0:
-        raise FixError(
-            "maxmemory.tcl does not contain exactly one expected upstream block"
-        )
-
-    patched = original.replace(
-        UNPATCHED_MAXMEMORY_BLOCK, PATCHED_MAXMEMORY_BLOCK, 1
-    )
-    metadata = target.lstat()
-    _replace_atomically(target, patched, metadata.st_mode)
-
-    verified = target.read_text(encoding="utf-8")
-    if (
-        verified.count(UNPATCHED_MAXMEMORY_BLOCK) != 0
-        or verified.count(PATCHED_MAXMEMORY_BLOCK) != 1
-    ):
-        raise FixError("maxmemory.tcl fix verification failed")
-    return f"applied:{UPSTREAM_FIX_COMMIT}"
+    raise FixError("Redis 8.0 tests do not match the reviewed upstream patch states")
 
 
 def main() -> int:
