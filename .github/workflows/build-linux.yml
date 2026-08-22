@@ -673,7 +673,10 @@ jobs:
           sleep 2
           [[ "$(redis_cli EXISTS redis-unofficial-expiry-test)" == 0 ]]
           [[ "$(redis_cli SAVE)" == "OK" ]]
-          [[ -f "$custom_data_dir/dump.rdb" ]]
+          if ! sudo test -f "$custom_data_dir/dump.rdb"; then
+            echo "Redis did not create the custom data snapshot." >&2
+            exit 1
+          fi
 
       - name: Test update and data preservation
         shell: bash
@@ -699,7 +702,7 @@ jobs:
             echo "The custom Redis data directory was not preserved." >&2
             exit 1
           fi
-          if [[ ! -f '/usr/local/redis/custom data-数据/dump.rdb' ]]; then
+          if ! sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'; then
             echo "The custom Redis snapshot was not preserved." >&2
             exit 1
           fi

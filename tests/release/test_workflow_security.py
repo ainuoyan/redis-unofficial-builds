@@ -262,6 +262,16 @@ class WorkflowSecurityTests(unittest.TestCase):
             install_step,
         )
         self.assertIn(
+            'sudo test -f "$custom_data_dir/dump.rdb"', install_step
+        )
+        update_step = self.workflow.split(
+            "      - name: Test update and data preservation\n", 1
+        )[1].split("\n      - name: Test failed-update rollback", 1)[0]
+        self.assertIn(
+            "sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'",
+            update_step,
+        )
+        self.assertIn(
             "Service was not active after the update.", self.workflow
         )
         self.assertIn(
