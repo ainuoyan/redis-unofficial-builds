@@ -69,6 +69,21 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn(
             'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
         )
+        self.assertIn(
+            'python3.11 "$UPSTREAM_TEST_FIX_HELPER"',
+            script,
+        )
+        self.assertLess(
+            script.index('make -j"$(nproc)" BUILD_TLS=no'),
+            script.index('python3.11 "$UPSTREAM_TEST_FIX_HELPER"'),
+        )
+        self.assertLess(
+            script.index('python3.11 "$UPSTREAM_TEST_FIX_HELPER"'),
+            script.index('test_command=(./runtest --clients 1 --timeout 1200)'),
+        )
+        self.assertIn(
+            'echo "Redis upstream test fix: $redis_test_fix_status"', script
+        )
         self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
         self.assertNotIn("--daemonize yes", script)
         self.assertIn("smoke_pid=$!", script)

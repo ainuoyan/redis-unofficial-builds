@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           python3 -m json.tool config/release-lines.json >/dev/null
           python3 -m json.tool config/platforms.json >/dev/null
-          python3 -m py_compile scripts/release/*.py scripts/experimental/*.py
+          python3 -m py_compile scripts/release/*.py scripts/experimental/*.py packaging/linux/patches/*.py
           python3 scripts/release/validate_configs.py \
             --release-config config/release-lines.json \
             --platform-config config/platforms.json \
