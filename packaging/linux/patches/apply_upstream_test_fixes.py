@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Apply the reviewed Redis 8.0 TCP deadlock test fix.
+"""Apply reviewed Redis test-only fixes.
 
 Redis fixed deferred-client deadlocks in the maxmemory and memory-efficiency
 tests in https://github.com/redis/redis/commit/
 5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a. This helper applies the vendored
-test-only patch to Redis 8.0.x and fails closed for every unknown source state.
+test-only patch to Redis 8.0.x.
+
+Redis 8.10.1 also uses a 70-100 ms expiration window in a hash-field active
+expiration test. That window repeatedly expired before its immediate HEXISTS
+assertion on GitHub-hosted macOS runners. The second reviewed patch widens only
+that test window and its wait bound. Every applicable patch fails closed for
+unknown source states.
 """
 
 from __future__ import annotations
@@ -17,11 +23,18 @@ from pathlib import Path
 
 
 UPSTREAM_FIX_COMMIT = "5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a"
-PATCH_FILE = Path(__file__).with_name("redis-8.0-test-tcp-deadlock.patch")
-PATCH_TARGETS = (
+UPSTREAM_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.0-test-tcp-deadlock.patch"
+)
+UPSTREAM_PATCH_TARGETS = (
     Path("tests/unit/maxmemory.tcl"),
     Path("tests/unit/memefficiency.tcl"),
 )
+REDIS_810_FIX_ID = "redis-8.10.1-hfe-test-timeout-stability"
+REDIS_810_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.10.1-hfe-test-timeout.patch"
+)
+REDIS_810_PATCH_TARGETS = (Path("tests/unit/type/hash-field-expire.tcl"),)
 MAX_TEST_FILE_BYTES = 4 * 1024 * 1024
 MAX_PATCH_FILE_BYTES = 1024 * 1024
 VERSION_PATTERN = re.compile(
@@ -48,7 +61,9 @@ def _validate_regular_file(path: Path, description: str, maximum_size: int) -> N
         raise FixError(f"{description} must not be group- or world-writable")
 
 
-def _validate_source_root(source_root: Path) -> Path:
+def _validate_source_root(
+    source_root: Path, patch_targets: tuple[Path, ...]
+) -> Path:
     try:
         resolved_root = source_root.resolve(strict=True)
     except OSError as exc:
@@ -57,7 +72,7 @@ def _validate_source_root(source_root: Path) -> Path:
         raise FixError("source root must be a real directory")
 
     checked_directories: set[Path] = set()
-    for relative_target in PATCH_TARGETS:
+    for relative_target in patch_targets:
         target = resolved_root / relative_target
         for directory in (target.parent.parent, target.parent):
             if directory in checked_directories:
@@ -73,18 +88,20 @@ def _validate_source_root(source_root: Path) -> Path:
     return resolved_root
 
 
-def _validate_patch_file() -> None:
-    parent = PATCH_FILE.parent
+def _validate_patch_file(patch_file: Path) -> None:
+    parent = patch_file.parent
     try:
         parent_metadata = parent.lstat()
     except OSError as exc:
-        raise FixError("upstream test patch parent is unavailable") from exc
+        raise FixError("reviewed test patch parent is unavailable") from exc
     if not stat.S_ISDIR(parent_metadata.st_mode) or parent.is_symlink():
-        raise FixError("upstream test patch parent must be a real directory")
-    _validate_regular_file(PATCH_FILE, "upstream test patch", MAX_PATCH_FILE_BYTES)
+        raise FixError("reviewed test patch parent must be a real directory")
+    _validate_regular_file(patch_file, "reviewed test patch", MAX_PATCH_FILE_BYTES)
 
 
-def _run_git_apply(source_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run_git_apply(
+    source_root: Path, patch_file: Path, *arguments: str
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             [
@@ -92,7 +109,7 @@ def _run_git_apply(source_root: Path, *arguments: str) -> subprocess.CompletedPr
                 "apply",
                 "--no-index",
                 *arguments,
-                str(PATCH_FILE),
+                str(patch_file),
             ],
             cwd=source_root,
             stdin=subprocess.DEVNULL,
@@ -103,34 +120,58 @@ def _run_git_apply(source_root: Path, *arguments: str) -> subprocess.CompletedPr
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise FixError("unable to execute git apply for the upstream test patch") from exc
+        raise FixError("unable to execute git apply for the reviewed test patch") from exc
+
+
+def _apply_reviewed_patch(
+    source_root: Path,
+    patch_file: Path,
+    patch_targets: tuple[Path, ...],
+    fix_id: str,
+) -> str:
+    resolved_root = _validate_source_root(source_root, patch_targets)
+    _validate_patch_file(patch_file)
+
+    forward_check = _run_git_apply(resolved_root, patch_file, "--check")
+    if forward_check.returncode == 0:
+        application = _run_git_apply(resolved_root, patch_file)
+        if application.returncode != 0:
+            raise FixError("reviewed test patch application failed")
+        reverse_check = _run_git_apply(
+            resolved_root, patch_file, "--reverse", "--check"
+        )
+        if reverse_check.returncode != 0:
+            raise FixError("reviewed test patch verification failed")
+        return f"applied:{fix_id}"
+
+    reverse_check = _run_git_apply(
+        resolved_root, patch_file, "--reverse", "--check"
+    )
+    if reverse_check.returncode == 0:
+        return f"present:{fix_id}"
+    raise FixError("Redis tests do not match the reviewed patch states")
 
 
 def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
     match = VERSION_PATTERN.fullmatch(redis_version)
     if match is None:
         raise FixError("Redis version must be canonical major.minor.patch")
-    major, minor, _ = (int(component) for component in match.groups())
-    if (major, minor) != (8, 0):
-        return f"not-required:{UPSTREAM_FIX_COMMIT}"
-
-    resolved_root = _validate_source_root(source_root)
-    _validate_patch_file()
-
-    forward_check = _run_git_apply(resolved_root, "--check")
-    if forward_check.returncode == 0:
-        application = _run_git_apply(resolved_root)
-        if application.returncode != 0:
-            raise FixError("upstream test patch application failed")
-        reverse_check = _run_git_apply(resolved_root, "--reverse", "--check")
-        if reverse_check.returncode != 0:
-            raise FixError("upstream test patch verification failed")
-        return f"applied:{UPSTREAM_FIX_COMMIT}"
-
-    reverse_check = _run_git_apply(resolved_root, "--reverse", "--check")
-    if reverse_check.returncode == 0:
-        return f"present:{UPSTREAM_FIX_COMMIT}"
-    raise FixError("Redis 8.0 tests do not match the reviewed upstream patch states")
+    major, minor, patch = (int(component) for component in match.groups())
+    if (major, minor) == (8, 0):
+        return _apply_reviewed_patch(
+            source_root,
+            UPSTREAM_PATCH_FILE,
+            UPSTREAM_PATCH_TARGETS,
+            UPSTREAM_FIX_COMMIT,
+        )
+    if (major, minor, patch) == (8, 10, 1):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_810_PATCH_FILE,
+            REDIS_810_PATCH_TARGETS,
+            REDIS_810_FIX_ID,
+        )
+    return f"not-required:{UPSTREAM_FIX_COMMIT}"
 
 
 def main() -> int:

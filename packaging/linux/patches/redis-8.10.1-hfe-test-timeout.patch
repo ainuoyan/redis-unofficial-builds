@@ -1,0 +1,25 @@
+diff --git a/tests/unit/type/hash-field-expire.tcl b/tests/unit/type/hash-field-expire.tcl
+--- a/tests/unit/type/hash-field-expire.tcl
++++ b/tests/unit/type/hash-field-expire.tcl
+@@ -203,3 +203,3 @@ start_server {tags {external:skip}} {
+                     r hset hrand$h f$i v$i
+-                    r hpexpire hrand$h [expr {70 + int(rand() * 30)}] FIELDS 1 f$i
++                    r hpexpire hrand$h [expr {5000 + int(rand() * 1000)}] FIELDS 1 f$i
+                     assert_equal 1 [r HEXISTS hrand$h f$i]
+@@ -208,3 +208,3 @@ start_server {tags {external:skip}} {
+                     r hset same$h f$i v$i
+-                    r hpexpire same$h 100 FIELDS 1 f$i
++                    r hpexpire same$h 6000 FIELDS 1 f$i
+                     assert_equal 1 [r HEXISTS same$h f$i]
+@@ -213,3 +213,3 @@ start_server {tags {external:skip}} {
+                     r hset mix$h f$i v$i fieldWithoutExpire$i v$i
+-                    r hpexpire mix$h 100 FIELDS 1 f$i
++                    r hpexpire mix$h 6000 FIELDS 1 f$i
+                     assert_equal 1 [r HEXISTS mix$h f$i]
+@@ -219,4 +219,4 @@ start_server {tags {external:skip}} {
+             # Wait for active expire
+-            wait_for_condition 50 20 { [r EXISTS same40] == 0 } else { fail "hash `same40` should be expired" }
++            wait_for_condition 500 20 { [r EXISTS same40] == 0 } else { fail "hash `same40` should be expired" }
+-
++
+             # Verify that all fields got expired and keys got deleted

@@ -25,11 +25,14 @@ def _result(returncode: int) -> subprocess.CompletedProcess[str]:
 
 
 class UpstreamTestFixTests(unittest.TestCase):
-    def _source_tree(self, root: Path) -> tuple[Path, Path]:
-        test_dir = root / "tests/unit"
-        test_dir.mkdir(parents=True)
-        targets = tuple(root / target for target in PATCHER.PATCH_TARGETS)
+    def _source_tree(
+        self,
+        root: Path,
+        patch_targets: tuple[Path, ...] = PATCHER.UPSTREAM_PATCH_TARGETS,
+    ) -> tuple[Path, ...]:
+        targets = tuple(root / target for target in patch_targets)
         for target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("official Redis test fixture\n", encoding="utf-8")
         return targets
 
@@ -48,9 +51,16 @@ class UpstreamTestFixTests(unittest.TestCase):
             self.assertEqual(
                 git_apply.call_args_list,
                 [
-                    mock.call(root.resolve(), "--check"),
-                    mock.call(root.resolve()),
-                    mock.call(root.resolve(), "--reverse", "--check"),
+                    mock.call(
+                        root.resolve(), PATCHER.UPSTREAM_PATCH_FILE, "--check"
+                    ),
+                    mock.call(root.resolve(), PATCHER.UPSTREAM_PATCH_FILE),
+                    mock.call(
+                        root.resolve(),
+                        PATCHER.UPSTREAM_PATCH_FILE,
+                        "--reverse",
+                        "--check",
+                    ),
                 ],
             )
 
@@ -76,7 +86,7 @@ class UpstreamTestFixTests(unittest.TestCase):
                 "_run_git_apply",
                 side_effect=[_result(1), _result(1)],
             ):
-                with self.assertRaisesRegex(PATCHER.FixError, "reviewed upstream"):
+                with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
                     PATCHER.apply_upstream_test_fixes("8.0.6", root)
 
     def test_redis_80_application_failure_is_reported(self) -> None:
@@ -102,6 +112,58 @@ class UpstreamTestFixTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(PATCHER.FixError, "verification failed"):
                     PATCHER.apply_upstream_test_fixes("8.0.6", root)
+
+    def test_redis_810_patch_is_applied_and_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._source_tree(root, PATCHER.REDIS_810_PATCH_TARGETS)
+            with mock.patch.object(
+                PATCHER,
+                "_run_git_apply",
+                side_effect=[_result(0), _result(0), _result(0)],
+            ) as git_apply:
+                status = PATCHER.apply_upstream_test_fixes("8.10.1", root)
+
+            self.assertEqual(status, f"applied:{PATCHER.REDIS_810_FIX_ID}")
+            self.assertEqual(
+                git_apply.call_args_list,
+                [
+                    mock.call(
+                        root.resolve(), PATCHER.REDIS_810_PATCH_FILE, "--check"
+                    ),
+                    mock.call(root.resolve(), PATCHER.REDIS_810_PATCH_FILE),
+                    mock.call(
+                        root.resolve(),
+                        PATCHER.REDIS_810_PATCH_FILE,
+                        "--reverse",
+                        "--check",
+                    ),
+                ],
+            )
+
+    def test_redis_810_unknown_source_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._source_tree(root, PATCHER.REDIS_810_PATCH_TARGETS)
+            with mock.patch.object(
+                PATCHER,
+                "_run_git_apply",
+                side_effect=[_result(1), _result(1)],
+            ):
+                with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                    PATCHER.apply_upstream_test_fixes("8.10.1", root)
+
+    def test_other_810_patch_releases_are_not_modified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._source_tree(root, PATCHER.REDIS_810_PATCH_TARGETS)
+            original = tuple(target.read_bytes() for target in targets)
+            with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
+                status = PATCHER.apply_upstream_test_fixes("8.10.2", root)
+
+            self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
+            self.assertEqual(tuple(target.read_bytes() for target in targets), original)
+            git_apply.assert_not_called()
 
     def test_other_series_are_not_inspected_or_modified(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -136,7 +198,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             root = Path(temp_dir)
             outside = root / "outside"
             outside.mkdir()
-            for target in PATCHER.PATCH_TARGETS:
+            for target in PATCHER.UPSTREAM_PATCH_TARGETS:
                 (outside / target.name).write_text("outside\n", encoding="utf-8")
             tests_dir = root / "tests"
             tests_dir.mkdir()
@@ -155,7 +217,7 @@ class UpstreamTestFixTests(unittest.TestCase):
                 PATCHER.apply_upstream_test_fixes("8.0.6", root)
 
     def test_vendored_patch_targets_only_reviewed_test_files(self) -> None:
-        patch_text = PATCHER.PATCH_FILE.read_text(encoding="utf-8")
+        patch_text = PATCHER.UPSTREAM_PATCH_FILE.read_text(encoding="utf-8")
         headers = [
             line
             for line in patch_text.splitlines()
@@ -174,6 +236,28 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set batch_size 10000", patch_text)
         self.assertIn("set batch_size 1000", patch_text)
         self.assertIn("if {($j + 1) % 500 == 0}", patch_text)
+
+    def test_redis_810_patch_only_widens_the_reviewed_test_window(self) -> None:
+        patch_text = PATCHER.REDIS_810_PATCH_FILE.read_text(encoding="utf-8")
+        headers = [
+            line
+            for line in patch_text.splitlines()
+            if line.startswith("diff --git ")
+        ]
+        self.assertEqual(
+            headers,
+            [
+                "diff --git a/tests/unit/type/hash-field-expire.tcl "
+                "b/tests/unit/type/hash-field-expire.tcl"
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertNotIn("--- /", patch_text)
+        self.assertNotIn("+++ /", patch_text)
+        self.assertIn("5000 + int(rand() * 1000)", patch_text)
+        self.assertIn("r hpexpire same$h 6000", patch_text)
+        self.assertIn("r hpexpire mix$h 6000", patch_text)
+        self.assertIn("wait_for_condition 500 20", patch_text)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,12 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn(
             'echo "Redis upstream test fix: $redis_test_fix_status"', script
         )
+        self.assertIn(
+            "applied:redis-8.10.1-hfe-test-timeout-stability", script
+        )
+        self.assertIn(
+            "present:redis-8.10.1-hfe-test-timeout-stability", script
+        )
         self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
         self.assertNotIn("--daemonize yes", script)
         self.assertIn("smoke_pid=$!", script)
