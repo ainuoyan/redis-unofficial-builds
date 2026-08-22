@@ -90,6 +90,12 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn(
             "present:redis-8.10.1-hfe-test-timeout-stability", script
         )
+        self.assertIn(
+            "applied:redis-8.2.9-latency-test-timeout-stability", script
+        )
+        self.assertIn(
+            "present:redis-8.2.9-latency-test-timeout-stability", script
+        )
         self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
         self.assertNotIn("--daemonize yes", script)
         self.assertIn("smoke_pid=$!", script)
