@@ -738,7 +738,7 @@ jobs:
           [[ "$(redis_cli GET redis-unofficial-service-test)" == "preserved" ]]
           sudo grep -Fqx 'dir "/usr/local/redis/custom data-数据"' \
             /usr/local/redis/conf/redis.conf
-          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+          sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'
           sudo grep -Fq '/usr/local/redis/bin/redis-server' \
             /etc/systemd/system/redis.service
 
@@ -748,8 +748,8 @@ jobs:
           set -euo pipefail
           sudo /usr/local/redis/scripts/uninstall.sh
           [[ ! -e /usr/local/redis/bin/redis-server ]]
-          [[ -f /usr/local/redis/conf/redis.conf ]]
-          [[ -f '/usr/local/redis/custom data-数据/dump.rdb' ]]
+          sudo test -f /usr/local/redis/conf/redis.conf
+          sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'
           [[ -f /usr/local/redis/.redis-package-state ]]
           if systemctl cat redis.service >/dev/null 2>&1; then
             echo "redis.service still exists after uninstall." >&2

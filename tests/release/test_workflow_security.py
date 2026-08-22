@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/build-linux.yml"
 EXPERIMENTAL_WORKFLOW_PATH = ROOT / ".github/workflows/build-experimental.yml"
 LINUX_BUILD_SCRIPT_PATH = ROOT / "scripts/linux/build-redis.sh"
+LINUX_UPDATE_SCRIPT_PATH = ROOT / "packaging/linux/scripts/update.sh"
 REVIEWED_NODE24_ACTIONS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
@@ -24,6 +25,9 @@ class WorkflowSecurityTests(unittest.TestCase):
             encoding="utf-8"
         )
         cls.linux_build_script = LINUX_BUILD_SCRIPT_PATH.read_text(
+            encoding="utf-8"
+        )
+        cls.linux_update_script = LINUX_UPDATE_SCRIPT_PATH.read_text(
             encoding="utf-8"
         )
 
@@ -277,6 +281,34 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn(
             "Redis data was not preserved by the update.", self.workflow
         )
+
+        rollback_step = self.workflow.split(
+            "      - name: Test failed-update rollback\n", 1
+        )[1].split("\n      - name: Test uninstall, reinstall, and purge", 1)[0]
+        self.assertIn(
+            "sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'",
+            rollback_step,
+        )
+        uninstall_step = self.workflow.split(
+            "      - name: Test uninstall, reinstall, and purge\n", 1
+        )[1].split("\n\n  release:", 1)[0]
+        self.assertIn(
+            "sudo test -f /usr/local/redis/conf/redis.conf", uninstall_step
+        )
+        self.assertIn(
+            "sudo test -f '/usr/local/redis/custom data-数据/dump.rdb'",
+            uninstall_step,
+        )
+
+    def test_failed_update_resets_systemd_failure_before_restart(self) -> None:
+        rollback = self.linux_update_script.split(
+            "rollback_update() {", 1
+        )[1].split("\ntrap 'rollback_update $?' ERR", 1)[0]
+        reset_failed = rollback.index(
+            'systemctl reset-failed "$REDIS_SERVICE_NAME"'
+        )
+        restart = rollback.index('systemctl start "$REDIS_SERVICE_NAME"')
+        self.assertLess(reset_failed, restart)
 
 
 if __name__ == "__main__":

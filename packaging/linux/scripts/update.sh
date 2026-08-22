@@ -392,6 +392,8 @@ rollback_update() {
 
   if [[ "$service_manager" == "systemd" ]]; then
     if [[ "$service_was_active" == true ]]; then
+      systemctl reset-failed "$REDIS_SERVICE_NAME" >/dev/null 2>&1 \
+        || rollback_failed=true
       systemctl start "$REDIS_SERVICE_NAME" || rollback_failed=true
       if [[ "$rollback_failed" == false && "$was_managed" == true ]] \
         && ! wait_for_service; then
