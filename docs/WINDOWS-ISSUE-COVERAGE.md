@@ -1,7 +1,6 @@
 # Windows issue coverage
 
-This document records how the experimental MSYS2 backend and design-only
-Cygwin backend use reports from
+This document records how the experimental MSYS2 backend uses reports from
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows).
 No stable Windows package is currently published. A manual Actions workflow
 can produce a seven-day experimental MSYS2 x64 artifact; that fact alone does
@@ -24,9 +23,10 @@ reported issues:
   uses `-O0`, which is unsuitable for a performance release and is a likely
   contributor to performance reports.
 - [RedisConfiguration.cs](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/Service/RedisConfiguration.cs)
-  converts Windows paths to `/cygdrive/...` without selecting the actual MSYS2
-  or Cygwin backend. It also constructs shutdown CLI arguments from server
-  configuration arguments instead of Redis connection arguments.
+  converts Windows paths to `/cygdrive/...` regardless of backend selection,
+  which does not match the MSYS2 `/c/...` convention. It also constructs
+  shutdown CLI arguments from server configuration arguments instead of Redis
+  connection arguments.
 - [RedisProcessManager.cs](https://github.com/redis-windows/redis-windows/blob/17fd667560f7903820dcabeebb9d20ade1159fe9/Service/RedisProcessManager.cs)
   waits a fixed 100 ms rather than proving Redis is ready and falls back to
   process-tree termination when graceful shutdown does not work.
@@ -68,7 +68,7 @@ regression passes on every applicable backend.
 
 | Issues | Required treatment | Required regression |
 | --- | --- | --- |
-| [#22](https://github.com/redis-windows/redis-windows/issues/22), [#38](https://github.com/redis-windows/redis-windows/issues/38), [#60](https://github.com/redis-windows/redis-windows/issues/60), [#77](https://github.com/redis-windows/redis-windows/issues/77) | Backend-specific MSYS2/Cygwin path adapter; service normally passes only an absolute config path; no blind `/cygdrive` rewrite | Install/restart from paths containing spaces, Chinese text, drive roots, relative config references, and both runtime variants |
+| [#22](https://github.com/redis-windows/redis-windows/issues/22), [#38](https://github.com/redis-windows/redis-windows/issues/38), [#60](https://github.com/redis-windows/redis-windows/issues/60), [#77](https://github.com/redis-windows/redis-windows/issues/77) | MSYS2 path adapter; service normally passes only an absolute config path; no blind `/cygdrive` rewrite | Install/restart from paths containing spaces, Chinese text, drive roots, and relative config references |
 | [#53](https://github.com/redis-windows/redis-windows/issues/53), [#77](https://github.com/redis-windows/redis-windows/issues/77) | Normalize config paths, require/create approved log and data directories, set a deterministic working directory | Relative and absolute `logfile`/`dir`; missing parent; read-only parent; restart persistence |
 | [#41](https://github.com/redis-windows/redis-windows/issues/41), [#42](https://github.com/redis-windows/redis-windows/issues/42), [#51](https://github.com/redis-windows/redis-windows/issues/51), [#52](https://github.com/redis-windows/redis-windows/issues/52), [#74](https://github.com/redis-windows/redis-windows/issues/74) | Foreground Redis child, readiness PING, startup failure propagation, child-exit propagation, bounded SCM recovery, diagnostic logs | Good config starts; invalid config/port/path fails SCM start; unexpected child exit changes service state; selected config is observable |
 | [#36](https://github.com/redis-windows/redis-windows/issues/36), [#41](https://github.com/redis-windows/redis-windows/issues/41) | Graceful `SHUTDOWN` using host/port/ACL/TLS connection settings, wait for exit, then bounded process-tree fallback; never expose credentials in service arguments/logs | Stop after writes; no stale PID; RDB/AOF integrity; authenticated and TLS configurations; forced fallback is logged |
@@ -86,12 +86,11 @@ honestly close them in advance.
 
 | Issues | Plan | Stable acceptance rule |
 | --- | --- | --- |
-| [#47](https://github.com/redis-windows/redis-windows/issues/47) | Reproduce BGSAVE temp-file rename and fsync behavior on NTFS for both backends; keep a minimal versioned patch only if required | Repeated BGSAVE produces a valid `dump.rdb`, no orphan temp files, restart reloads all data |
-| [#27](https://github.com/redis-windows/redis-windows/issues/27), [#30](https://github.com/redis-windows/redis-windows/issues/30), [#54](https://github.com/redis-windows/redis-windows/issues/54) | Measure descriptor/socket limits and crashes at bounded connection counts; compare MSYS2/Cygwin; publish a tested `maxclients` ceiling | No crash or corruption at the documented ceiling; exceeding it fails predictably; do not advertise Linux limits |
-| [#48](https://github.com/redis-windows/redis-windows/issues/48), [#57](https://github.com/redis-windows/redis-windows/issues/57) | Replace `-O0` with a pinned optimized release build, benchmark both runtimes, and store results per Redis series | No material regression from the previous package; publish numbers and environment, not a Linux-performance promise |
+| [#47](https://github.com/redis-windows/redis-windows/issues/47) | Reproduce BGSAVE temp-file rename and fsync behavior on NTFS for the MSYS2 backend; keep a minimal versioned patch only if required | Repeated BGSAVE produces a valid `dump.rdb`, no orphan temp files, restart reloads all data |
+| [#27](https://github.com/redis-windows/redis-windows/issues/27), [#30](https://github.com/redis-windows/redis-windows/issues/30), [#54](https://github.com/redis-windows/redis-windows/issues/54) | Measure descriptor/socket limits and crashes at bounded connection counts in the MSYS2 runtime; publish a tested `maxclients` ceiling | No crash or corruption at the documented ceiling; exceeding it fails predictably; do not advertise Linux limits |
+| [#48](https://github.com/redis-windows/redis-windows/issues/48), [#57](https://github.com/redis-windows/redis-windows/issues/57) | Replace `-O0` with a pinned optimized release build, benchmark the MSYS2 runtime, and store results per Redis series | No material regression from the previous package; publish numbers and environment, not a Linux-performance promise |
 
-If a runtime defect remains, that artifact stays experimental even if another
-Windows backend passes.
+If a runtime defect remains, that artifact stays experimental.
 
 ## Explicitly separate scope
 
@@ -99,7 +98,7 @@ Windows backend passes.
 | --- | --- |
 | [#26](https://github.com/redis-windows/redis-windows/issues/26), [#28](https://github.com/redis-windows/redis-windows/issues/28), [#58](https://github.com/redis-windows/redis-windows/issues/58), [#79](https://github.com/redis-windows/redis-windows/issues/79) | Redis 8 upstream bundles RedisJSON, Bloom, Search/Query, and related modules, while this repository's package contract is `BUILD_PROFILE=core`. A module-enabled profile requires separate toolchains, assets, compatibility tests, and license review; a core ZIP must not claim those commands are present. |
 | [#39](https://github.com/redis-windows/redis-windows/issues/39), [#62](https://github.com/redis-windows/redis-windows/issues/62) | Valkey is a different upstream project and is outside this repository's Redis package scope. Any Valkey distribution requires separate source policy, names, releases, and notices. |
-| [#75](https://github.com/redis-windows/redis-windows/issues/75) | Windows 7 is unsupported. Release notes must state the tested minimum Windows client/server versions derived from the pinned MSYS2/Cygwin and service-wrapper runtimes. No package is labelled Win7-compatible without a dedicated supported toolchain and VM gate. |
+| [#75](https://github.com/redis-windows/redis-windows/issues/75) | Windows 7 is unsupported. Release notes must state the tested minimum Windows client/server versions derived from the pinned MSYS2 and service-wrapper runtimes. No package is labelled Win7-compatible without a dedicated supported toolchain and VM gate. |
 
 ## Status vocabulary
 

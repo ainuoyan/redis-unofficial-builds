@@ -21,7 +21,6 @@
 | `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 仅实验性 artifact |
 | `macos12` | `x64` / `arm64` | macOS 12+、launchd | 仅实验性 artifact |
 | `windows-msys2` | `x64` | Windows Server 2022 测试 Runner、Windows SCM | 仅实验性 artifact |
-| `windows-cygwin` | `x64` | Windows 服务控制管理器 | 仅设计 |
 
 当前已实现的发布目标仍仅支持 glibc 2.28 Linux。同架构的 glibc 2.28 包通常可在
 更高版本 glibc 上运行；Alpine 等 musl 系统必须使用单独命名的 musl artifact。Linux 包是普通
@@ -42,8 +41,8 @@
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 提交
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)。
-当前不宣称存在稳定 Windows Release、Windows 生产支持、Cygwin 包或原生 Windows
-ARM64 支持。详见
+当前不宣称存在稳定 Windows Release、Windows 生产支持或原生 Windows ARM64 支持。
+详见
 [Windows issue 覆盖表](docs/WINDOWS-ISSUE-COVERAGE.md)和
 [第三方说明](THIRD_PARTY_NOTICES.md)。
 

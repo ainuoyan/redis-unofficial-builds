@@ -35,7 +35,6 @@ Redis 名称与标识仍受官方
 | `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **仅实验性 artifact** |
 | `macos12` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 12.0 | launchd | **仅实验性 artifact** |
 | `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **仅实验性 artifact**；Windows 主后端 |
-| `windows-cygwin` | x64 | 固定 Cygwin 工具链/运行库 | Windows SCM | 仅设计；兼容后端 |
 
 只有 `linux-glibc2.28` 行已启用控制器。实验性行指向手工
 `build-experimental.yml`，但控制器仍禁用。所有 Linux 方案均使用 `.tar.gz`，不依赖
@@ -258,7 +257,7 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 - 普通卸载保留配置、数据、状态、账号和备份；`--purge` 在账号和挂载安全检查后
   删除固定前缀。
 
-## 实验性与设计中的后端
+## 实验性后端
 
 ### glibc 2.17 legacy
 
@@ -297,9 +296,8 @@ Windows 方案明确参考 Apache-2.0 许可的
 该项目任何源码文件。归属和未来代码合入要求见
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 
-MSYS2 是实验性主后端，Cygwin 仍仅设计，不能盲目共用路径转换：MSYS2 使用
-`/c/...`，Cygwin 使用 `/cygdrive/c/...`。服务包装器必须以前台模式运行 Redis，
-校验配置路径，把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
+MSYS2 是实验性 Windows 后端。服务包装器必须以前台模式运行 Redis，校验配置路径，
+把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
 关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在固定安装前缀保存受
 保护状态；备份位于 `C:\ProgramData\Redis-Unofficial\Backups`。当前实验只支持默认无认证
 回环端点，认证关闭仍是明确的稳定验收项。

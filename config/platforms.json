@@ -91,16 +91,6 @@
       "status": "experimental",
       "controller_enabled": false,
       "build_workflow": "build-experimental.yml"
-    },
-    {
-      "id": "windows-cygwin-x64",
-      "variant": "windows-cygwin",
-      "os": "windows",
-      "arch": "x64",
-      "archive_extension": "zip",
-      "status": "designed",
-      "controller_enabled": false,
-      "build_workflow": null
     }
   ]
 }

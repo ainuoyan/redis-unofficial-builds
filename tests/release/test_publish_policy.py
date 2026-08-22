@@ -61,6 +61,22 @@ class PublishPolicyTests(unittest.TestCase):
             {"linux-glibc2.28-x64", "linux-glibc2.28-arm64"},
         )
 
+    def test_real_platform_matrix_contains_only_current_targets(self) -> None:
+        self.assertEqual(
+            {item["id"] for item in self.platform_config["platforms"]},
+            {
+                "linux-glibc2.28-x64",
+                "linux-glibc2.28-arm64",
+                "linux-glibc2.17-legacy-x64",
+                "linux-glibc2.17-legacy-arm64",
+                "linux-musl1.2-x64",
+                "linux-musl1.2-arm64",
+                "macos12-x64",
+                "macos12-arm64",
+                "windows-msys2-x64",
+            },
+        )
+
     def test_tracked_non_eol_version_is_publishable(self) -> None:
         entry = validate_publish_policy.validate_publish_policy(
             self.release_config, "7.4.11", dt.date(2026, 8, 20)
