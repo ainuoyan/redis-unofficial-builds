@@ -154,8 +154,22 @@ for binary_name in redis-server redis-cli redis-benchmark; do
     exit 1
   }
 done
-"src/redis-server${suffix}" --version | grep -F "v=${REDIS_VERSION}" >/dev/null
-"src/redis-cli${suffix}" --version | grep -F "$REDIS_VERSION" >/dev/null
+verify_binary_version() {
+  local binary="$1"
+  local expected_version="$2"
+  local output=""
+  if ! output="$("$binary" --version 2>&1)"; then
+    printf 'Version probe failed for %s: %s\n' "$binary" "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"$expected_version"* ]]; then
+    printf 'Version mismatch for %s: expected %s, got %s\n' \
+      "$binary" "$expected_version" "$output" >&2
+    return 1
+  fi
+}
+verify_binary_version "src/redis-server${suffix}" "$REDIS_VERSION"
+verify_binary_version "src/redis-cli${suffix}" "$REDIS_VERSION"
 
 smoke_port="$(python3 - <<'PY'
 import socket
