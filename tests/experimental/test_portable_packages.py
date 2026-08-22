@@ -39,21 +39,104 @@ prepare_windows_source = importlib.util.module_from_spec(PREPARE_WINDOWS_SPEC)
 PREPARE_WINDOWS_SPEC.loader.exec_module(prepare_windows_source)
 
 
-def elf_fixture(arch: str) -> bytes:
-    data = bytearray(512)
+def elf_fixture(
+    arch: str,
+    *,
+    glibc_version_requirement: bool = False,
+    unreferenced_glibc_marker: bool = False,
+) -> bytes:
+    data = bytearray(1024)
     data[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<H", data, 18, {"x64": 0x3E, "arm64": 0xB7}[arch])
     struct.pack_into("<Q", data, 32, 64)
     struct.pack_into("<H", data, 54, 56)
-    struct.pack_into("<H", data, 56, 1)
+    struct.pack_into("<H", data, 56, 3)
+    base_address = 0x400000
+    struct.pack_into(
+        "<IIQQQQQQ",
+        data,
+        64,
+        1,
+        4,
+        0,
+        base_address,
+        0,
+        len(data),
+        len(data),
+        0x1000,
+    )
     interpreter = {
         "x64": b"/lib/ld-musl-x86_64.so.1\x00",
         "arm64": b"/lib/ld-musl-aarch64.so.1\x00",
     }[arch]
-    struct.pack_into("<IIQQQQQQ", data, 64, 3, 4, 256, 0, 0, len(interpreter), len(interpreter), 1)
+    struct.pack_into(
+        "<IIQQQQQQ",
+        data,
+        120,
+        3,
+        4,
+        256,
+        0,
+        0,
+        len(interpreter),
+        len(interpreter),
+        1,
+    )
     data[256 : 256 + len(interpreter)] = interpreter
+
+    expected_libc = {
+        "x64": b"libc.musl-x86_64.so.1",
+        "arm64": b"libc.musl-aarch64.so.1",
+    }[arch]
+    strings = bytearray(b"\x00" + expected_libc + b"\x00")
+    glibc_file_index = 0
+    glibc_version_index = 0
+    if glibc_version_requirement:
+        glibc_file_index = len(strings)
+        strings.extend(b"libstdc++.so.6\x00")
+        glibc_version_index = len(strings)
+        strings.extend(b"GLIBC_2.17\x00")
+    elif unreferenced_glibc_marker:
+        strings.extend(b"GLIBC_999.0\x00")
+    string_offset = 512
+    data[string_offset : string_offset + len(strings)] = strings
+
+    dynamic_entries = [
+        (1, 1),
+        (5, base_address + string_offset),
+        (10, len(strings)),
+    ]
+    if glibc_version_requirement:
+        version_offset = 640
+        struct.pack_into(
+            "<HHIII", data, version_offset, 1, 1, glibc_file_index, 16, 0
+        )
+        struct.pack_into(
+            "<IHHII", data, version_offset + 16, 0, 0, 0, glibc_version_index, 0
+        )
+        dynamic_entries.extend(
+            ((0x6FFFFFFE, base_address + version_offset), (0x6FFFFFFF, 1))
+        )
+    dynamic_entries.append((0, 0))
+    dynamic_offset = 320
+    for index, entry in enumerate(dynamic_entries):
+        struct.pack_into("<qQ", data, dynamic_offset + index * 16, *entry)
+    dynamic_size = len(dynamic_entries) * 16
+    struct.pack_into(
+        "<IIQQQQQQ",
+        data,
+        176,
+        2,
+        6,
+        dynamic_offset,
+        base_address + dynamic_offset,
+        0,
+        dynamic_size,
+        dynamic_size,
+        8,
+    )
     marker = b"\x00" + VERSION.encode("ascii") + b"\x00"
-    data[320 : 320 + len(marker)] = marker
+    data[768 : 768 + len(marker)] = marker
     return bytes(data)
 
 
@@ -278,6 +361,25 @@ class PortablePackageTests(unittest.TestCase):
             with self.subTest(variant=variant, arch=arch), tempfile.TemporaryDirectory() as directory:
                 archive = self.create_and_validate(Path(directory), variant, arch)
                 self.assertGreater(archive.stat().st_size, 0)
+
+    def test_musl_runtime_ignores_unreferenced_glibc_debug_text(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import validate_portable_asset as validator
+
+        validator.validate_elf(
+            elf_fixture("arm64", unreferenced_glibc_marker=True), "arm64", VERSION
+        )
+
+    def test_musl_runtime_rejects_actual_glibc_version_requirement(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import validate_portable_asset as validator
+
+        with self.assertRaisesRegex(validator.ContractError, "glibc runtime"):
+            validator.validate_elf(
+                elf_fixture("arm64", glibc_version_requirement=True),
+                "arm64",
+                VERSION,
+            )
 
     def test_active_loadmodule_is_disabled_in_generated_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
