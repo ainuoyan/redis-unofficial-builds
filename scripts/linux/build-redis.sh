@@ -5,6 +5,7 @@ umask 022
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/dist}"
 readonly PACKAGE_ASSETS_ROOT="${PROJECT_ROOT}/packaging/linux"
+readonly UPSTREAM_TEST_FIX_HELPER="${PACKAGE_ASSETS_ROOT}/patches/apply_upstream_test_fixes.py"
 readonly INSTALL_PREFIX="/usr/local/redis"
 readonly REDIS_VERSION="${REDIS_VERSION:?REDIS_VERSION is required}"
 readonly REDIS_SOURCE_SHA256="${REDIS_SOURCE_SHA256:?REDIS_SOURCE_SHA256 is required}"
@@ -76,6 +77,10 @@ esac
 if [[ ! -f "$PROJECT_ROOT/$BUILD_WORKFLOW_PATH" \
   || -L "$PROJECT_ROOT/$BUILD_WORKFLOW_PATH" ]]; then
   echo "Build workflow is missing or unsafe: $BUILD_WORKFLOW_PATH" >&2
+  exit 1
+fi
+if [[ ! -f "$UPSTREAM_TEST_FIX_HELPER" || -L "$UPSTREAM_TEST_FIX_HELPER" ]]; then
+  echo "Upstream test-fix helper is missing or unsafe." >&2
   exit 1
 fi
 
@@ -319,6 +324,21 @@ fi
   echo "Redis test runner must be a regular executable file." >&2
   exit 1
 }
+redis_test_fix_status="$(
+  python3.11 "$UPSTREAM_TEST_FIX_HELPER" \
+    --redis-version "$REDIS_VERSION" \
+    --source-root "$PWD"
+)"
+case "$redis_test_fix_status" in
+  applied:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
+  present:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
+  not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a) ;;
+  *)
+    echo "Unexpected upstream test-fix status." >&2
+    exit 1
+    ;;
+esac
+validate_build_info_value UPSTREAM_TEST_FIX "$redis_test_fix_status"
 test_command=(./runtest --clients 1 --timeout 1200)
 bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 
@@ -580,6 +600,7 @@ EOF
   echo "Redis source: $SOURCE_URL"
   echo "Redis source SHA256: $REDIS_SOURCE_SHA256"
   echo "Redis hashes snapshot: $REDIS_HASHES_COMMIT"
+  echo "Redis upstream test fix: $redis_test_fix_status"
   echo "Upstream license source file: $upstream_license_file"
   echo "Upstream contributor license SHA256: $contributor_license_sha256"
   echo "Upstream dependency notices SHA256: $dependency_notices_sha256"

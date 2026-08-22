@@ -133,6 +133,7 @@ class PublishPolicyTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("python3 -m py_compile scripts/release/*.py", workflow)
+        self.assertIn("packaging/linux/patches/*.py", workflow)
         self.assertIn("python3 scripts/release/validate_configs.py", workflow)
 
 
