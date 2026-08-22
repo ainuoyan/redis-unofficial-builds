@@ -24,14 +24,17 @@ PACKAGE_PREFIX = "Redis"
 COMMON_PATCHSET_PATHS = (
     ".gitattributes",
     ".github/workflows/build-experimental.yml",
-    "packaging/linux/patches/apply_upstream_test_fixes.py",
-    "packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch",
     "scripts/experimental/build-portable-posix.sh",
     "scripts/experimental/create_portable_package.py",
     "scripts/experimental/portable_contract.py",
     "scripts/experimental/prepare_windows_source.py",
     "scripts/experimental/validate_portable_asset.py",
     "THIRD_PARTY_NOTICES.md",
+)
+
+UPSTREAM_TEST_FIX_PATHS = (
+    "packaging/linux/patches/apply_upstream_test_fixes.py",
+    "packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch",
 )
 
 WINDOWS_SERVICE_SOURCE_PATHS = (
@@ -233,6 +236,8 @@ def patchset_paths(variant: str) -> list[Path]:
     relative_paths.extend(asset_root / value for value in backend_assets(variant))
     if variant == "windows-msys2":
         relative_paths.extend(Path(value) for value in WINDOWS_SERVICE_SOURCE_PATHS)
+    else:
+        relative_paths.extend(Path(value) for value in UPSTREAM_TEST_FIX_PATHS)
     return sorted(set(relative_paths), key=lambda value: os.fsencode(value.as_posix()))
 
 
