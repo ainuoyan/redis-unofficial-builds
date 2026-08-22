@@ -119,7 +119,9 @@ make_args=(BUILD_TLS=no)
 if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
   python3 "$PROJECT_ROOT/scripts/experimental/prepare_windows_source.py" \
     --source-root "$source_root"
-  make_args+=(MALLOC=libc "CFLAGS=-D__GNU_VISIBLE=1 -Wno-char-subscripts -O2 -fstack-protector-strong")
+  # Redis 7.x exits before its version probe at higher optimization on the
+  # current MSYS2 toolchain. O0 matches the reviewed redis-windows build path.
+  make_args+=(MALLOC=libc "CFLAGS=-D__GNU_VISIBLE=1 -Wno-char-subscripts -O0")
 elif [[ "$PACKAGE_VARIANT" == macos12 ]]; then
   export MACOSX_DEPLOYMENT_TARGET=12.0
 fi
