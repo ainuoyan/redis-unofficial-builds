@@ -333,6 +333,8 @@ case "$redis_test_fix_status" in
   applied:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   present:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
+  applied:redis-8.2.9-latency-test-timeout-stability|\
+  present:redis-8.2.9-latency-test-timeout-stability|\
   applied:redis-8.10.1-hfe-test-timeout-stability|\
   present:redis-8.10.1-hfe-test-timeout-stability) ;;
   *)
