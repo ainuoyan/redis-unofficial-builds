@@ -389,7 +389,7 @@ jobs:
             git \
             gzip \
             make \
-            python3 \
+            python3.11 \
             procps-ng \
             shadow-utils \
             tar \
@@ -473,7 +473,7 @@ jobs:
           chmod -R go-w "$GITHUB_WORKSPACE/dist"
 
           archive="dist/Redis-${REDIS_VERSION}-${PACKAGE_VARIANT}-${PACKAGE_ARCH}.tar.gz"
-          python3 scripts/release/validate_release_asset.py \
+          python3.11 scripts/release/validate_release_asset.py \
             --archive "$archive" \
             --checksum "${archive}.sha256" \
             --redis-version "$REDIS_VERSION" \

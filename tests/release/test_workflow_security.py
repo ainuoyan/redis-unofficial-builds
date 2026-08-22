@@ -101,6 +101,20 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.linux_build_script,
         )
 
+    def test_rocky_build_uses_python_311_for_asset_validation(self) -> None:
+        build_job = self.workflow.split("\n  build:\n", 1)[1].split(
+            "\n  service_test:\n", 1
+        )[0]
+        self.assertIn("            python3.11 \\\n", build_job)
+        self.assertIn(
+            "          python3.11 scripts/release/validate_release_asset.py",
+            build_job,
+        )
+        self.assertNotIn(
+            "          python3 scripts/release/validate_release_asset.py",
+            build_job,
+        )
+
     def test_release_is_a_new_verified_draft_published_once(self) -> None:
         self.assertIn("before-create.json", self.workflow)
         self.assertIn("pre-publish-state.json", self.workflow)
