@@ -81,8 +81,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("Existing Redis Release is incomplete", self.workflow)
         self.assertIn("existing-release-assets/manifest.json", self.workflow)
         self.assertIn('"$tag_revision" != "$release_revision"', self.workflow)
-        self.assertIn("A draft Release for Redis $version already exists", self.workflow)
-        self.assertIn("gh release delete $version --yes", self.workflow)
+        self.assertIn(
+            "A compatible draft Release will be verified and resumed",
+            self.workflow,
+        )
+        self.assertIn("A draft Release can only be resumed", self.workflow)
+        self.assertNotIn("gh release delete", self.workflow)
         self.assertNotIn('case "${{ matrix.', self.workflow)
         self.assertNotIn("v=${{ needs.prepare.outputs.version }}", self.workflow)
         self.assertNotIn("gh release view", self.workflow)
@@ -119,8 +123,9 @@ class WorkflowSecurityTests(unittest.TestCase):
             build_job,
         )
 
-    def test_release_is_a_new_verified_draft_published_once(self) -> None:
+    def test_release_is_a_verified_resumable_draft_published_once(self) -> None:
         self.assertIn("before-create.json", self.workflow)
+        self.assertIn("pre-tag-state.json", self.workflow)
         self.assertIn("pre-publish-state.json", self.workflow)
         self.assertIn("Draft Release changed during verification", self.workflow)
         self.assertIn("expected-asset-content.json", self.workflow)
@@ -135,6 +140,16 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("release == null and .data.repository.ref == null", self.workflow)
         self.assertIn("gh release create", self.workflow)
         self.assertIn("--draft", self.workflow)
+        self.assertIn(
+            "Reusing an existing verified draft after an interrupted publication",
+            self.workflow,
+        )
+        self.assertIn(".data.repository.ref == null or", self.workflow)
+        self.assertIn('"repos/${GITHUB_REPOSITORY}/git/refs"', self.workflow)
+        self.assertIn('-f ref="$qualified_tag"', self.workflow)
+        self.assertIn('-f sha="$GITHUB_SHA"', self.workflow)
+        self.assertIn("create-tag-response.json", self.workflow)
+        self.assertIn("pre-publish-release.json", self.workflow)
         self.assertIn(".target_commitish == $revision", self.workflow)
         self.assertIn("gh release download", self.workflow)
         self.assertIn("release_metadata.py validate", self.workflow)
@@ -149,6 +164,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn(".data.repository.ref.target.oid == $revision", self.workflow)
         self.assertNotIn("gh release upload", self.workflow)
         self.assertNotIn("--clobber", self.workflow)
+        self.assertNotIn("gh release delete", self.workflow)
+        self.assertNotIn("--method DELETE", self.workflow)
 
     def test_release_metadata_and_attestations_are_current(self) -> None:
         self.assertIn("manifest.json", self.workflow)
