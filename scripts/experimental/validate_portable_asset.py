@@ -40,6 +40,9 @@ WINDOWS_DLL_MAPPING_RE = re.compile(
     re.I,
 )
 WINDOWS_PACKAGE_RE = re.compile(r"^PACKAGE=([A-Za-z0-9@._+-]+) ([^\x00-\x20\x7f]+)$")
+EXPERIMENTAL_PACKAGE_STATUS = (
+    "experimental; separate GitHub prerelease publication is allowed after acceptance"
+)
 METADATA_KEYS = {
     "PACKAGE_FORMAT",
     "PACKAGE_STATUS",
@@ -537,7 +540,10 @@ def main() -> int:
         ):
             if build_info_value(files["redis/BUILD-INFO"], label) != expected_value:
                 raise ContractError(f"BUILD-INFO {label} does not match")
-        if build_info_value(files["redis/BUILD-INFO"], "Package status") != "experimental; GitHub Release publication is disabled":
+        if (
+            build_info_value(files["redis/BUILD-INFO"], "Package status")
+            != EXPERIMENTAL_PACKAGE_STATUS
+        ):
             raise ContractError("BUILD-INFO does not preserve the publication boundary")
 
         contributor = files.get("redis/UPSTREAM-CONTRIBUTOR-LICENSE.txt")
@@ -567,10 +573,18 @@ def main() -> int:
             ):
                 raise ContractError(f"active loadmodule remains in {config_name}")
         readme_text = files["redis/README.txt"].decode("utf-8")
-        if re.search(
-            r"not\s+eligible\s+for\s+GitHub\s+Release\s+publication",
-            readme_text,
-        ) is None:
+        if (
+            re.search(
+                r"published\s+only\s+in\s+a\s+separately\s+tagged\s+GitHub\s+prerelease",
+                readme_text,
+            )
+            is None
+            or re.search(
+                r"not\s+eligible\s+for\s+the\s+numeric\s+stable\s+Release",
+                readme_text,
+            )
+            is None
+        ):
             raise ContractError("README does not state the experimental publication boundary")
         print(f"Validated experimental package: {args.archive.name}")
         return 0

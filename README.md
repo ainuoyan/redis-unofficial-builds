@@ -4,7 +4,8 @@
 
 Unofficial, versioned binary distributions of Redis. The stable publication
 path remains the glibc 2.28 Linux build. Additional ABI and operating-system
-backends have a separate experimental, manually triggered artifact path.
+backends have a separate experimental, manually triggered build and prerelease
+path.
 
 > This project is not affiliated with or endorsed by Redis Ltd. Redis and its
 > bundled dependencies remain subject to the license and notice files included
@@ -12,18 +13,19 @@ backends have a separate experimental, manually triggered artifact path.
 
 ## Available packages
 
-Only rows marked **implemented** are eligible for GitHub Release publication.
-An **experimental** row has build/package code but is not a supported or
-Release-published package.
+Only rows marked **implemented** are eligible for the numeric stable GitHub
+Release. An **experimental** row may be published only in a separately tagged
+GitHub prerelease after its full native workflow and downloaded-asset gates
+pass; it is not production-supported.
 
 | Variant | Architecture | Runtime requirement | Status |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
 | `linux-glibc2.28` | `arm64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux, glibc 2.17+, systemd | Experimental artifact only |
-| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Experimental artifact only |
-| `macos12` | `x64` / `arm64` | macOS 12+, launchd | Experimental artifact only |
-| `windows-msys2` | `x64` | Windows Server 2022 test runner, Windows SCM | Experimental artifact only |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux, glibc 2.17+, systemd | Experimental prerelease |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Experimental prerelease |
+| `macos12` | `x64` / `arm64` | macOS 12+, launchd | Experimental prerelease |
+| `windows-msys2` | `x64` | Windows Server 2022 test runner, Windows SCM | Experimental prerelease |
 
 The implemented publication target remains glibc 2.28 Linux only. A glibc
 2.28 package normally runs on a newer glibc system of the same architecture;
@@ -54,7 +56,7 @@ support is currently claimed. See
 [Windows issue coverage](docs/WINDOWS-ISSUE-COVERAGE.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).
 
-### Experimental manual artifacts
+### Experimental manual artifacts and prereleases
 
 > **Experimental identity migration:** packages created before the current
 > naming cleanup are not in-place upgrade compatible. Back up `conf/` and
@@ -75,9 +77,10 @@ natively, validates archive contents, and uploads seven-day Actions artifacts:
   PowerShell lifecycle scripts.
 
 Each package has an adjacent `.sha256` file and declares `experimental` in its
-package metadata. The workflow has `contents: read`, contains no Release/tag
-operation, is not callable by the release controller, and does not generate
-the stable Release manifest, SBOM, or attestations. Its disposable CI gates
+package metadata. The build workflow has `contents: read`, contains no
+Release/tag operation, is not callable by the release controller, and does not
+generate the stable Release manifest, SBOM, or attestations. Its disposable CI
+gates
 exercise no-systemd legacy Linux lifecycle paths, Alpine-container OpenRC,
 native macOS 15 launchd, and Windows Server 2022 SCM, including saved-data
 reload and ordinary-uninstall recovery. They do not cover a booted legacy
@@ -88,6 +91,15 @@ Use the package-local `README.txt` for its experimental layout; the stable
 lifecycle instructions below apply to `linux-glibc2.28` Release packages only.
 A checked-in experimental row does not prove that a successful native workflow
 run exists; verify the selected run and its logs before downloading an artifact.
+
+After all seven platform jobs for one exact Redis version and packaging
+revision pass, a maintainer may publish the downloaded and revalidated files
+under the separate prerelease tag `X.Y.Z-experimental.N`. Such a prerelease has
+exactly 15 assets: seven archives, seven adjacent `.sha256` files, and one
+`SHA256SUMS` covering the other 14 files. It never shares or mutates the numeric
+`X.Y.Z` stable Release, is published with `latest=false`, and remains
+experimental. If that prerelease tag or Release already exists, it is not
+overwritten or completed; a new full build and a higher `N` are required.
 
 ## Release and package contents
 

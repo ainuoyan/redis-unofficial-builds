@@ -332,7 +332,10 @@ def build_info(
     status_record = (
         []
         if package_status is None
-        else ["Package status: experimental; GitHub Release publication is disabled"]
+        else [
+            "Package status: experimental; separate GitHub prerelease publication "
+            "is allowed after acceptance"
+        ]
     )
     return (
         "\n".join(

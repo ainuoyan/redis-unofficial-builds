@@ -1142,7 +1142,10 @@ def main() -> int:
         )
         if args.package_status == "experimental" and build_info_value(
             build_info, "Package status"
-        ) != "experimental; GitHub Release publication is disabled":
+        ) != (
+            "experimental; separate GitHub prerelease publication is allowed after "
+            "acceptance"
+        ):
             raise ValidationError("BUILD-INFO does not preserve experimental status")
         if args.packaging_root is not None:
             validate_packaging_bindings(
