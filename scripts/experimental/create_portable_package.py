@@ -235,7 +235,8 @@ def write_metadata(
         f"Redis version: {args.redis_version}\n"
         f"Package variant: {args.variant}\n"
         f"Package architecture: {args.arch}\n"
-        "Package status: experimental; GitHub Release publication is disabled\n"
+        "Package status: experimental; separate GitHub prerelease publication "
+        "is allowed after acceptance\n"
         f"Build environment: {validate_single_line('build environment', args.build_environment)}\n"
         f"Compiler: {validate_single_line('compiler', args.compiler)}\n"
         f"Redis source SHA256: {args.source_sha256}\n"
@@ -303,12 +304,15 @@ the installed package, and then perform a fresh install.
 
 {lifecycle}
 
-This artifact is produced only by the manual experimental workflow. It is not
-eligible for GitHub Release publication or production-support claims until its
-native lifecycle and compatibility acceptance gates have passed.
+This artifact is produced only by the manual experimental workflow. It may be
+published only in a separately tagged GitHub prerelease after all seven
+platform jobs for this exact Redis version and packaging revision pass and the
+downloaded assets are revalidated. It is not eligible for the numeric stable
+Release and does not claim production support.
 
-此产物仅由手工实验构建工作流生成。在原生平台生命周期与兼容性验收通过前，不得上传到
-GitHub Release，也不得宣称可用于生产环境。
+此产物仅由手工实验构建工作流生成。只有同一 Redis 版本、同一打包提交的七个平台
+Job 全部通过，且下载后的产物完成复验后，才能进入使用独立 Tag 的 GitHub 预发布。
+它不具备纯数字稳定 Release 发布资格，也不代表生产支持。
 
 Review scripts/ and the platform service template before installation. Preserve
 conf/ and data/ independently before every update or removal operation.

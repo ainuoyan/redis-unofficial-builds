@@ -3,24 +3,25 @@
 [English](README.md)
 
 本仓库提供按版本发布的 Redis 非官方二进制包。稳定发布路径仍是 glibc 2.28 Linux；
-其他 ABI 和操作系统后端使用独立的实验性手工 artifact 路径。
+其他 ABI 和操作系统后端使用独立的实验性手工构建与预发布路径。
 
 > 本项目与 Redis Ltd. 无关联，也未获得其背书。Redis 及其捆绑依赖仍受每个包内
 > 许可证和 notices 文件的约束。
 
 ## 可用包
 
-只有标记为“已实现”的平台才具备 GitHub Release 发布资格。“实验性”表示已有构建与
-打包代码，不代表存在受支持或已发布到 Release 的包。
+只有标记为“已实现”的平台才具备纯数字稳定 GitHub Release 发布资格。“实验性”平台
+只有在完整原生工作流及下载后产物门禁全部通过后，才能进入使用独立 Tag 的 GitHub
+预发布；它不代表生产支持。
 
 | 包变体 | 架构 | 运行要求 | 状态 |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
 | `linux-glibc2.28` | `arm64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux、glibc 2.17+、systemd | 仅实验性 artifact |
-| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 仅实验性 artifact |
-| `macos12` | `x64` / `arm64` | macOS 12+、launchd | 仅实验性 artifact |
-| `windows-msys2` | `x64` | Windows Server 2022 测试 Runner、Windows SCM | 仅实验性 artifact |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux、glibc 2.17+、systemd | 实验性预发布 |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 实验性预发布 |
+| `macos12` | `x64` / `arm64` | macOS 12+、launchd | 实验性预发布 |
+| `windows-msys2` | `x64` | Windows Server 2022 测试 Runner、Windows SCM | 实验性预发布 |
 
 当前已实现的发布目标仍仅支持 glibc 2.28 Linux。同架构的 glibc 2.28 包通常可在
 更高版本 glibc 上运行；Alpine 等 musl 系统必须使用单独命名的 musl artifact。Linux 包是普通
@@ -46,7 +47,7 @@
 [Windows issue 覆盖表](docs/WINDOWS-ISSUE-COVERAGE.md)和
 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-### 实验性手工 artifact
+### 实验性手工 artifact 与预发布
 
 > **实验性运行身份迁移：** 当前命名清理之前生成的包不支持原地升级。请先备份
 > `conf/` 与 `data/`，使用已安装包自带的脚本完成卸载，再用新构建的 artifact
@@ -61,7 +62,7 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 - macOS 12+：原生 x64、ARM64 `.tar.gz`，包含 launchd 生命周期脚本；
 - Windows：一个 x64 MSYS2 `.zip`，包含专用 SCM 包装器和 PowerShell 生命周期脚本。
 
-每个包都有相邻 `.sha256`，包元数据明确标记为 `experimental`。该工作流权限为
+每个包都有相邻 `.sha256`，包元数据明确标记为 `experimental`。构建工作流权限为
 `contents: read`，没有 Release/Tag 操作，发布控制器不能调用它，也不生成稳定发布的
 manifest、SBOM 或证明。它在一次性 CI 环境中测试无 systemd 的 legacy Linux
 生命周期、Alpine 容器内的 OpenRC、原生 macOS 15 launchd 和 Windows Server 2022
@@ -71,6 +72,13 @@ SCM，并覆盖已保存数据的重载及普通卸载后的恢复。但它尚�
 `README.txt` 为准；下文稳定生命周期说明只适用于 GitHub Release 中的
 `linux-glibc2.28` 包。
 配置中存在实验性行不代表原生工作流已经成功运行；下载前必须核对所选 run 及其日志。
+
+同一 Redis 版本、同一打包提交的七个平台 Job 全部通过后，维护者可以把下载并复验的
+文件发布到独立预发布 Tag `X.Y.Z-experimental.N`。该预发布必须精确包含 15 个产物：
+7 个压缩包、7 个相邻 `.sha256` 以及覆盖其余 14 个文件的 `SHA256SUMS`。它绝不与
+纯数字 `X.Y.Z` 稳定 Release 共用或修改资产，发布时设置 `latest=false`，状态仍为
+实验性。如果同名预发布 Tag 或 Release 已存在，不得覆盖或补全；必须完成新的全量
+构建并递增 `N`。
 
 ## Release 与包内容
 

@@ -75,7 +75,8 @@ class ValidateReleaseAssetTests(unittest.TestCase):
             self.assertEqual(values["PACKAGE_STATUS"], "experimental")
             self.assertEqual(
                 validator.build_info_value(build_info, "Package status"),
-                "experimental; GitHub Release publication is disabled",
+                "experimental; separate GitHub prerelease publication is allowed after "
+                "acceptance",
             )
 
     def test_publication_status_is_bound_to_one_reviewed_linux_contract(self) -> None:

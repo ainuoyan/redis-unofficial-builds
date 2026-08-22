@@ -570,7 +570,7 @@ EOF
 {
   echo "Redis version: $REDIS_VERSION"
   if [[ -n "$package_status" ]]; then
-    echo "Package status: experimental; GitHub Release publication is disabled"
+    echo "Package status: experimental; separate GitHub prerelease publication is allowed after acceptance"
   fi
   echo "Package variant: $PACKAGE_VARIANT"
   echo "Package architecture: $PACKAGE_ARCH"
@@ -617,8 +617,8 @@ Redis ${REDIS_VERSION} 非官方 Linux 二进制安装包
 
 $(if [[ -n "$package_status" ]]; then
   printf '%s\n' \
-    'Status: experimental Actions artifact; GitHub Release publication is disabled' \
-    '状态：实验性 Actions artifact；禁止上传到 GitHub Release'
+    'Status: experimental; separate GitHub prerelease only after all seven platform jobs pass and downloaded assets are revalidated' \
+    '状态：实验性；仅在七个平台 Job 全部通过且下载产物复验完成后进入独立 GitHub 预发布；不属于纯数字稳定 Release'
 fi)
 Package variant: ${PACKAGE_VARIANT}
 Package architecture: ${PACKAGE_ARCH}

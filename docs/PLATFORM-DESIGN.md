@@ -2,10 +2,11 @@
 
 [简体中文](PLATFORM-DESIGN.zh-CN.md)
 
-This document separates stable release behavior, experimental artifacts, and
-backend designs. **Implemented** means that code, CI, validation, native
-lifecycle gates, and publication policy exist. **Experimental** means that a
-manual build/package path exists but no GitHub Release or production support
+This document separates stable release behavior, experimental prereleases,
+and backend designs. **Implemented** means that code, CI, validation, native
+lifecycle gates, and stable publication policy exist. **Experimental** means
+that a manual build/package path exists and may publish only to a separately
+tagged GitHub prerelease after all acceptance gates pass; no production support
 is claimed. **Design only** means that no build artifact is claimed.
 
 ## Redis release lines
@@ -37,10 +38,10 @@ marks remain subject to the official
 | Variant | Architectures | Build baseline | Service backend | Status |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64, ARM64 | Digest-pinned Rocky Linux 8 user space | systemd | **Implemented** |
-| `linux-glibc2.17-legacy` | x64, ARM64 | Digest-pinned manylinux2014 (glibc 2.17) | systemd | **Experimental artifact only** |
-| `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Experimental artifact only** |
-| `macos12` | x64, ARM64 | Native macOS 15 runners, deployment target 12.0 | launchd | **Experimental artifact only** |
-| `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Experimental artifact only**; primary Windows backend |
+| `linux-glibc2.17-legacy` | x64, ARM64 | Digest-pinned manylinux2014 (glibc 2.17) | systemd | **Experimental prerelease** |
+| `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Experimental prerelease** |
+| `macos12` | x64, ARM64 | Native macOS 15 runners, deployment target 12.0 | launchd | **Experimental prerelease** |
+| `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Experimental prerelease**; primary Windows backend |
 
 Only `linux-glibc2.28` rows are controller-enabled. Experimental rows name the
 manual `build-experimental.yml` workflow but remain controller-disabled. All
@@ -152,9 +153,9 @@ The manual workflow runs upstream build tests and local Redis protocol smoke
 tests for Linux and macOS. Its disposable lifecycle gates exercise both legacy
 Linux architectures without systemd, both musl architectures with OpenRC in an
 Alpine container, both macOS architectures with launchd on native macOS 15
-runners, and the optimized MSYS2 x64 build plus the repository's independent
-self-contained SCM wrapper on Windows Server 2022. Those gates cover fresh
-install, same-version idempotency, readiness, saved-data reload, ordinary
+runners, and the compatibility-focused MSYS2 x64 build plus the repository's
+independent self-contained SCM wrapper on Windows Server 2022. Those gates
+cover fresh install, same-version idempotency, readiness, saved-data reload, ordinary
 uninstall recovery, and purge as applicable to each backend.
 
 Stable acceptance still requires a representative booted legacy distribution
@@ -162,6 +163,42 @@ with systemd, a booted OpenRC environment, the oldest claimed macOS 12 version,
 fault-injected rollback, and the remaining Windows authentication, TLS,
 non-ASCII-path, failure, security, and load cases. A successful manual run
 therefore leaves every artifact in experimental status.
+
+### Experimental prerelease publication
+
+The build workflow remains read-only and cannot publish. A maintainer may
+publish one exact version only after all seven platform jobs share the same
+protected-default-branch packaging revision and succeed. The maintainer then
+downloads all artifacts, repeats each archive's semantic validator and
+adjacent-checksum verification, and creates one aggregate `SHA256SUMS`.
+
+The prerelease tag is `X.Y.Z-experimental.N` and its exact 15-asset inventory
+is the seven platform archives, their seven adjacent `.sha256` records, and
+`SHA256SUMS` covering those 14 files. Publication uses a draft prerelease with
+`latest=false`; its tag revision, state, exact asset names, sizes, and digests
+are checked before publication, then every published asset is downloaded and
+revalidated. Existing tags or Releases are immutable inputs: publication never
+adds to, overwrites, deletes from, or completes them. A replacement requires a
+new complete build and a higher `N`. These prereleases have no stable manifest,
+SBOM, artifact attestation, or production-support claim.
+
+```text
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
+Redis-X.Y.Z-macos12-x64.tar.gz
+Redis-X.Y.Z-macos12-x64.tar.gz.sha256
+Redis-X.Y.Z-macos12-arm64.tar.gz
+Redis-X.Y.Z-macos12-arm64.tar.gz.sha256
+Redis-X.Y.Z-windows-msys2-x64.zip
+Redis-X.Y.Z-windows-msys2-x64.zip.sha256
+SHA256SUMS
+```
 
 ## Current GitHub Release contract
 

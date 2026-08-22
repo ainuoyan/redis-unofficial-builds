@@ -2,9 +2,10 @@
 
 [English](PLATFORM-DESIGN.md)
 
-本文明确区分稳定发布能力、实验性 artifact 和后端设计。“已实现”表示代码、CI、
-校验、原生生命周期门禁和发布策略均已存在；“实验性”表示已有手工构建/打包路径，
-但不宣称 GitHub Release 或生产支持；“仅设计”表示不宣称存在构建产物。
+本文明确区分稳定发布能力、实验性预发布和后端设计。“已实现”表示代码、CI、校验、
+原生生命周期门禁和稳定发布策略均已存在；“实验性”表示已有手工构建/打包路径，只有
+全部验收门禁通过后才能进入使用独立 Tag 的 GitHub 预发布，但不宣称生产支持；
+“仅设计”表示不宣称存在构建产物。
 
 ## Redis 发布系列
 
@@ -31,10 +32,10 @@ Redis 名称与标识仍受官方
 | 包变体 | 架构 | 构建基线 | 服务后端 | 状态 |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64、ARM64 | 按摘要固定的 Rocky Linux 8 用户态 | systemd | **已实现** |
-| `linux-glibc2.17-legacy` | x64、ARM64 | 按摘要固定的 manylinux2014（glibc 2.17） | systemd | **仅实验性 artifact** |
-| `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **仅实验性 artifact** |
-| `macos12` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 12.0 | launchd | **仅实验性 artifact** |
-| `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **仅实验性 artifact**；Windows 主后端 |
+| `linux-glibc2.17-legacy` | x64、ARM64 | 按摘要固定的 manylinux2014（glibc 2.17） | systemd | **实验性预发布** |
+| `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **实验性预发布** |
+| `macos12` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 12.0 | launchd | **实验性预发布** |
+| `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **实验性预发布**；Windows 主后端 |
 
 只有 `linux-glibc2.28` 行已启用控制器。实验性行指向手工
 `build-experimental.yml`，但控制器仍禁用。所有 Linux 方案均使用 `.tar.gz`，不依赖
@@ -120,7 +121,8 @@ Windows 使用 `PACKAGE_FORMAT=3` 与 `PACKAGE_STATUS=experimental`。第 3 版�
 权限、超大内容、压缩炸弹、架构/运行库不匹配和仍处于启用状态的 `loadmodule`。
 
 手工工作流对 Linux 和 macOS 执行上游构建测试及本地 Redis 协议冒烟。Windows Job
-执行优化的 MSYS2 构建并构建仓库独立实现的自包含 SCM 包装器。一次性生命周期门禁
+执行以兼容性为重点的 MSYS2 构建，并构建仓库独立实现的自包含 SCM 包装器。
+一次性生命周期门禁
 分别覆盖两个 legacy Linux 架构的无 systemd 用户态、两个 musl 架构的 Alpine 容器内
 OpenRC、两个 macOS 架构在原生 macOS 15 Runner 上的 launchd，以及 Windows Server
 2022 上的 SCM。各后端按适用范围验证全新安装、同版本幂等、就绪、已保存数据重载、
@@ -129,6 +131,37 @@ OpenRC、两个 macOS 架构在原生 macOS 15 Runner 上的 launchd，以及 Wi
 稳定验收仍要求启动了 systemd 的代表性旧发行版、以 OpenRC 引导的环境、声明支持的
 最老 macOS 12、故障注入回滚，以及其余 Windows 认证、TLS、非 ASCII 路径、失败、
 安全和负载场景。因此即使手工运行成功，这些产物仍保持实验状态。
+
+### 实验性预发布
+
+构建工作流继续保持只读且不能发布。只有同一版本的七个平台 Job 均绑定同一个受保护
+默认分支打包提交并全部成功后，维护者才能发布。维护者必须下载所有 artifact，重新
+执行每个压缩包的语义校验与相邻校验和验证，并生成一个汇总 `SHA256SUMS`。
+
+预发布 Tag 为 `X.Y.Z-experimental.N`，必须精确包含 15 个产物：七个平台压缩包、
+七个相邻 `.sha256` 和覆盖这 14 个文件的 `SHA256SUMS`。发布过程先创建
+`latest=false` 的草稿预发布，在正式发布前核对 Tag 提交、状态、精确文件名、大小和
+摘要；正式发布后再次下载并复验全部产物。已有 Tag 或 Release 视为不可变输入，绝不
+添加、覆盖、删除或补全；替换时必须重新完成全量构建并递增 `N`。实验性预发布不包含
+稳定 manifest、SBOM、artifact attestation，也不代表生产支持。
+
+```text
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
+Redis-X.Y.Z-macos12-x64.tar.gz
+Redis-X.Y.Z-macos12-x64.tar.gz.sha256
+Redis-X.Y.Z-macos12-arm64.tar.gz
+Redis-X.Y.Z-macos12-arm64.tar.gz.sha256
+Redis-X.Y.Z-windows-msys2-x64.zip
+Redis-X.Y.Z-windows-msys2-x64.zip.sha256
+SHA256SUMS
+```
 
 ## 当前 GitHub Release 约定
 
