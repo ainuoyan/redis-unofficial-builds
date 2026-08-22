@@ -564,7 +564,7 @@ EOF
   if command -v rpm >/dev/null 2>&1; then
     echo "Selected build dependency packages:"
     for dependency_package in \
-      binutils curl file findutils gcc gzip make procps-ng shadow-utils tar tcl \
+      binutils curl file findutils gcc gcc-c++ gzip make procps-ng shadow-utils tar tcl \
       util-linux which devtoolset-10-binutils devtoolset-10-gcc; do
       if rpm -q "$dependency_package" >/dev/null 2>&1; then
         rpm -q "$dependency_package"

@@ -241,8 +241,15 @@ class WorkflowSecurityTests(unittest.TestCase):
             'if rpm -q "$dependency_package" >/dev/null 2>&1; then',
             dependency_report,
         )
+        self.assertIn("gcc-c++", dependency_report)
         self.assertIn("devtoolset-10-gcc", dependency_report)
         self.assertNotIn("python3", dependency_report)
+
+    def test_stable_linux_build_installs_cpp_compiler(self) -> None:
+        dependency_step = self.workflow.split(
+            "      - name: Install build dependencies\n", 1
+        )[1].split("\n      - name: Checkout packaging project\n", 1)[0]
+        self.assertIn("gcc-c++", dependency_step)
 
     def test_service_gate_covers_local_socket_expiry_and_quoted_paths(self) -> None:
         self.assertIn("Fresh installation unexpectedly exposed TCP", self.workflow)
