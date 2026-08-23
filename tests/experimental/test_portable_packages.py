@@ -738,7 +738,11 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('uninstall.sh" --purge', macos_job)
         self.assertIn("Fault-injected launchd update unexpectedly succeeded", macos_job)
 
-        self.assertIn("Restart-Service -Name RedisUnofficial", windows_job)
+        self.assertIn("Start-RedisServiceBounded", windows_job)
+        self.assertIn("Stop-RedisServiceBounded", windows_job)
+        self.assertIn("Wait-RedisServiceStatus", windows_job)
+        self.assertNotIn("Start-Service -Name RedisUnofficial", windows_job)
+        self.assertNotIn("Restart-Service -Name RedisUnofficial", windows_job)
         self.assertIn("redis-unofficial-acceptance-persistence", windows_job)
         self.assertIn("Redis 生命周期 验收", windows_job)
         self.assertIn("Port-conflict installation unexpectedly succeeded", windows_job)
@@ -765,6 +769,9 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('RunRedisCli(settings, "shutdown", out _)', service)
         self.assertIn("Path.IsPathFullyQualified(candidate)", service)
         self.assertIn("reports Running only after its authenticated Redis PING passes", common)
+        self.assertIn("& sc.exe start $script:RedisServiceName", common)
+        self.assertIn("& sc.exe stop $script:RedisServiceName", common)
+        self.assertNotIn("Start-Service -Name $script:RedisServiceName", common)
         self.assertIn("if (-not [IO.File]::Exists($settingsPath))", update)
         self.assertNotIn("Experimental MSYS2", common)
 
