@@ -52,6 +52,17 @@ class WorkflowSecurityTests(unittest.TestCase):
                     f"unpinned action in {workflow_path.name}",
                 )
 
+    def test_workflow_heredoc_delimiters_are_at_shell_column_zero(self) -> None:
+        for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            workflow = workflow_path.read_text(encoding="utf-8")
+            delimiters = re.findall(r"^( *)(PY|EOF)$", workflow, re.MULTILINE)
+            for indentation, delimiter in delimiters:
+                self.assertEqual(
+                    len(indentation),
+                    10,
+                    f"{delimiter} is not at shell column zero in {workflow_path.name}",
+                )
+
     def test_core_actions_use_reviewed_node24_releases(self) -> None:
         found: set[str] = set()
         for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):

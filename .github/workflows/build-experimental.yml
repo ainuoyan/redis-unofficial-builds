@@ -523,15 +523,15 @@ jobs:
               marker="$stage/install-failure-injected"
               install -d -o root -g root -m 0700 "$mock_bin"
               cat >"$mock_bin/install" <<EOF
-              #!/bin/sh
-              last=
-              for argument in "\$@"; do last="\$argument"; done
-              if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
-                : >"$marker"
-                exit 73
-              fi
-              exec /usr/bin/install "\$@"
-              EOF
+          #!/bin/sh
+          last=
+          for argument in "\$@"; do last="\$argument"; done
+          if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
+            : >"$marker"
+            exit 73
+          fi
+          exec /usr/bin/install "\$@"
+          EOF
               chmod 0700 "$mock_bin/install"
               if PATH="$mock_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
                 "$package/scripts/update.sh"; then
