@@ -148,20 +148,15 @@ jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '2')"
 test_command=()
 if [[ -x scripts/build.sh ]]; then
   make -j"$jobs" build redis "${make_args[@]}"
-  if [[ "$RUN_FULL_TESTS" == true ]]; then
-    test_command=(make test redis "${make_args[@]}")
-  fi
 else
   make -j"$jobs" "${make_args[@]}"
-  if [[ "$RUN_FULL_TESTS" == true ]]; then
-    [[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
-      echo "Redis test runner must be a regular executable file." >&2
-      exit 1
-    }
-    test_command=(./runtest --clients 1 --timeout 1200)
-  fi
 fi
 if [[ "$RUN_FULL_TESTS" == true ]]; then
+  [[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
+    echo "Redis test runner must be a regular executable file." >&2
+    exit 1
+  }
+  test_command=(./runtest --clients 1 --timeout 1200)
   bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 fi
 

@@ -634,8 +634,10 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn(
             'temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"', script
         )
-        self.assertIn('./runtest --clients 1 --timeout 1200', script)
-        self.assertIn('make test redis "${make_args[@]}"', script)
+        self.assertIn(
+            'test_command=(./runtest --clients 1 --timeout 1200)', script
+        )
+        self.assertNotIn('test_command=(make test', script)
         self.assertIn(
             'bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh"', script
         )
