@@ -791,6 +791,28 @@ jobs:
             throw 'Windows Redis service did not pass readiness.'
           }
 
+          function Wait-RedisServiceStatus {
+            param([ServiceProcess.ServiceControllerStatus]$Status)
+            $service = Get-Service -Name RedisUnofficial -ErrorAction Stop
+            try {
+              $service.WaitForStatus($Status, [TimeSpan]::FromSeconds(90))
+            } finally {
+              $service.Dispose()
+            }
+          }
+
+          function Start-RedisServiceBounded {
+            & sc.exe start RedisUnofficial | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to request RedisUnofficial service startup.' }
+            Wait-RedisServiceStatus -Status Running
+          }
+
+          function Stop-RedisServiceBounded {
+            & sc.exe stop RedisUnofficial | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to request RedisUnofficial service stop.' }
+            Wait-RedisServiceStatus -Status Stopped
+          }
+
           $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 6379)
           $conflictRejected = $false
           try {
@@ -835,7 +857,8 @@ jobs:
               throw 'Windows redis-sentinel binary identity is invalid.'
             }
 
-            Restart-Service -Name RedisUnofficial -Force
+            Stop-RedisServiceBounded
+            Start-RedisServiceBounded
             Wait-RedisReady
             $response = & $cli -h 127.0.0.1 -p 6379 get redis-unofficial-acceptance-persistence
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'persisted') {
@@ -868,7 +891,7 @@ jobs:
             Wait-RedisReady
 
             $secret = 'redis-unofficial-ci-secret'
-            Stop-Service -Name RedisUnofficial
+            Stop-RedisServiceBounded
             $configPath = Join-Path $prefix 'conf\redis.conf'
             [IO.File]::AppendAllText($configPath, "`nrequirepass $secret`n", (New-Object Text.UTF8Encoding($false)))
             $passwordPath = Join-Path $prefix 'conf\service-password.txt'
@@ -879,12 +902,10 @@ jobs:
             [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
             & (Join-Path $prefix 'bin\RedisService.exe') --self-test
             if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows service settings failed self-test.' }
-            Start-Service -Name RedisUnofficial
+            Start-RedisServiceBounded
             Wait-RedisReady -Password $secret
-            Stop-Service -Name RedisUnofficial
-            (Get-Service -Name RedisUnofficial).WaitForStatus(
-              [ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
-            Start-Service -Name RedisUnofficial
+            Stop-RedisServiceBounded
+            Start-RedisServiceBounded
             Wait-RedisReady -Password $secret
 
             $statePath = Join-Path $prefix '.redis-package-state.json'

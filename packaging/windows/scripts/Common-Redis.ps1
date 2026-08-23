@@ -278,7 +278,8 @@ function Remove-RedisService {
     if ($null -eq $service) { return }
     try {
         if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
-            Stop-Service -Name $script:RedisServiceName -ErrorAction Stop
+            & sc.exe stop $script:RedisServiceName | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
             $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
         }
         & sc.exe delete $script:RedisServiceName | Out-Null
@@ -297,8 +298,14 @@ function Remove-RedisService {
 }
 
 function Start-RedisServiceAndWait {
+    $service = $null
     try {
-        Start-Service -Name $script:RedisServiceName
+        & sc.exe start $script:RedisServiceName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to start the RedisUnofficial service.' }
+        $service = Get-RedisService
+        if ($null -eq $service) { throw 'RedisUnofficial service disappeared during startup.' }
+        $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(90))
+        # The wrapper reports Running only after its authenticated Redis PING passes.
     } catch {
         Write-RedisInfo 'Redis service startup failed; collecting diagnostics before rollback.'
         & sc.exe queryex $script:RedisServiceName
@@ -311,16 +318,20 @@ function Start-RedisServiceAndWait {
             }
         }
         throw
+    } finally {
+        if ($null -ne $service) { $service.Dispose() }
     }
-    $service = Get-Service -Name $script:RedisServiceName
-    $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(90))
-    # The wrapper reports Running only after its authenticated Redis PING passes.
 }
 
 function Stop-RedisServiceIfRunning {
     $service = Get-RedisService
-    if ($null -ne $service -and $service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
-        Stop-Service -Name $script:RedisServiceName -ErrorAction Stop
-        $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
+    try {
+        if ($null -ne $service -and $service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
+            & sc.exe stop $script:RedisServiceName | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
+            $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
+        }
+    } finally {
+        if ($null -ne $service) { $service.Dispose() }
     }
 }
