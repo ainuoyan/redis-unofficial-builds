@@ -778,7 +778,8 @@ jobs:
 
           function Wait-RedisReady {
             param([string]$Password = '')
-            foreach ($attempt in 1..60) {
+            $deadline = [DateTime]::UtcNow.AddSeconds(90)
+            do {
               if ($Password) { $env:REDISCLI_AUTH = $Password }
               try {
                 $response = & $cli -h 127.0.0.1 -p 6379 ping 2>$null
@@ -787,7 +788,7 @@ jobs:
                 Remove-Item Env:REDISCLI_AUTH -ErrorAction SilentlyContinue
               }
               Start-Sleep -Seconds 1
-            }
+            } while ([DateTime]::UtcNow -lt $deadline)
             throw 'Windows Redis service did not pass readiness.'
           }
 
