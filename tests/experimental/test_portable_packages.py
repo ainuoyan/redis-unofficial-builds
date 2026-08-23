@@ -753,6 +753,8 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("PasswordFile", windows_job)
         self.assertIn("Authenticated Windows service settings failed self-test", windows_job)
         self.assertIn("Fault-injected Windows update unexpectedly succeeded", windows_job)
+        self.assertIn("[DateTime]::UtcNow.AddSeconds(90)", windows_job)
+        self.assertNotIn("foreach ($attempt in 1..60)", windows_job)
 
     def test_windows_service_supports_managed_authentication_without_command_line_secrets(self) -> None:
         service = (
@@ -768,6 +770,11 @@ class PortablePackageTests(unittest.TestCase):
         self.assertNotIn('ArgumentList.Add(password)', service)
         self.assertIn('RunRedisCli(settings, "shutdown", out _)', service)
         self.assertIn("Path.IsPathFullyQualified(candidate)", service)
+        self.assertIn("Environment.Exit(1);", service)
+        self.assertNotIn(
+            "ReportStatus(ServiceStopped, acceptedControls: 0, win32ExitCode: 1066",
+            service,
+        )
         self.assertIn("reports Running only after its authenticated Redis PING passes", common)
         self.assertIn("& sc.exe start $script:RedisServiceName", common)
         self.assertIn("& sc.exe stop $script:RedisServiceName", common)

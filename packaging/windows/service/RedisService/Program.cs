@@ -95,7 +95,9 @@ internal static class Program
         catch (Exception exception)
         {
             Log($"Service failure: {exception}");
-            ReportStatus(ServiceStopped, acceptedControls: 0, win32ExitCode: 1066, serviceExitCode: 1);
+            // A fatal wrapper or child-process failure must terminate without
+            // reporting a clean SERVICE_STOPPED state so SCM recovery runs.
+            Environment.Exit(1);
         }
     }
 
