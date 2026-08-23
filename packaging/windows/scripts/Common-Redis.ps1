@@ -261,6 +261,18 @@ function Get-RedisService {
     return Get-Service -Name $script:RedisServiceName -ErrorAction SilentlyContinue
 }
 
+function Assert-RedisPortAvailable {
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 6379)
+    $listener.Server.ExclusiveAddressUse = $true
+    try {
+        $listener.Start()
+    } catch [Net.Sockets.SocketException] {
+        throw 'TCP port 6379 on 127.0.0.1 is already in use; no files or services were changed.'
+    } finally {
+        $listener.Stop()
+    }
+}
+
 function New-RedisService {
     if ($null -ne (Get-RedisService)) { throw 'RedisUnofficial service already exists.' }
     $wrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
@@ -269,6 +281,9 @@ function New-RedisService {
         -Description 'Redis package from redis-unofficial-builds' -StartupType Automatic | Out-Null
     & sc.exe config $script:RedisServiceName start= delayed-auto | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure delayed service start.' }
+}
+
+function Set-RedisServiceRecovery {
     & sc.exe failure $script:RedisServiceName reset= 86400 actions= restart/5000/restart/15000/none/0 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure service recovery.' }
 }

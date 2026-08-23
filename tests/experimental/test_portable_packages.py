@@ -772,6 +772,20 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("& sc.exe start $script:RedisServiceName", common)
         self.assertIn("& sc.exe stop $script:RedisServiceName", common)
         self.assertNotIn("Start-Service -Name $script:RedisServiceName", common)
+        self.assertIn("$listener.Server.ExclusiveAddressUse = $true", common)
+        self.assertIn("function Set-RedisServiceRecovery", common)
+        install = (ROOT / "packaging/windows/scripts/Install-Redis.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Assert-RedisPortAvailable", install)
+        self.assertLess(
+            install.index("Assert-RedisPortAvailable"),
+            install.index("New-Item -ItemType Directory -Path $script:RedisPrefix"),
+        )
+        self.assertLess(
+            install.index("Start-RedisServiceAndWait"),
+            install.index("Set-RedisServiceRecovery"),
+        )
         self.assertIn("if (-not [IO.File]::Exists($settingsPath))", update)
         self.assertNotIn("Experimental MSYS2", common)
 
