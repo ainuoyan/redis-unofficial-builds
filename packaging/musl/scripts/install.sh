@@ -12,6 +12,7 @@ acquire_lock
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
 version="$(metadata_value "$package_root/PACKAGE-INFO" REDIS_VERSION)"
+package_status="$(metadata_value "$package_root/PACKAGE-INFO" PACKAGE_STATUS)"
 
 if [[ -e "$REDIS_STATE_FILE" || -L "$REDIS_STATE_FILE" ]]; then
   validate_state
@@ -46,7 +47,7 @@ chown root:"$REDIS_GROUP" "$REDIS_PREFIX/conf"/*.conf
 chmod 0640 "$REDIS_PREFIX/conf"/*.conf
 install_program_files "$package_root"
 install -o root -g root -m 0755 "$package_root/openrc/redis" "$REDIS_INIT_SCRIPT"
-write_state "$version"
+write_state "$version" "$package_status"
 rc-update add "$REDIS_SERVICE" default
 if ! rc-service "$REDIS_SERVICE" start || ! wait_ready "$REDIS_PREFIX"; then
   rc-service "$REDIS_SERVICE" stop >/dev/null 2>&1 || true
@@ -54,4 +55,4 @@ if ! rc-service "$REDIS_SERVICE" start || ! wait_ready "$REDIS_PREFIX"; then
   die "Redis did not pass its OpenRC readiness check; inspect $REDIS_PREFIX/log/redis.log."
 fi
 trap - ERR INT TERM HUP
-info "Installed Redis $version as the experimental OpenRC service $REDIS_SERVICE."
+info "Installed Redis $version as the OpenRC service $REDIS_SERVICE."

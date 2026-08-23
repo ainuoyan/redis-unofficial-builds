@@ -56,10 +56,13 @@ fi
 
 case "$BUILD_WORKFLOW_PATH" in
   .github/workflows/build-linux.yml)
-    [[ "$PACKAGE_VARIANT" == linux-glibc2.28 && "$GLIBC_BASELINE" == 2.28 ]] || {
-      echo "The release workflow only accepts linux-glibc2.28 with glibc 2.28." >&2
-      exit 1
-    }
+    case "$PACKAGE_VARIANT:$GLIBC_BASELINE" in
+      linux-glibc2.28:2.28|linux-glibc2.17-legacy:2.17) ;;
+      *)
+        echo "The release workflow received an unsupported glibc package identity." >&2
+        exit 1
+        ;;
+    esac
     package_status=""
     ;;
   .github/workflows/build-experimental.yml)

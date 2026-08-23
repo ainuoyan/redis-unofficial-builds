@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared contract for nonpublishing cross-platform Redis packages."""
+"""Shared contract for portable cross-platform Redis packages."""
 
 from __future__ import annotations
 
@@ -20,10 +20,12 @@ GIT_OID_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_VALUE_RE = re.compile(r"^[ -~]{1,512}$")
 SAFE_MEMBER_RE = re.compile(r"^[A-Za-z0-9._+/-]+$")
 PACKAGE_PREFIX = "Redis"
+EXPERIMENTAL_WORKFLOW = Path(".github/workflows/build-experimental.yml")
+RELEASE_WORKFLOW = Path(".github/workflows/build-linux.yml")
+SUPPORTED_WORKFLOWS = {EXPERIMENTAL_WORKFLOW, RELEASE_WORKFLOW}
 
 COMMON_PATCHSET_PATHS = (
     ".gitattributes",
-    ".github/workflows/build-experimental.yml",
     "scripts/experimental/build-portable-posix.sh",
     "scripts/experimental/create_portable_package.py",
     "scripts/experimental/portable_contract.py",
@@ -62,12 +64,12 @@ BACKENDS = {
             "openrc/redis": 0o755,
         },
     },
-    "macos12": {
+    "macos15": {
         "os": "macos",
         "archs": {"x64", "arm64"},
         "extension": "tar.gz",
         "runtime": "darwin",
-        "runtime_baseline": "12.0",
+        "runtime_baseline": "15.0",
         "service_backend": "launchd",
         "install_prefix": "/usr/local/redis",
         "asset_root": "packaging/macos",
@@ -110,7 +112,7 @@ GENERATED_REGULAR_MEMBERS = {
 
 
 class ContractError(RuntimeError):
-    """Raised when an experimental package violates its checked-in contract."""
+    """Raised when a portable package violates its checked-in contract."""
 
 
 def validate_source_archive(
@@ -209,7 +211,22 @@ def backend_for(variant: str) -> dict[str, object]:
     try:
         return BACKENDS[variant]
     except KeyError as exc:
-        raise ContractError(f"unsupported experimental package variant: {variant}") from exc
+        raise ContractError(f"unsupported portable package variant: {variant}") from exc
+
+
+def validate_publication_contract(package_status: str, build_workflow: Path) -> Path:
+    workflow = Path(build_workflow)
+    expected = {
+        "experimental": EXPERIMENTAL_WORKFLOW,
+        "release": RELEASE_WORKFLOW,
+    }
+    if package_status not in expected:
+        raise ContractError(f"unsupported package status: {package_status}")
+    if workflow != expected[package_status]:
+        raise ContractError(
+            "package status and build workflow do not match the publication contract"
+        )
+    return workflow
 
 
 def validate_identity(version: str, variant: str, arch: str) -> dict[str, object]:
@@ -231,9 +248,14 @@ def backend_assets(variant: str) -> dict[str, int]:
     return dict(backend["assets"])
 
 
-def patchset_paths(variant: str) -> list[Path]:
+def patchset_paths(
+    variant: str, build_workflow: Path = EXPERIMENTAL_WORKFLOW
+) -> list[Path]:
     backend = backend_for(variant)
-    relative_paths = [Path(value) for value in COMMON_PATCHSET_PATHS]
+    workflow = Path(build_workflow)
+    if workflow not in SUPPORTED_WORKFLOWS:
+        raise ContractError("unsupported build workflow for the packaging patch set")
+    relative_paths = [workflow, *(Path(value) for value in COMMON_PATCHSET_PATHS)]
     asset_root = Path(str(backend["asset_root"]))
     relative_paths.extend(asset_root / value for value in backend_assets(variant))
     if variant == "windows-msys2":
@@ -265,9 +287,13 @@ def require_regular_file(root: Path, relative: Path) -> Path:
     return path
 
 
-def packaging_patchset_sha256(root: Path, variant: str) -> str:
+def packaging_patchset_sha256(
+    root: Path,
+    variant: str,
+    build_workflow: Path = EXPERIMENTAL_WORKFLOW,
+) -> str:
     records = []
-    for relative in patchset_paths(variant):
+    for relative in patchset_paths(variant, build_workflow):
         source = require_regular_file(root, relative)
         name = relative.as_posix()
         if any(character in name for character in ("\\", "\n", "\r")):

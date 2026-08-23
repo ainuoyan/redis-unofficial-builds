@@ -2,87 +2,82 @@
 
 [English](README.md)
 
-本仓库提供按版本发布的 Redis 非官方二进制包。稳定发布路径仍是 glibc 2.28 Linux；
-其他 ABI 和操作系统后端使用独立的实验性手工构建与预发布路径。
+本仓库提供按版本发布的 Redis 非官方二进制包。每个纯数字稳定 Release 都是原子化的
+全平台集合：glibc 2.28 Linux、glibc 2.17 legacy Linux、musl 1.2 Linux、
+macOS 15+ 和 Windows x64。同一 Redis 版本、同一打包提交的全部原生构建、包校验
+与生命周期验收 Job 通过之前，不允许开始发布。
 
 > 本项目与 Redis Ltd. 无关联，也未获得其背书。Redis 及其捆绑依赖仍受每个包内
 > 许可证和 notices 文件的约束。
 
 ## 可用包
 
-只有标记为“已实现”的平台才具备纯数字稳定 GitHub Release 发布资格。“实验性”平台
-只有在完整原生工作流及下载后产物门禁全部通过后，才能进入使用独立 Tag 的 GitHub
-预发布；它不代表生产支持。
+下表所有平台都是同一个纯数字稳定 GitHub Release 中已实现且已启用控制器的成员。
+任一平台缺失或失败都会阻止整个 Release，发布器不会发布部分集合。
 
 | 包变体 | 架构 | 运行要求 | 状态 |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
 | `linux-glibc2.28` | `arm64` | Linux、glibc 2.28+；默认 systemd，可使用 `--no-service` | 已实现 |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux、glibc 2.17+、systemd | 实验性预发布 |
-| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 实验性预发布 |
-| `macos12` | `x64` / `arm64` | macOS 12+、launchd | 实验性预发布 |
-| `windows-msys2` | `x64` | Windows Server 2022 测试 Runner、Windows SCM | 实验性预发布 |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux、glibc 2.17+；默认 systemd，可使用 `--no-service` | 已实现 |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux、OpenRC | 已实现 |
+| `macos15` | `x64` / `arm64` | macOS 15+、launchd | 已实现 |
+| `windows-msys2` | `x64` | x64 Windows、MSYS2 运行时、Windows SCM | 已实现 |
 
-当前已实现的发布目标仍仅支持 glibc 2.28 Linux。同架构的 glibc 2.28 包通常可在
-更高版本 glibc 上运行；Alpine 等 musl 系统必须使用单独命名的 musl artifact。Linux 包是普通
-`.tar.gz` 压缩包，不依赖 RPM、DEB、Snap 或 APK。正式产物从仓库的
+glibc、musl、macOS 和 Windows 包具有不同的运行时契约，不能混用。Linux 包是
+普通 `.tar.gz` 压缩包，不依赖 RPM、DEB、Snap 或 APK；Windows 使用 `.zip`。
+正式产物从仓库的
 [GitHub Releases](https://github.com/ainuoyan/redis-unofficial-builds/releases)
 下载。
 
-使用下文生命周期操作前，必须确认所选 Release 精确包含下一节定义的 7 个当前格式
-产物。旧的 4 产物 Release 属于历史二进制包，不包含当前的生命周期脚本和元数据；
-自动化会拒绝修改或补全这些 Release。
+使用下文生命周期操作前，必须确认所选 Release 精确包含下一节定义的 21 个全平台
+产物。旧 Release 属于历史包；不可变 Tag 不能复用，自动化会拒绝修改或补全它们。
 
-当前 Linux 工作流生成的包固定安装到 `/usr/local/redis`，采用 `core` 构建配置：
-包含 Redis 服务端及命令行程序，不包含 Redis 8 源码包捆绑的模块。TLS 未启用，
-与默认 Redis `make` 构建一致。
+所有包采用 `core` 构建配置，不包含 Redis 8 源码包捆绑的模块。TLS 未启用，与默认
+Redis `make` 构建一致。Linux 和 macOS 固定安装到 `/usr/local/redis`，Windows
+固定安装到 `C:\Program Files\Redis-Unofficial`。
 
 平台状态和验收标准见[多平台发布方案](docs/PLATFORM-DESIGN.zh-CN.md)。Windows
 方案固定参考
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 提交
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)。
-当前不宣称存在稳定 Windows Release、Windows 生产支持或原生 Windows ARM64 支持。
-详见
+稳定 Windows 成员是本仓库独立实现的 MSYS2 x64 方案，没有复制参考项目的代码；
+当前不宣称原生 Windows ARM64、TLS 或受管 Sentinel 服务。详见
 [Windows issue 覆盖表](docs/WINDOWS-ISSUE-COVERAGE.md)和
 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-### 实验性手工 artifact 与预发布
+### 手工验收 artifact
 
-> **实验性运行身份迁移：** 当前命名清理之前生成的包不支持原地升级。请先备份
+> **包运行身份迁移：** 当前命名清理之前生成的包不支持原地升级。请先备份
 > `conf/` 与 `data/`，使用已安装包自带的脚本完成卸载，再用新构建的 artifact
 > 执行全新安装。
 
 可手工触发 `.github/workflows/build-experimental.yml`，输入一个精确的官方稳定版
 Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交，再按所选平台原生
-构建、校验包内内容，并上传保留 7 天的 Actions artifact：
+构建、校验包内内容，并上传保留 7 天的**实验性** Actions artifact。同一个只读工作流
+也会被稳定发布器复用；只有该调用方绑定的模式才会生成 `PACKAGE_STATUS=release` 包：
 
 - glibc 2.17 legacy：x64、ARM64 `.tar.gz`，包含经审查的 systemd 生命周期脚本；
 - musl 1.2：x64、ARM64 `.tar.gz`，包含 OpenRC 生命周期脚本；
-- macOS 12+：原生 x64、ARM64 `.tar.gz`，包含 launchd 生命周期脚本；
+- macOS 15+：原生 x64、ARM64 `.tar.gz`，包含 launchd 生命周期脚本；
 - Windows：一个 x64 MSYS2 `.zip`，包含专用 SCM 包装器和 PowerShell 生命周期脚本。
 
-每个包都有相邻 `.sha256`，包元数据明确标记为 `experimental`。构建工作流权限为
-`contents: read`，没有 Release/Tag 操作，发布控制器不能调用它，也不生成稳定发布的
-manifest、SBOM 或证明。它在一次性 CI 环境中测试无 systemd 的 legacy Linux
-生命周期、Alpine 容器内的 OpenRC、原生 macOS 15 launchd 和 Windows Server 2022
-SCM，并覆盖已保存数据的重载及普通卸载后的恢复。但它尚未覆盖启动了 systemd 的
-代表性旧系统、以 OpenRC 引导的主机、声明支持的最老 macOS 12、故障注入回滚及其余
-平台安全和负载场景。因此门禁通过也不代表产物已获得生产支持。实验包布局以包内
-`README.txt` 为准；下文稳定生命周期说明只适用于 GitHub Release 中的
-`linux-glibc2.28` 包。
-配置中存在实验性行不代表原生工作流已经成功运行；下载前必须核对所选 run 及其日志。
+可复用工作流自身只有 `contents: read`，不能创建 Tag 或 Release。稳定发布还必须完成
+9 组包与校验文件的精确集合、统一元数据、证明、受保护默认分支身份、`release`
+Environment、草稿回读和发布后回读。手工 artifact 始终是实验性产物，纯数字发布器
+不会接受它们。
 
-同一 Redis 版本、同一打包提交的七个平台 Job 全部通过后，维护者可以把下载并复验的
-文件发布到独立预发布 Tag `X.Y.Z-experimental.N`。该预发布必须精确包含 15 个产物：
-7 个压缩包、7 个相邻 `.sha256` 以及覆盖其余 14 个文件的 `SHA256SUMS`。它绝不与
-纯数字 `X.Y.Z` 稳定 Release 共用或修改资产，发布时设置 `latest=false`，状态仍为
-实验性。如果同名预发布 Tag 或 Release 已存在，不得覆盖或补全；必须完成新的全量
-构建并递增 `N`。
+验收覆盖真实二进制架构与运行时、glibc 符号上限、Redis 构建测试与协议冒烟、
+安装/更新/卸载幂等性、持久化数据恢复、OpenRC/launchd/Windows 故障注入更新回滚、
+原生 macOS 15 launchd，以及 Windows 端口冲突、非 ASCII 暂存路径、BGSAVE、
+有界负载、子进程异常恢复和密码文件认证的优雅关闭。glibc 2.17 生命周期门禁在固定
+legacy 用户态中以无 systemd 模式运行；共享 systemd 脚本由两个 glibc 2.28 架构
+分别实测。这些检查定义的是本项目测试过的包契约，不代表 Redis Ltd. 提供厂商支持。
 
 ## Release 与包内容
 
-当前 Linux 发布器生成的每个 Release 必须恰好包含 7 个产物。对于确切 Redis
+全平台发布器生成的每个 Release 必须恰好包含 21 个产物。对于确切 Redis
 版本 `X.Y.Z`，文件名为：
 
 ```text
@@ -90,14 +85,29 @@ Redis-X.Y.Z-linux-glibc2.28-x64.tar.gz
 Redis-X.Y.Z-linux-glibc2.28-x64.tar.gz.sha256
 Redis-X.Y.Z-linux-glibc2.28-arm64.tar.gz
 Redis-X.Y.Z-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
+Redis-X.Y.Z-macos15-x64.tar.gz
+Redis-X.Y.Z-macos15-x64.tar.gz.sha256
+Redis-X.Y.Z-macos15-arm64.tar.gz
+Redis-X.Y.Z-macos15-arm64.tar.gz.sha256
+Redis-X.Y.Z-windows-msys2-x64.zip
+Redis-X.Y.Z-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-X.Y.Z.spdx.json
 ```
 
-`SHA256SUMS` 覆盖其余 6 个产物。`manifest.json` 绑定 Redis 源码校验和、
-不可变 `redis-hashes` 快照提交、打包提交、补丁集校验和、架构、ABI 基线、包
-大小及包校验和。SPDX 2.3 文件是 Redis 源码及两个发布包的
+`SHA256SUMS` 覆盖其余 20 个产物。`manifest.json` 绑定 Redis 源码校验和、
+不可变 `redis-hashes` 快照提交、打包提交、各平台补丁集校验和、操作系统、架构、
+运行时/ABI 基线、服务后端、包大小及包校验和。SPDX 2.3 文件是 Redis 源码及
+9 个发布包的
 **Release 包级清单**，不是文件级或完整传递依赖 SBOM。
 
 所有当前 `PACKAGE_FORMAT=2` 压缩包都采用以下 `redis/` 布局；较早 Redis 版本的
@@ -149,14 +159,14 @@ archive="Redis-${version}-linux-glibc2.28-x64.tar.gz"
 sha256sum -c "${archive}.sha256"
 ```
 
-如果同一目录中已有全部 7 个产物，可校验完整集合：
+如果同一目录中已有全部 21 个产物，可校验完整集合：
 
 ```bash
 sha256sum -c SHA256SUMS
 ```
 
 相邻 `.sha256` 和 `SHA256SUMS` 与压缩包处于同一 GitHub Release 信任边界，
-均不是独立签名。当前工作流还为 7 个产物生成 SLSA 来源证明，并为两个压缩包生成
+均不是独立签名。当前工作流还为 21 个产物生成 SLSA 来源证明，并为 9 个压缩包生成
 SPDX 证明。安装 [GitHub CLI](https://cli.github.com/) 后，应分别验证两种 predicate：
 
 ```bash
@@ -187,8 +197,9 @@ gh attestation verify \
 - `getent`、`groupadd`、`groupdel`、`useradd`、`userdel` 等账号管理命令；
 - 使用服务模式时需要正在运行的 systemd 和 `systemctl`；`--no-service` 则执行
   完整的受管安装，但不要求或注册 systemd；
-- 当前包变体要求 glibc 2.28 或以上。脚本要求使用 `getconf` 验证主机 glibc 版本，
-  随后还会实际执行新二进制完成最终兼容性检查。
+- `linux-glibc2.28` 要求 glibc 2.28 或以上；`linux-glibc2.17-legacy` 要求
+  glibc 2.17 或以上。脚本使用 `getconf` 验证主机 glibc 版本，随后还会实际执行
+  新二进制完成最终兼容性检查。
 
 不同发行版的软件包名不同，常见提供者包括 `bash`、`coreutils`、`tar`、
 `findutils`、`gawk`、`grep`、`sed`、`util-linux`、`shadow-utils`、`glibc` 和
@@ -387,12 +398,12 @@ Rocky 软件源依赖在构建时解析，因此会记录编译器/运行库信�
 
 ## 发布自动化与不可变策略
 
-[Linux 工作流](.github/workflows/build-linux.yml)只有手工和 `workflow_call`
+[全平台工作流](.github/workflows/build-linux.yml)只有手工和 `workflow_call`
 入口，没有 push 或 schedule 触发器；发布默认关闭。
 
 当前发布器只创建全新的纯数字 `X.Y.Z` Release 和 Tag：
 
-1. 要求两个架构和完整、精确的 7 个产物；
+1. 要求 9 个平台压缩包和完整、精确的 21 个产物；
 2. 只允许从受保护默认分支经名为 `release` 的 GitHub Environment 运行；
 3. 一次创建包含所有产物的草稿 Release；
 4. 把每个远端产物的数字 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，

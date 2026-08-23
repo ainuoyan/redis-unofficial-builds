@@ -64,13 +64,15 @@ package_root_from_script() {
 }
 
 validate_package() {
-  local root="$1" machine package_arch version binary_version validation_dir validation_binary
+  local root="$1" machine package_arch package_status version binary_version validation_dir validation_binary
   [[ -f "$root/PACKAGE-INFO" && ! -L "$root/PACKAGE-INFO" ]] \
     || die "PACKAGE-INFO is missing or unsafe."
+  package_status="$(metadata_value "$root/PACKAGE-INFO" PACKAGE_STATUS)"
+  [[ "$package_status" == experimental || "$package_status" == release ]] \
+    || die "The package has an unsupported publication status."
   [[ "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_FORMAT)" == 3 \
-    && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_STATUS)" == experimental \
     && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_ID)" == redis-unofficial-builds \
-    && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_VARIANT)" == macos12 \
+    && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_VARIANT)" == macos15 \
     && "$(metadata_value "$root/PACKAGE-INFO" SERVICE_BACKEND)" == launchd \
     && "$(metadata_value "$root/PACKAGE-INFO" INSTALL_PREFIX)" == "$REDIS_PREFIX" ]] \
     || die "The package metadata does not match the macOS/launchd contract."
@@ -162,7 +164,7 @@ write_default_config() {
   install -m 0644 "$source" "$destination"
   cat >>"$destination" <<'EOF'
 
-# Managed experimental package defaults. Later records override upstream defaults.
+# Managed package defaults. Later records override upstream defaults.
 bind 127.0.0.1 -::1
 protected-mode yes
 port 0
@@ -177,15 +179,15 @@ EOF
 }
 
 write_state() {
-  local version="$1" temporary
+  local version="$1" package_status="$2" temporary
   temporary="$REDIS_STATE_FILE.tmp.$$"
   {
     printf 'STATE_FORMAT=2\n'
     printf 'PACKAGE_ID=redis-unofficial-builds\n'
-    printf 'PACKAGE_STATUS=experimental\n'
+    printf 'PACKAGE_STATUS=%s\n' "$package_status"
     printf 'INSTALL_PREFIX=%s\n' "$REDIS_PREFIX"
     printf 'REDIS_VERSION=%s\n' "$version"
-    printf 'PACKAGE_VARIANT=macos12\n'
+    printf 'PACKAGE_VARIANT=macos15\n'
     printf 'SERVICE_MANAGER=launchd\n'
     printf 'SERVICE_ID=%s\n' "$REDIS_LABEL"
   } >"$temporary"
@@ -199,8 +201,9 @@ validate_state() {
     && "$(stat -f '%u:%g:%Lp:%l' "$REDIS_STATE_FILE")" == 0:0:600:1 \
     && "$(metadata_value "$REDIS_STATE_FILE" STATE_FORMAT)" == 2 \
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_ID)" == redis-unofficial-builds \
+    && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_STATUS)" =~ ^(experimental|release)$ \
     && "$(metadata_value "$REDIS_STATE_FILE" INSTALL_PREFIX)" == "$REDIS_PREFIX" \
-    && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_VARIANT)" == macos12 \
+    && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_VARIANT)" == macos15 \
     && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == launchd \
     && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_ID)" == "$REDIS_LABEL" ]] \
     || die "The existing installation state is missing or invalid."

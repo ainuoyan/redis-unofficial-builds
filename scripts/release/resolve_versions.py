@@ -28,14 +28,21 @@ SUPPORTED_BACKEND_CONTRACTS = {
     "build-linux.yml": {
         ("linux-glibc2.28", "linux", "x64", "tar.gz"),
         ("linux-glibc2.28", "linux", "arm64", "tar.gz"),
+        ("linux-glibc2.17-legacy", "linux", "x64", "tar.gz"),
+        ("linux-glibc2.17-legacy", "linux", "arm64", "tar.gz"),
+        ("linux-musl1.2", "linux", "x64", "tar.gz"),
+        ("linux-musl1.2", "linux", "arm64", "tar.gz"),
+        ("macos15", "macos", "x64", "tar.gz"),
+        ("macos15", "macos", "arm64", "tar.gz"),
+        ("windows-msys2", "windows", "x64", "zip"),
     },
     "build-experimental.yml": {
         ("linux-glibc2.17-legacy", "linux", "x64", "tar.gz"),
         ("linux-glibc2.17-legacy", "linux", "arm64", "tar.gz"),
         ("linux-musl1.2", "linux", "x64", "tar.gz"),
         ("linux-musl1.2", "linux", "arm64", "tar.gz"),
-        ("macos12", "macos", "x64", "tar.gz"),
-        ("macos12", "macos", "arm64", "tar.gz"),
+        ("macos15", "macos", "x64", "tar.gz"),
+        ("macos15", "macos", "arm64", "tar.gz"),
         ("windows-msys2", "windows", "x64", "zip"),
     },
 }
@@ -46,21 +53,21 @@ REQUIRED_ENABLED_PLATFORM_IDS = {
 }
 REQUIRED_DESIGN_PLATFORM_CONTRACTS = {
     "linux-glibc2.17-legacy-x64": (
-        "linux-glibc2.17-legacy", "linux", "x64", "tar.gz", "experimental"
+        "linux-glibc2.17-legacy", "linux", "x64", "tar.gz", "implemented"
     ),
     "linux-glibc2.17-legacy-arm64": (
-        "linux-glibc2.17-legacy", "linux", "arm64", "tar.gz", "experimental"
+        "linux-glibc2.17-legacy", "linux", "arm64", "tar.gz", "implemented"
     ),
     "linux-musl1.2-x64": (
-        "linux-musl1.2", "linux", "x64", "tar.gz", "experimental"
+        "linux-musl1.2", "linux", "x64", "tar.gz", "implemented"
     ),
     "linux-musl1.2-arm64": (
-        "linux-musl1.2", "linux", "arm64", "tar.gz", "experimental"
+        "linux-musl1.2", "linux", "arm64", "tar.gz", "implemented"
     ),
-    "macos12-x64": ("macos12", "macos", "x64", "tar.gz", "experimental"),
-    "macos12-arm64": ("macos12", "macos", "arm64", "tar.gz", "experimental"),
+    "macos15-x64": ("macos15", "macos", "x64", "tar.gz", "implemented"),
+    "macos15-arm64": ("macos15", "macos", "arm64", "tar.gz", "implemented"),
     "windows-msys2-x64": (
-        "windows-msys2", "windows", "x64", "zip", "experimental"
+        "windows-msys2", "windows", "x64", "zip", "implemented"
     ),
 }
 MAX_INPUT_BYTES = 16 * 1024 * 1024
@@ -378,7 +385,7 @@ def validate_repository_platform_matrix(config: dict[str, Any]) -> None:
             platform["archive_extension"],
             platform["status"],
         )
-        if actual != expected or platform["controller_enabled"]:
+        if actual != expected or not platform["controller_enabled"]:
             raise PlanError(
                 f"Platform contract changed without backend review: {platform_id}"
             )

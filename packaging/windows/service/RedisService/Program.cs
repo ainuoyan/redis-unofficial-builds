@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 
 namespace RedisUnofficial.Service;
@@ -29,7 +29,13 @@ internal static class Program
     private static IntPtr _statusHandle;
     private static uint _checkpoint;
 
-    private sealed record Settings(string ConfigPath, string BindAddress, int Port, int ShutdownTimeoutSeconds);
+    private sealed record Settings(
+        string ConfigPath,
+        string BindAddress,
+        int Port,
+        int ShutdownTimeoutSeconds,
+        string? Username = null,
+        string? PasswordFile = null);
 
     private static int Main(string[] args)
     {
@@ -167,10 +173,15 @@ internal static class Program
         if (settings is null
             || settings.BindAddress != "127.0.0.1"
             || settings.Port is < 1 or > 65535
-            || settings.ShutdownTimeoutSeconds is < 5 or > 300)
+            || settings.ShutdownTimeoutSeconds is < 5 or > 300
+            || (settings.Username is not null
+                && (settings.PasswordFile is null
+                    || settings.Username.Length is < 1 or > 256
+                    || settings.Username.IndexOfAny(['\0', '\r', '\n']) >= 0)))
         {
             throw new InvalidOperationException("RedisService.json violates the managed service contract.");
         }
+        _ = LoadPassword(settings);
         return settings;
     }
 
@@ -179,38 +190,39 @@ internal static class Program
         Stopwatch timer = Stopwatch.StartNew();
         while (timer.Elapsed < timeout && !process.HasExited && !StopRequested.IsSet)
         {
-            try
+            if (RunRedisCli(settings, "ping", out string output)
+                && output.Trim().Equals("PONG", StringComparison.Ordinal))
             {
-                using TcpClient client = new();
-                Task connect = client.ConnectAsync(settings.BindAddress, settings.Port);
-                if (connect.Wait(TimeSpan.FromSeconds(1)) && client.Connected)
-                {
-                    using NetworkStream stream = client.GetStream();
-                    stream.Write("*1\r\n$4\r\nPING\r\n"u8);
-                    stream.ReadTimeout = 1000;
-                    byte[] response = new byte[16];
-                    int count = stream.Read(response, 0, response.Length);
-                    if (count >= 7 && response.AsSpan(0, 7).SequenceEqual("+PONG\r\n"u8))
-                    {
-                        return true;
-                    }
-                }
-            }
-            catch (Exception exception) when (exception is SocketException or IOException or AggregateException)
-            {
-                // Redis is still starting.
+                Thread.Sleep(100);
+                return !process.HasExited;
             }
             Thread.Sleep(500);
         }
         return false;
     }
 
-    private static void StopChild(Process process, Settings settings)
+    private static string? LoadPassword(Settings settings)
     {
-        if (process.HasExited)
+        if (settings.PasswordFile is null)
         {
-            return;
+            return null;
         }
+        string passwordPath = ResolveManagedPath(settings.PasswordFile, "password file");
+        FileInfo passwordFile = new(passwordPath);
+        if (!passwordFile.Exists || passwordFile.Length is < 1 or > 4096)
+        {
+            throw new InvalidOperationException("The managed Redis password file is missing or invalid.");
+        }
+        string password = File.ReadAllText(passwordPath, new UTF8Encoding(false, true));
+        if (password.Length is < 1 or > 1024 || password.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        {
+            throw new InvalidOperationException("The managed Redis password file has invalid content.");
+        }
+        return password;
+    }
+
+    private static bool RunRedisCli(Settings settings, string command, out string output)
+    {
         string clientPath = ResolveManagedPath(Path.Combine(PrefixPath(), "bin", "redis-cli.exe"), "client");
         try
         {
@@ -220,19 +232,59 @@ internal static class Program
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
                 }
             };
             client.StartInfo.ArgumentList.Add("-h");
             client.StartInfo.ArgumentList.Add(settings.BindAddress);
             client.StartInfo.ArgumentList.Add("-p");
             client.StartInfo.ArgumentList.Add(settings.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            client.StartInfo.ArgumentList.Add("shutdown");
-            client.Start();
-            client.WaitForExit(10_000);
+            if (settings.Username is not null)
+            {
+                client.StartInfo.ArgumentList.Add("--user");
+                client.StartInfo.ArgumentList.Add(settings.Username);
+            }
+            string? password = LoadPassword(settings);
+            if (password is not null)
+            {
+                client.StartInfo.Environment["REDISCLI_AUTH"] = password;
+            }
+            client.StartInfo.ArgumentList.Add(command);
+            if (!client.Start())
+            {
+                output = string.Empty;
+                return false;
+            }
+            string stdout = client.StandardOutput.ReadToEnd();
+            _ = client.StandardError.ReadToEnd();
+            if (!client.WaitForExit(10_000))
+            {
+                client.Kill(entireProcessTree: true);
+                client.WaitForExit(10_000);
+                output = string.Empty;
+                return false;
+            }
+            output = stdout;
+            return client.ExitCode == 0;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.SecurityException)
         {
-            Log($"Graceful shutdown command failed: {exception.Message}");
+            Log($"Redis client command failed: {exception.Message}");
+            output = string.Empty;
+            return false;
+        }
+    }
+
+    private static void StopChild(Process process, Settings settings)
+    {
+        if (process.HasExited)
+        {
+            return;
+        }
+        if (!RunRedisCli(settings, "shutdown", out _))
+        {
+            Log("Graceful shutdown command failed.");
         }
 
         if (process.WaitForExit(settings.ShutdownTimeoutSeconds * 1000))
@@ -259,7 +311,8 @@ internal static class Program
     private static string ResolveManagedPath(string candidate, string description)
     {
         string prefix = PrefixPath().TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        string path = Path.GetFullPath(candidate);
+        string path = Path.GetFullPath(
+            Path.IsPathFullyQualified(candidate) ? candidate : Path.Combine(PrefixPath(), candidate));
         if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || path.Contains('\0'))
         {
             throw new InvalidOperationException($"The {description} path escapes the managed prefix.");

@@ -1412,7 +1412,9 @@ exit 99
             encoding="utf-8"
         )
         self.assertIn("umask 022; exec tar", generated_readme)
-        self.assertGreaterEqual(workflow.count("umask 022; exec tar"), 3)
+        self.assertNotIn("sudo -E", workflow)
+        self.assertGreaterEqual(workflow.count("umask 022; exec tar"), 1)
+        self.assertIn("Follow the package-local", workflow)
 
     @staticmethod
     def _validate_package_root(package_root: Path) -> subprocess.CompletedProcess[str]:

@@ -82,7 +82,6 @@ function Read-PackageInfo {
     }
     $expected = @{
         PACKAGE_FORMAT = '3'
-        PACKAGE_STATUS = 'experimental'
         PACKAGE_ID = 'redis-unofficial-builds'
         PACKAGE_VARIANT = 'windows-msys2'
         PACKAGE_ARCH = 'x64'
@@ -95,6 +94,9 @@ function Read-PackageInfo {
         if (-not $values.ContainsKey($key) -or $values[$key] -cne $expected[$key]) {
             throw "PACKAGE-INFO does not match the Windows MSYS2 contract: $key"
         }
+    }
+    if ($values['PACKAGE_STATUS'] -cnotin @('experimental', 'release')) {
+        throw 'PACKAGE-INFO has an unsupported publication status.'
     }
     if ($values['REDIS_VERSION'] -notmatch '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$') {
         throw 'PACKAGE-INFO contains an invalid Redis version.'
@@ -162,6 +164,7 @@ function Read-RedisState {
     Assert-NoReparsePoint -Path $script:RedisStateFile
     $state = [IO.File]::ReadAllText($script:RedisStateFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
     if ($state.StateFormat -ne 2 -or $state.PackageId -cne 'redis-unofficial-builds' -or
+        $state.PackageStatus -cnotin @('experimental', 'release') -or
         $state.InstallPrefix -cne $script:RedisPrefix -or $state.PackageVariant -cne 'windows-msys2' -or
         $state.ServiceName -cne $script:RedisServiceName -or
         $state.RedisVersion -notmatch '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$') {
@@ -171,11 +174,14 @@ function Read-RedisState {
 }
 
 function Write-RedisState {
-    param([Parameter(Mandatory = $true)][string]$Version)
+    param(
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][ValidateSet('experimental', 'release')][string]$PackageStatus
+    )
     $state = [ordered]@{
         StateFormat = 2
         PackageId = 'redis-unofficial-builds'
-        PackageStatus = 'experimental'
+        PackageStatus = $PackageStatus
         InstallPrefix = $script:RedisPrefix
         RedisVersion = $Version
         PackageVariant = 'windows-msys2'
@@ -196,7 +202,7 @@ function Write-ManagedRedisConfig {
     [IO.File]::Copy($Source, $Destination, $false)
     $managed = @'
 
-# Managed experimental Windows defaults. Later records override upstream defaults.
+# Managed Windows defaults. Later records override upstream defaults.
 bind 127.0.0.1
 protected-mode yes
 port 6379
@@ -259,8 +265,8 @@ function New-RedisService {
     if ($null -ne (Get-RedisService)) { throw 'RedisUnofficial service already exists.' }
     $wrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
     $binaryPath = '"' + $wrapper + '" --service'
-    New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis unofficial (experimental)' `
-        -Description 'Experimental MSYS2 Redis package from redis-unofficial-builds' -StartupType Automatic | Out-Null
+    New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis unofficial' `
+        -Description 'Redis package from redis-unofficial-builds' -StartupType Automatic | Out-Null
     & sc.exe config $script:RedisServiceName start= delayed-auto | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure delayed service start.' }
     & sc.exe failure $script:RedisServiceName reset= 86400 actions= restart/5000/restart/15000/none/0 | Out-Null
@@ -308,13 +314,7 @@ function Start-RedisServiceAndWait {
     }
     $service = Get-Service -Name $script:RedisServiceName
     $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(90))
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $response = & (Join-Path $script:RedisPrefix 'bin\redis-cli.exe') -h 127.0.0.1 -p 6379 ping 2>$null
-        if ($LASTEXITCODE -eq 0 -and ([string]$response).Trim() -ceq 'PONG') { return }
-        Start-Sleep -Milliseconds 500
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'RedisUnofficial service did not pass the Redis PING readiness check.'
+    # The wrapper reports Running only after its authenticated Redis PING passes.
 }
 
 function Stop-RedisServiceIfRunning {

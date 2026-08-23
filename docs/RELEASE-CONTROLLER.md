@@ -50,9 +50,9 @@ The controller writes:
 - `new-series.json`: stable series above the configured discovery floor;
 - `summary.md`: the same decisions for the GitHub job summary.
 
-Experimental and design-only platforms are reported as controller-disabled and
-never added to the matrices, even when an experimental row names its manual
-artifact workflow. A new series is assigned `candidate_then_pull_request` and
+Design-only platforms are reported as controller-disabled and never added to
+the matrices. Manual experimental artifacts do not alter the checked-in stable
+platform status. A new series is assigned `candidate_then_pull_request` and
 requires reviewed configuration enrollment.
 
 ### Current exact Release inventory
@@ -64,6 +64,20 @@ Redis-{version}-linux-glibc2.28-x64.tar.gz
 Redis-{version}-linux-glibc2.28-x64.tar.gz.sha256
 Redis-{version}-linux-glibc2.28-arm64.tar.gz
 Redis-{version}-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-x64.tar.gz
+Redis-{version}-linux-musl1.2-x64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-arm64.tar.gz
+Redis-{version}-linux-musl1.2-arm64.tar.gz.sha256
+Redis-{version}-macos15-x64.tar.gz
+Redis-{version}-macos15-x64.tar.gz.sha256
+Redis-{version}-macos15-arm64.tar.gz
+Redis-{version}-macos15-arm64.tar.gz.sha256
+Redis-{version}-windows-msys2-x64.zip
+Redis-{version}-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-{version}.spdx.json
@@ -75,7 +89,7 @@ The resulting actions are:
 | Action | Meaning | Matrix behavior |
 | --- | --- | --- |
 | `plan_new_release` | No Release exists; all enabled platform and release metadata assets are missing | Add version and platform rows |
-| `skip_complete` | The published Release name inventory exactly matches all seven names | Add no rows |
+| `skip_complete` | The published Release name inventory exactly matches all 21 names | Add no rows |
 | `blocked_nonfinal_release_state` | A numeric stable Release is a draft or prerelease | Report a blocking item; add no rows |
 | `blocked_incomplete_immutable_release` | An existing Release lacks any required package or release-level metadata file | Report a blocking item; add no rows |
 | `blocked_unexpected_immutable_release_assets` | All required names exist, but the Release also has an extra asset | Report a blocking item; add no rows |
@@ -88,7 +102,7 @@ series. The resolver never treats an incomplete Release as ordinary missing
 work and never emits a build row that would complete it.
 
 The resolver reads asset **names only**. `skip_complete` is therefore a
-planning result, not proof of integrity. The publish-capable Linux workflow
+planning result, not proof of integrity. The publish-capable full-platform workflow
 downloads an exact existing Release, validates archives and aggregate
 metadata, checks the tag's packaging revision, and verifies all required
 attestations before it skips a build.
@@ -133,14 +147,14 @@ reproducible.
 
 ### Separation from publication
 
-The [Linux build workflow](../.github/workflows/build-linux.yml) has explicit
+The [full-platform workflow](../.github/workflows/build-linux.yml) has explicit
 manual and `workflow_call` entry points. The plan workflow does not call it.
-Direct publication requires both architectures, the exact seven assets, a
+Direct publication requires all nine platform packages, the exact 21 assets, a
 protected default-branch ref, and the protected GitHub Environment named
 `release`.
 
 The publisher starts only when neither the numeric Release nor tag exists. It
-creates a new draft targeted at the packaging commit, uploads all seven files
+creates a new draft targeted at the packaging commit, uploads all 21 files
 together, validates attestations, reads back the draft's REST
 `target_commitish` and exact inventory, binds remote asset IDs, sizes, and
 GitHub SHA-256 digests to the verified local files, then downloads and
@@ -164,11 +178,11 @@ production publication, and restrict Release writes to the reviewed workflow
 and trusted maintainers.
 
 `manifest.json` binds the source SHA-256, immutable `redis-hashes` commit,
-packaging revision, patch-set hash, and both packages. `SHA256SUMS` covers the
-other six Release assets. The SPDX 2.3 file is explicitly
+packaging revision, per-platform patch-set hashes, and all nine packages.
+`SHA256SUMS` covers the other 20 Release assets. The SPDX 2.3 file is explicitly
 release-package-level rather than a complete transitive component SBOM.
-GitHub Artifact Attestations provide SLSA provenance for all seven assets and
-an SPDX predicate for both archives. Adjacent checksums remain in the same
+GitHub Artifact Attestations provide SLSA provenance for all 21 assets and an
+SPDX predicate for all nine archives. Adjacent checksums remain in the same
 GitHub Release trust boundary and are not independent signatures.
 
 ## 简体中文
@@ -211,8 +225,8 @@ SHA-1 记录忽略。伪装为稳定版但格式错误的记录、冲突重复�
 - `new-series.json`：高于配置发现基线的稳定系列；
 - `summary.md`：供 GitHub Job Summary 使用的同一组决定。
 
-实验性和仅设计平台都会以控制器禁用状态列入报告，即使实验性行指向手工 artifact
-工作流也绝不进入矩阵。新系列标记为
+仅设计平台会以控制器禁用状态列入报告。手工实验性 artifact 不会改变检入仓库的
+稳定平台状态。新系列标记为
 `candidate_then_pull_request`，必须经配置审查后登记。
 
 ### 当前精确 Release 清单
@@ -224,6 +238,20 @@ Redis-{version}-linux-glibc2.28-x64.tar.gz
 Redis-{version}-linux-glibc2.28-x64.tar.gz.sha256
 Redis-{version}-linux-glibc2.28-arm64.tar.gz
 Redis-{version}-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-x64.tar.gz
+Redis-{version}-linux-musl1.2-x64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-arm64.tar.gz
+Redis-{version}-linux-musl1.2-arm64.tar.gz.sha256
+Redis-{version}-macos15-x64.tar.gz
+Redis-{version}-macos15-x64.tar.gz.sha256
+Redis-{version}-macos15-arm64.tar.gz
+Redis-{version}-macos15-arm64.tar.gz.sha256
+Redis-{version}-windows-msys2-x64.zip
+Redis-{version}-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-{version}.spdx.json
@@ -234,7 +262,7 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 | 动作 | 含义 | 矩阵处理 |
 | --- | --- | --- |
 | `plan_new_release` | Release 不存在，全部启用平台与元数据产物均待创建 | 加入版本和平台行 |
-| `skip_complete` | 正式 Release 的名称清单精确匹配 7 个名称 | 不加入 |
+| `skip_complete` | 正式 Release 的名称清单精确匹配 21 个名称 | 不加入 |
 | `blocked_nonfinal_release_state` | 纯数字稳定 Release 是草稿或预发布 | 报告阻塞项，不加入 |
 | `blocked_incomplete_immutable_release` | 已有 Release 缺少任一包或 Release 级元数据 | 报告阻塞项，不加入 |
 | `blocked_unexpected_immutable_release_assets` | 必需名称均存在，但 Release 还含额外产物 | 报告阻塞项，不加入 |
@@ -246,7 +274,7 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 普通缺失任务，也不会生成用于补全它的构建行。
 
 解析器只读取产物**名称**，因此 `skip_complete` 是计划结果，不是完整性证明。具备
-发布能力的 Linux 工作流会下载已有精确 Release，校验包和聚合元数据、检查 Tag
+发布能力的全平台工作流会下载已有精确 Release，校验包和聚合元数据、检查 Tag
 打包提交并验证全部证明后，才跳过构建。
 
 稳定 Release Tag 必须是纯数字 `X.Y.Z`。Release 清单中的 `vX.Y.Z`、
@@ -285,12 +313,12 @@ python3 scripts/release/resolve_versions.py \
 
 ### 与发布分离
 
-[Linux 构建工作流](../.github/workflows/build-linux.yml)具有明确手工和
-`workflow_call` 入口，计划工作流不会调用它。直接发布要求两个架构、精确 7 个
+[全平台工作流](../.github/workflows/build-linux.yml)具有明确手工和
+`workflow_call` 入口，计划工作流不会调用它。直接发布要求 9 个平台包、精确 21 个
 产物、受保护默认分支 ref 和名为 `release` 的受保护 GitHub Environment。
 
 发布器只在对应纯数字 Release 和 Tag 均不存在时开始。它创建目标为打包提交的新草稿，
-一次上传 7 个文件、校验证明、通过 REST 回读草稿的 `target_commitish` 和精确清单，
+一次上传 21 个文件、校验证明、通过 REST 回读草稿的 `target_commitish` 和精确清单，
 把远端产物 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，再下载并按语义
 复验每个文件。临发布前重新核对同一草稿身份、状态、Tag OID 和产物记录，然后按数字
 Release ID 发布。发布后还要求新 Tag 解析到打包提交，回读相同产物记录，再次下载并
@@ -304,8 +332,8 @@ Release ID 发布。发布后还要求新 Tag 解析到打包提交，回读相�
 还必须启用仓库级 Immutable Releases，并把 Release 写权限限制在经审查的工作流和
 可信维护者。
 
-`manifest.json` 绑定源码 SHA-256、不可变 `redis-hashes` 提交、打包提交、补丁集
-哈希和两个包；`SHA256SUMS` 覆盖其他 6 个 Release 产物。SPDX 2.3 明确是 Release
-包级清单，不是完整传递组件 SBOM。GitHub Artifact Attestations 为 7 个产物提供
-SLSA 来源证明，并为两个压缩包提供 SPDX predicate。相邻校验和仍处于同一 GitHub
+`manifest.json` 绑定源码 SHA-256、不可变 `redis-hashes` 提交、打包提交、各平台
+补丁集哈希和 9 个包；`SHA256SUMS` 覆盖其他 20 个 Release 产物。SPDX 2.3 明确是
+Release 包级清单，不是完整传递组件 SBOM。GitHub Artifact Attestations 为 21 个
+产物提供 SLSA 来源证明，并为 9 个压缩包提供 SPDX predicate。相邻校验和仍处于同一 GitHub
 Release 信任边界，不是独立签名。

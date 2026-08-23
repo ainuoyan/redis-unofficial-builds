@@ -255,7 +255,10 @@ def build_spdx(
     ]
     relationships: list[dict[str, str]] = []
     for artifact in manifest["artifacts"]:
-        package_id = f"SPDXRef-Package-{artifact['arch']}"
+        identity = f"{artifact.get('variant', 'package')}-{artifact['arch']}"
+        package_id = "SPDXRef-Package-" + re.sub(
+            r"[^A-Za-z0-9.-]", "-", identity
+        )
         packages.append(
             {
                 "name": artifact["name"],

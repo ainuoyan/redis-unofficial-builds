@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a deterministic, nonpublishing cross-platform Redis package."""
+"""Create a deterministic cross-platform Redis package."""
 
 from __future__ import annotations
 
@@ -18,11 +18,13 @@ from pathlib import Path
 
 from portable_contract import (
     ContractError,
+    EXPERIMENTAL_WORKFLOW,
     archive_name,
     backend_assets,
     packaging_patchset_sha256,
     require_regular_file,
     validate_identity,
+    validate_publication_contract,
     validate_single_line,
 )
 
@@ -56,6 +58,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arch", required=True)
     parser.add_argument("--build-environment", required=True)
     parser.add_argument("--compiler", required=True)
+    parser.add_argument(
+        "--package-status",
+        choices=("experimental", "release"),
+        default="experimental",
+    )
+    parser.add_argument(
+        "--build-workflow",
+        type=Path,
+        default=EXPERIMENTAL_WORKFLOW,
+    )
     return parser.parse_args()
 
 
@@ -155,7 +167,7 @@ def sanitize_config(source: Path) -> bytes:
     lines = []
     for line in text.splitlines():
         if re.match(r"^[ \t]*loadmodule[ \t]", line, re.IGNORECASE):
-            lines.append(f"# Disabled by the experimental core profile: {line}")
+            lines.append(f"# Disabled by the core package profile: {line}")
         else:
             lines.append(line)
     return ("\n".join(lines) + "\n").encode("utf-8")
@@ -209,7 +221,7 @@ def write_metadata(
     version_parts = args.redis_version.split(".")
     package_info = {
         "PACKAGE_FORMAT": "3",
-        "PACKAGE_STATUS": "experimental",
+        "PACKAGE_STATUS": args.package_status,
         "PACKAGE_ID": "redis-unofficial-builds",
         "REDIS_VERSION": args.redis_version,
         "REDIS_SERIES": ".".join(version_parts[:2]),
@@ -235,8 +247,7 @@ def write_metadata(
         f"Redis version: {args.redis_version}\n"
         f"Package variant: {args.variant}\n"
         f"Package architecture: {args.arch}\n"
-        "Package status: experimental; separate GitHub prerelease publication "
-        "is allowed after acceptance\n"
+        f"Package status: {args.package_status}\n"
         f"Build environment: {validate_single_line('build environment', args.build_environment)}\n"
         f"Compiler: {validate_single_line('compiler', args.compiler)}\n"
         f"Redis source SHA256: {args.source_sha256}\n"
@@ -262,7 +273,7 @@ Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、tar
 及标准 POSIX 账号/文件工具。默认服务只监听
 /usr/local/redis/data/redis.sock。""",
-        "macos12": """Host prerequisites: macOS 12 or newer and an Administrator account. The
+        "macos15": """Host prerequisites: macOS 15 or newer and an Administrator account. The
 default service listens only on /usr/local/redis/data/redis.sock.
 
 Install:   sudo ./scripts/install.sh
@@ -270,21 +281,55 @@ Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
-主机前提：macOS 12 或更高版本及管理员账号。默认服务只监听
+主机前提：macOS 15 或更高版本及管理员账号。默认服务只监听
 /usr/local/redis/data/redis.sock。""",
         "windows-msys2": r"""Host prerequisites: x64 Windows and an elevated Windows PowerShell 5.1
-or newer session. The fixed service endpoint is 127.0.0.1:6379.
+or newer session. The default service endpoint is 127.0.0.1:6379.
 
 Install:   .\scripts\Install-Redis.ps1
 Update:    .\scripts\Update-Redis.ps1   (run from the newly extracted package)
 Uninstall: & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1'
 Purge:     & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1' -Purge
 
+For password authentication, stop the service, configure Redis, store the exact
+password without a trailing newline in conf\service-password.txt, and add
+"PasswordFile": "conf\\service-password.txt" to RedisService.json. Add the
+matching "Username" only when using a named ACL user. BindAddress and Port in
+RedisService.json must match redis.conf. The wrapper passes the password through
+REDISCLI_AUTH, performs authenticated readiness and shutdown, and never places
+the password on a command line. Update preserves RedisService.json.
+
 主机前提：x64 Windows，以及以管理员身份运行的 Windows PowerShell 5.1 或
-更高版本。固定服务端点为 127.0.0.1:6379。""",
+更高版本。默认服务端点为 127.0.0.1:6379。启用密码认证时，先停止服务并配置
+Redis，再将不含末尾换行的精确密码写入 conf\service-password.txt，并在
+RedisService.json 中增加 "PasswordFile": "conf\\service-password.txt"；仅在
+使用具名 ACL 用户时增加匹配的 "Username"。RedisService.json 的 BindAddress
+与 Port 必须和 redis.conf 一致。包装器通过 REDISCLI_AUTH 完成认证就绪和优雅
+关闭，不把密码放入命令行；更新会保留 RedisService.json。""",
     }[args.variant]
-    return f"""Redis {args.redis_version} experimental unofficial package
-Redis {args.redis_version} 实验性非官方安装包
+    if args.package_status == "release":
+        title = "unofficial release package"
+        title_zh = "非官方正式发布安装包"
+        publication = """This package is part of the numeric stable GitHub Release for this exact
+Redis version. Its archive, checksum, release manifest, package-level SPDX
+document, and GitHub attestations must be verified together before use.
+
+此安装包属于该 Redis 精确版本的纯数字稳定 GitHub Release。使用前必须同时验证
+压缩包、校验文件、Release 清单、发布包级 SPDX 文档和 GitHub 证明。"""
+    else:
+        title = "experimental unofficial package"
+        title_zh = "实验性非官方安装包"
+        publication = """This artifact is produced only by the manual experimental workflow. It may be
+published only in a separately tagged GitHub prerelease after all seven
+platform jobs for this exact Redis version and packaging revision pass and the
+downloaded assets are revalidated. It is not eligible for the numeric stable
+Release and does not claim production support.
+
+此产物仅由手工实验构建工作流生成。只有同一 Redis 版本、同一打包提交的七个平台
+Job 全部通过，且下载后的产物完成复验后，才能进入使用独立 Tag 的 GitHub 预发布。
+它不具备纯数字稳定 Release 发布资格，也不代表生产支持。"""
+    return f"""Redis {args.redis_version} {title}
+Redis {args.redis_version} {title_zh}
 
 Variant: {args.variant}
 Architecture: {args.arch}
@@ -304,15 +349,7 @@ the installed package, and then perform a fresh install.
 
 {lifecycle}
 
-This artifact is produced only by the manual experimental workflow. It may be
-published only in a separately tagged GitHub prerelease after all seven
-platform jobs for this exact Redis version and packaging revision pass and the
-downloaded assets are revalidated. It is not eligible for the numeric stable
-Release and does not claim production support.
-
-此产物仅由手工实验构建工作流生成。只有同一 Redis 版本、同一打包提交的七个平台
-Job 全部通过，且下载后的产物完成复验后，才能进入使用独立 Tag 的 GitHub 预发布。
-它不具备纯数字稳定 Release 发布资格，也不代表生产支持。
+{publication}
 
 Review scripts/ and the platform service template before installation. Preserve
 conf/ and data/ independently before every update or removal operation.
@@ -396,6 +433,9 @@ def main() -> int:
     args = parse_args()
     try:
         backend = validate_identity(args.redis_version, args.variant, args.arch)
+        build_workflow = validate_publication_contract(
+            args.package_status, args.build_workflow
+        )
         if re.fullmatch(r"[0-9a-f]{64}", args.source_sha256) is None:
             raise ContractError("invalid Redis source SHA-256")
         if re.fullmatch(r"[0-9a-f]{40}", args.hashes_commit) is None:
@@ -459,7 +499,9 @@ def main() -> int:
                 package_readme(args, backend), encoding="utf-8"
             )
             package_root.joinpath("README.txt").chmod(0o644)
-            patchset_digest = packaging_patchset_sha256(packaging_root, args.variant)
+            patchset_digest = packaging_patchset_sha256(
+                packaging_root, args.variant, build_workflow
+            )
             write_metadata(
                 package_root,
                 args=args,
@@ -487,10 +529,10 @@ def main() -> int:
                 for created_output in created_outputs:
                     created_output.unlink(missing_ok=True)
                 raise
-        print(f"Created experimental package: {output}")
+        print(f"Created {args.package_status} package: {output}")
         return 0
     except (ContractError, OSError, UnicodeError, ValueError, tarfile.TarError) as exc:
-        print(f"experimental package error: {exc}", file=sys.stderr)
+        print(f"portable package error: {exc}", file=sys.stderr)
         return 2
 
 

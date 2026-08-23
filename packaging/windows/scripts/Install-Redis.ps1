@@ -38,7 +38,7 @@ try {
         Set-RedisAccessControl
         & (Join-Path $script:RedisPrefix 'bin\RedisService.exe') --self-test
         if ($LASTEXITCODE -ne 0) { throw 'RedisService self-test failed.' }
-        Write-RedisState -Version $info['REDIS_VERSION']
+        Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
         New-RedisService
         Start-RedisServiceAndWait
         $installed = $true
@@ -51,7 +51,7 @@ try {
             }
         }
     }
-    Write-RedisInfo "Installed Redis $($info['REDIS_VERSION']) as the experimental RedisUnofficial service."
+    Write-RedisInfo "Installed Redis $($info['REDIS_VERSION']) as the RedisUnofficial service."
 } finally {
     Exit-RedisLifecycleLock
 }

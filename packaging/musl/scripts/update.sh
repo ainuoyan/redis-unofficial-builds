@@ -13,9 +13,10 @@ validate_state
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
 new_version="$(metadata_value "$package_root/PACKAGE-INFO" REDIS_VERSION)"
+new_status="$(metadata_value "$package_root/PACKAGE-INFO" PACKAGE_STATUS)"
 old_version="$(metadata_value "$REDIS_STATE_FILE" REDIS_VERSION)"
 version_less_than "$new_version" "$old_version" \
-  && die "Downgrades require a separate data-compatibility migration and are not supported by this experimental updater."
+  && die "Downgrades require a separate data-compatibility migration and are not supported by this updater."
 recovering_uninstalled=false
 if [[ ! -e "$REDIS_PREFIX/bin" && ! -L "$REDIS_PREFIX/bin" \
   && ! -e "$REDIS_PREFIX/scripts" && ! -L "$REDIS_PREFIX/scripts" \
@@ -84,7 +85,7 @@ if [[ "$was_running" == true ]]; then
 fi
 install_program_files "$package_root"
 install -m 0755 "$package_root/openrc/redis" "$REDIS_INIT_SCRIPT"
-write_state "$new_version"
+write_state "$new_version" "$new_status"
 if [[ "$recovering_uninstalled" == true ]]; then
   rc-update add "$REDIS_SERVICE" default
   rc-service "$REDIS_SERVICE" start

@@ -1,12 +1,13 @@
 # Windows issue coverage
 
-This document records how the experimental MSYS2 backend uses reports from
+This document records how the implemented MSYS2 x64 backend uses reports from
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows).
-No stable Windows package is currently published. A manual Actions workflow
-can produce a seven-day experimental MSYS2 x64 artifact; that fact alone does
-not establish Windows production support. The table is an acceptance
-specification and prevents a packaging change from being presented as proof
-that an upstream or compatibility-runtime defect is fixed.
+The full-platform publisher includes this backend only after its native release
+gate passes. Manual workflow artifacts remain seven-day experimental artifacts
+and cannot enter a numeric Release. A stable package is still an unofficial,
+tested package contract rather than Redis Ltd. production support. The table
+prevents a packaging change or a narrower regression from being presented as
+proof that every upstream or compatibility-runtime defect is fixed.
 
 Review baseline: upstream commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9)
@@ -38,7 +39,7 @@ reported issues:
 These are code-reading conclusions, not assertions made by the referenced
 project.
 
-## Current experimental coverage
+## Current release-gated coverage
 
 This repository contains an independently implemented, self-contained .NET
 SCM wrapper; no source file from the reference project is copied. The current
@@ -50,15 +51,23 @@ refuse reparse points, apply SID-based ACLs, preserve `conf` and `data` on a
 normal uninstall, back up managed program state for update rollback, and
 require explicit purge for data removal.
 
-The Windows build job currently tests only the fixed path
-`C:\Program Files\Redis-Unofficial` and the default unauthenticated loopback endpoint
-on `windows-2022`. It covers fresh install, same-version update idempotency,
-PING, explicit `SAVE`, SCM restart followed by key reload, ordinary uninstall
-retention, update-based service recovery, and purge. It does not yet cover
-non-ASCII paths, authenticated or TLS shutdown, Sentinel, BGSAVE/AOF-specific
-behavior, port conflicts, unexpected child exit, rollback fault injection,
-load ceilings, Windows client releases, or native PE VERSIONINFO. Consequently
-no issue row below is marked **Verified**.
+The Windows Server 2022 gate extracts through a path containing spaces and
+Chinese text and installs to the fixed path
+`C:\Program Files\Redis-Unofficial`. It tests port-conflict install rollback,
+fresh and repeated install, same-version update, PING, BGSAVE, a bounded
+1,000-request benchmark, SCM restart and unexpected-child recovery with key
+reload, ordinary-uninstall retention, update-based recovery, authenticated
+readiness and graceful stop through a managed password file, fault-injected
+update rollback, and purge. The updater preserves `RedisService.json`, and the
+wrapper passes the password only through `REDISCLI_AUTH`.
+
+The gate does not claim TLS or AOF-specific behavior, a managed Sentinel
+service, arbitrary installation prefixes, Windows client releases, native PE
+VERSIONINFO for upstream Redis executables, or a production load ceiling. It
+checks the bundled Sentinel executable's version identity only. Because the
+issue rows below intentionally require broader reproduction than this package's
+declared core contract, no row is marked **Verified** merely because the stable
+package gate passes.
 
 ## Design requirements and regression tests
 
@@ -90,7 +99,10 @@ honestly close them in advance.
 | [#27](https://github.com/redis-windows/redis-windows/issues/27), [#30](https://github.com/redis-windows/redis-windows/issues/30), [#54](https://github.com/redis-windows/redis-windows/issues/54) | Measure descriptor/socket limits and crashes at bounded connection counts in the MSYS2 runtime; publish a tested `maxclients` ceiling | No crash or corruption at the documented ceiling; exceeding it fails predictably; do not advertise Linux limits |
 | [#48](https://github.com/redis-windows/redis-windows/issues/48), [#57](https://github.com/redis-windows/redis-windows/issues/57) | Replace `-O0` with a pinned optimized release build, benchmark the MSYS2 runtime, and store results per Redis series | No material regression from the previous package; publish numbers and environment, not a Linux-performance promise |
 
-If a runtime defect remains, that artifact stays experimental.
+An unresolved row remains an explicit limitation or investigation item and may
+not be advertised as fixed. It blocks a stable package only when it violates
+the package's declared core contract; out-of-scope features such as TLS or a
+managed Sentinel service must remain explicitly unclaimed.
 
 ## Explicitly separate scope
 
@@ -103,6 +115,8 @@ If a runtime defect remains, that artifact stays experimental.
 ## Status vocabulary
 
 - **Planned**: design exists; no published fix is claimed.
+- **Release-gated**: the narrower package regression runs before every stable
+  Release, but the complete issue reproducer has not met the Verified rule.
 - **Verified**: a reproducer failed on the reference build and passes on this
   project in CI.
 - **Runtime limitation**: documented ceiling or incompatibility remains.
@@ -110,5 +124,5 @@ If a runtime defect remains, that artifact stays experimental.
   package defect.
 
 Any stable Windows Release notes must link to this table and use these terms.
-Experimental artifact summaries must also state the unverified gates. Neither
-may claim that all `redis-windows` issues are fixed.
+Manual artifact summaries must state their experimental identity. Neither may
+claim that all `redis-windows` issues are fixed.

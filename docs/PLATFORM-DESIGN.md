@@ -2,12 +2,13 @@
 
 [简体中文](PLATFORM-DESIGN.zh-CN.md)
 
-This document separates stable release behavior, experimental prereleases,
-and backend designs. **Implemented** means that code, CI, validation, native
-lifecycle gates, and stable publication policy exist. **Experimental** means
-that a manual build/package path exists and may publish only to a separately
-tagged GitHub prerelease after all acceptance gates pass; no production support
-is claimed. **Design only** means that no build artifact is claimed.
+This document separates the atomic stable Release contract, manually generated
+experimental Actions artifacts, and design-only backends. **Implemented** means
+that code, CI, semantic validation, native lifecycle gates, and stable
+publication policy exist. Manual dispatch of the read-only platform builder
+still emits experimental artifacts; only the protected stable caller can bind
+those jobs into a numeric Release. **Design only** means that no build artifact
+is claimed.
 
 ## Redis release lines
 
@@ -38,19 +39,21 @@ marks remain subject to the official
 | Variant | Architectures | Build baseline | Service backend | Status |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64, ARM64 | Digest-pinned Rocky Linux 8 user space | systemd | **Implemented** |
-| `linux-glibc2.17-legacy` | x64, ARM64 | Digest-pinned manylinux2014 (glibc 2.17) | systemd | **Experimental prerelease** |
-| `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Experimental prerelease** |
-| `macos12` | x64, ARM64 | Native macOS 15 runners, deployment target 12.0 | launchd | **Experimental prerelease** |
-| `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Experimental prerelease**; primary Windows backend |
+| `linux-glibc2.17-legacy` | x64, ARM64 | Digest-pinned manylinux2014 (glibc 2.17) | systemd or no-service | **Implemented** |
+| `linux-musl1.2` | x64, ARM64 | Digest-pinned musllinux 1.2 | OpenRC | **Implemented** |
+| `macos15` | x64, ARM64 | Native macOS 15 runners, deployment target 15.0 | launchd | **Implemented** |
+| `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Implemented**; primary Windows backend |
 
-Only `linux-glibc2.28` rows are controller-enabled. Experimental rows name the
-manual `build-experimental.yml` workflow but remain controller-disabled. All
-Linux archive designs use `.tar.gz` rather than an RPM, DEB, Snap, or APK and
-use the fixed prefix `/usr/local/redis`. The experimental Windows package uses
-`.zip` and the fixed prefix `C:\Program Files\Redis-Unofficial`.
+All nine rows are controller-enabled and bind their stable package identity to
+`build-linux.yml`. The publisher calls the read-only platform workflow for the
+additional native jobs, but that implementation detail does not change the
+stable workflow identity recorded in package metadata. All Linux archives use
+`.tar.gz` rather than RPM, DEB, Snap, or APK and use the fixed prefix
+`/usr/local/redis`. Windows uses `.zip` and the fixed prefix
+`C:\Program Files\Redis-Unofficial`.
 
-Experimental installations created before the current runtime-identity
-cleanup are intentionally rejected by the new update scripts. Back up
+Installations created before the current runtime-identity cleanup are
+intentionally rejected by the new update scripts. Back up
 configuration and data, uninstall with the lifecycle scripts from the
 installed package, and then perform a fresh install.
 
@@ -72,7 +75,7 @@ installed package, and then perform a fresh install.
   ARM64 requires a compatible native toolchain and real service, persistence,
   and load tests on ARM64 Windows.
 
-## Implemented stable Linux package contract
+## Implemented glibc package contract
 
 The current profile is `core`: Redis server and command-line binaries are
 included, while Redis 8 bundled modules are excluded. A module-enabled profile
@@ -129,104 +132,87 @@ read-only to the builder. DNF packages are resolved from Rocky repositories,
 so compiler/runtime details are recorded but bit-for-bit reproducibility is
 not claimed.
 
-## Experimental artifact contract
+## Reusable platform-build contract
 
-The manual-only workflow first pins and strictly parses an official
+The platform workflow first pins and strictly parses an official
 `redis/redis-hashes` snapshot, downloads the matching source archive, and
 passes the verified archive between jobs. It has repository `contents: read`
 permission and no tag, Release, downstream workflow-dispatch API, or
-publication step. Artifacts are
-retained for seven days and are deliberately outside the stable seven-asset
-Release inventory.
+publication step. Manual dispatch sets `PACKAGE_STATUS=experimental` and
+records `build-experimental.yml`; those seven-day Actions artifacts cannot
+enter a numeric Release.
 
-The glibc 2.17 packages reuse format 2 plus
-`PACKAGE_STATUS=experimental`. The musl, macOS, and Windows packages use
-`PACKAGE_FORMAT=3` and `PACKAGE_STATUS=experimental`. Format 3 binds the
-source digest, redis-hashes commit, packaging revision, exact platform
-identity, reviewed lifecycle assets, and platform-specific packaging patch
-set. Validation reads archives without extraction and rejects unexpected
-members, traversal, links, special files, unsafe modes, oversized content,
-compression bombs, architecture/runtime mismatches, and active `loadmodule`
-records.
+When called by `build-linux.yml`, the same jobs receive the caller's exact
+version, source SHA-256, and immutable hashes commit, set
+`PACKAGE_STATUS=release`, and record `build-linux.yml`. The glibc 2.17 package
+uses format 2; musl, macOS, and Windows use format 3. Both formats bind source
+digest, redis-hashes commit, packaging revision, exact platform identity,
+reviewed lifecycle assets, and a patch-set digest that includes the stable
+workflow. A manual package and a release package therefore cannot be confused
+by status or workflow identity.
 
-The manual workflow runs upstream build tests and local Redis protocol smoke
-tests for Linux and macOS. Its disposable lifecycle gates exercise both legacy
-Linux architectures without systemd, both musl architectures with OpenRC in an
-Alpine container, both macOS architectures with launchd on native macOS 15
-runners, and the compatibility-focused MSYS2 x64 build plus the repository's
-independent self-contained SCM wrapper on Windows Server 2022. Those gates
-cover fresh install, same-version idempotency, readiness, saved-data reload, ordinary
-uninstall recovery, and purge as applicable to each backend.
+Archive validation does not trust filenames alone. It reads without
+extraction and rejects unexpected members, traversal, links, special files,
+unsafe modes, oversized content, compression bombs, architecture/runtime
+mismatches, and active `loadmodule` records. ELF architecture, interpreter,
+dynamic dependencies, Redis version, and highest required `GLIBC_*` symbol;
+Mach-O architecture and minimum OS; Windows PE architecture, Redis version,
+MSYS2 DLL inventory/notices, lifecycle scripts, and service wrapper are all
+checked from archive contents.
 
-Stable acceptance still requires a representative booted legacy distribution
-with systemd, a booted OpenRC environment, the oldest claimed macOS 12 version,
-fault-injected rollback, and the remaining Windows authentication, TLS,
-non-ASCII-path, failure, security, and load cases. A successful manual run
-therefore leaves every artifact in experimental status.
-
-### Experimental prerelease publication
-
-The build workflow remains read-only and cannot publish. A maintainer may
-publish one exact version only after all seven platform jobs share the same
-protected-default-branch packaging revision and succeed. The maintainer then
-downloads all artifacts, repeats each archive's semantic validator and
-adjacent-checksum verification, and creates one aggregate `SHA256SUMS`.
-
-The prerelease tag is `X.Y.Z-experimental.N` and its exact 15-asset inventory
-is the seven platform archives, their seven adjacent `.sha256` records, and
-`SHA256SUMS` covering those 14 files. Publication uses a draft prerelease with
-`latest=false`; its tag revision, state, exact asset names, sizes, and digests
-are checked before publication, then every published asset is downloaded and
-revalidated. Existing tags or Releases are immutable inputs: publication never
-adds to, overwrites, deletes from, or completes them. A replacement requires a
-new complete build and a higher `N`. These prereleases have no stable manifest,
-SBOM, artifact attestation, or production-support claim.
-
-```text
-Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
-Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
-Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
-Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
-Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
-Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
-Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
-Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
-Redis-X.Y.Z-macos12-x64.tar.gz
-Redis-X.Y.Z-macos12-x64.tar.gz.sha256
-Redis-X.Y.Z-macos12-arm64.tar.gz
-Redis-X.Y.Z-macos12-arm64.tar.gz.sha256
-Redis-X.Y.Z-windows-msys2-x64.zip
-Redis-X.Y.Z-windows-msys2-x64.zip.sha256
-SHA256SUMS
-```
+Lifecycle acceptance covers fresh and repeated install, readiness, update,
+saved-data reload, ordinary-uninstall recovery, purge, and platform-specific
+failure boundaries. OpenRC, launchd, and Windows execute fault-injected update
+rollback. Windows additionally tests a non-ASCII/space staging path, port
+conflict and install rollback, BGSAVE, bounded `redis-benchmark`, Sentinel
+binary identity, unexpected child exit with SCM recovery, and password-file
+authenticated readiness and graceful shutdown. TLS is not built and is not
+claimed. The glibc 2.17 gate runs on the pinned legacy user space in
+`--no-service` mode; the identical systemd lifecycle assets are independently
+tested by both glibc 2.28 architecture jobs.
 
 ## Current GitHub Release contract
 
-One numeric Redis `X.Y.Z` tag identifies one Release. The implemented Linux
-publisher accepts exactly these seven asset names:
+One numeric Redis `X.Y.Z` tag identifies one Release. The full-platform
+publisher accepts exactly these 21 asset names:
 
 ```text
 Redis-{version}-linux-glibc2.28-x64.tar.gz
 Redis-{version}-linux-glibc2.28-x64.tar.gz.sha256
 Redis-{version}-linux-glibc2.28-arm64.tar.gz
 Redis-{version}-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-x64.tar.gz
+Redis-{version}-linux-musl1.2-x64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-arm64.tar.gz
+Redis-{version}-linux-musl1.2-arm64.tar.gz.sha256
+Redis-{version}-macos15-x64.tar.gz
+Redis-{version}-macos15-x64.tar.gz.sha256
+Redis-{version}-macos15-arm64.tar.gz
+Redis-{version}-macos15-arm64.tar.gz.sha256
+Redis-{version}-windows-msys2-x64.zip
+Redis-{version}-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-{version}.spdx.json
 ```
 
-No missing or additional asset is accepted. `SHA256SUMS` hashes the other six
+No missing or additional asset is accepted. `SHA256SUMS` hashes the other 20
 files. `manifest.json` binds source URL/SHA-256, the immutable
-`redis-hashes` commit, packaging revision, patch-set checksum, workflow,
-profile, architecture, ABI, sizes, and archive digests.
+`redis-hashes` commit, packaging revision, per-platform patch-set checksum,
+workflow, profile, OS, architecture, runtime/ABI baseline, service backend,
+sizes, and archive digests.
 
-The SPDX 2.3 document describes the verified Redis source and the two archive
+The SPDX 2.3 document describes the verified Redis source and all nine archive
 packages with `filesAnalyzed=false`. Its declared scope is
 `release-package-level`; it must not be presented as a complete file-level or
 transitive dependency SBOM.
 
-The workflow creates SLSA provenance attestations for all seven assets and
-SPDX attestations for both archives. Before publication it verifies exact
+The workflow creates SLSA provenance attestations for all 21 assets and SPDX
+attestations for all nine archives. Before publication it verifies exact
 workflow identity, signer/source revision, protected default-branch ref,
 predicate type, and denial of self-hosted runners.
 
@@ -234,10 +220,10 @@ predicate type, and denial of self-hosted runners.
 
 The publisher operates only when neither the tag nor Release exists:
 
-1. both architecture builds and service tests pass;
-2. the seven files are created and semantically validated;
+1. all nine platform builds and lifecycle tests pass;
+2. the 21 files are created and semantically validated;
 3. attestations are generated and verified;
-4. a single draft Release is created with all seven files;
+4. a single draft Release is created with all 21 files;
 5. its REST `target_commitish`, draft state, and exact inventory are read back;
 6. every remote numeric asset ID, byte size, and GitHub SHA-256 digest is
    bound to the verified local file, then all assets are downloaded,
@@ -369,46 +355,45 @@ uninstall; maintenance fails closed while any such process remains.
   default. `--purge` removes the fixed prefix subject to account and mount
   safety checks.
 
-## Experimental backends
+## Additional implemented backends
 
 ### glibc 2.17 legacy
 
-This is a separately named experimental compatibility artifact, not a
-replacement for the implemented baseline. Its builder uses digest-pinned
+This is a separately named legacy-ABI compatibility package, not a replacement
+for the glibc 2.28 baseline. Its builder uses digest-pinned
 manylinux2014 images and rejects any ELF requiring a symbol newer than
-`GLIBC_2.17`. The manual gate executes fresh install, update, saved-data
+`GLIBC_2.17`. The release gate executes fresh install, update, saved-data
 reload, ordinary-uninstall recovery, and purge for both architectures in the
-matching manylinux2014/CentOS 7 user space using `--no-service`. Stable
-acceptance still requires a maintainable toolchain/sysroot, execution on a
-representative supported legacy operating system, systemd lifecycle tests,
-and rollback fault injection. Release notes must state that an old ABI does
-not provide operating-system security maintenance.
+matching manylinux2014/CentOS 7 user space using `--no-service`. It reuses the
+same reviewed systemd lifecycle files whose installation, failure rollback,
+update rollback, persistence, and purge are exercised by both glibc 2.28
+architecture jobs. This is an ABI-compatibility contract, not a claim that an
+end-of-life distribution receives operating-system security maintenance.
 
 ### musl and OpenRC
 
-The experimental musl archive is built in digest-pinned musllinux 1.2 images,
+The musl archive is built in digest-pinned musllinux 1.2 images,
 must carry the musl interpreter, must contain no `GLIBC_*` references, and
-includes a distinct OpenRC lifecycle contract. The manual gate tests both
+includes a distinct OpenRC lifecycle contract. The release gate tests both
 architectures in a disposable Alpine container with OpenRC: fresh and repeated
 install, service restart, saved-data reload, ordinary uninstall, update-based
-recovery, and purge. This container does not boot under OpenRC as PID 1, so
-stable acceptance still needs a booted OpenRC environment, broader native
-dependency and shell/runtime compatibility coverage, and rollback fault
-injection. The OpenRC scripts cannot depend on systemd and require a distinct
-service/state contract.
+recovery, injected update rollback, and purge. The container exercises
+`rc-service`/`rc-update` with an OpenRC softlevel but does not boot OpenRC as
+PID 1; this limit is explicit and no systemd compatibility is inferred. The
+OpenRC scripts have a distinct service/state contract and cannot depend on
+glibc or systemd.
 
 ### macOS
 
-Each experimental architecture is built on a native runner with deployment
-target 12.0. Archive validation checks Mach-O architecture, deployment target,
+Each architecture is built and lifecycle-tested on a native macOS 15 runner
+with deployment target 15.0. Archive validation checks Mach-O architecture, deployment target,
 and approved system-library paths. The launchd backend manages a recorded
 non-login account, preserves configuration/data, verifies PING readiness, and
-includes update/rollback/uninstall scripts. The manual gate runs fresh and
+includes update/rollback/uninstall scripts. The release gate runs fresh and
 repeated install, launchd restart, saved-data reload, ordinary-uninstall
-recovery, and purge for both architectures on native macOS 15 runners. Stable
-acceptance still requires running those paths on the oldest claimed macOS 12
-version and rollback fault injection. A universal archive is permitted only
-after both slices independently pass.
+recovery, injected update rollback, and purge for both architectures. A
+universal archive is not published; x64 and ARM64 remain independently named
+and validated.
 
 ### Windows
 
@@ -422,25 +407,26 @@ implementation and incorporates no source file from that project. Attribution
 and any future incorporation requirements are recorded
 in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-MSYS2 is the experimental Windows backend. The service wrapper must keep Redis
-in foreground mode, validate configuration paths, propagate startup/child-exit
+MSYS2 x64 is the implemented Windows backend. The service wrapper keeps Redis
+in foreground mode, validates configuration paths, propagates startup/child-exit
 failure to the Service Control Manager, perform real readiness checks, use
 bounded graceful shutdown and process-tree fallback, exclude credentials from
 arguments/logs, record diagnostic output, and maintain protected installation
 state under the fixed prefix. Backups use
-`C:\ProgramData\Redis-Unofficial\Backups`. The current experiment supports the
-default unauthenticated loopback endpoint; authenticated shutdown remains an
-explicit stable-acceptance gate.
+`C:\ProgramData\Redis-Unofficial\Backups`. Optional authentication uses a
+managed password file inside the fixed prefix; the wrapper supplies it only
+through `REDISCLI_AUTH`, performs authenticated readiness/shutdown, and the
+updater preserves `RedisService.json`. A named ACL user is optional.
 
-The current Windows Server 2022 gate covers fresh install, same-version update,
-PING readiness, explicit `SAVE`, SCM restart with key reload, ordinary
-uninstall retention, update-based service recovery, and purge at the fixed
-default path. Stable Windows acceptance still requires real tests for spaces
-and non-ASCII paths, invalid configuration, port conflicts, BGSAVE/AOF,
-authenticated or TLS shutdown, unexpected child exit, Sentinel, rollback fault
-injection, and bounded load. Native executables require PE VERSIONINFO. Release
-builds use optimization rather than `-O0` and publish measured limits without
-promising Linux-equivalent behavior through a POSIX layer. See
+The Windows Server 2022 gate covers an extraction path containing spaces and
+non-ASCII text, port-conflict install rollback, fresh and repeated install,
+same-version update, PING readiness, BGSAVE, bounded load, SCM restart and
+unexpected-child recovery with persisted key reload, ordinary-uninstall
+retention, update-based service recovery, authenticated graceful stop/start,
+fault-injected update rollback, and purge. The Sentinel executable identity is
+validated, but no managed Sentinel service is published. TLS and AOF-specific
+acceptance are not enabled or claimed. Release builds use optimization rather
+than `-O0` and do not promise Linux-equivalent behavior through a POSIX layer. See
 [Windows issue coverage](WINDOWS-ISSUE-COVERAGE.md).
 
 ## Version resolution and build separation
@@ -459,7 +445,7 @@ flowchart TD
 It does not download Redis source, execute package code, call a build
 workflow, create a tag, or publish a Release. Release-name inventory is only a
 planning signal; content and attestations are validated by the publish-capable
-Linux workflow.
+full-platform workflow.
 
 ## Release gates
 
@@ -475,12 +461,13 @@ An implemented stable row requires:
 - English and Simplified Chinese lifecycle paths;
 - default local-socket-only configuration and preservation of adopted
   listener/authentication/persistence/module/include settings;
-- exact seven-asset metadata validation and complete `SHA256SUMS`;
+- exact 21-asset metadata validation and complete `SHA256SUMS`;
 - release-package-level SPDX validation;
 - provenance and SPDX attestation generation plus constrained verification;
 - new-draft-only publication, exact inventory readback, download validation,
   and one-way publication; and
 - protected-default-branch and `release` Environment approval.
 
-An experimental or design-only row cannot be included in an implemented
-Release merely because its workflow or asset name is present in configuration.
+A design-only row cannot be included in an implemented Release merely because
+its workflow or asset name is present in configuration. Manual experimental
+artifacts cannot be relabeled as stable packages.
