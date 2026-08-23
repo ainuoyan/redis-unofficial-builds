@@ -156,7 +156,9 @@ if [[ "$RUN_FULL_TESTS" == true ]]; then
     echo "Redis test runner must be a regular executable file." >&2
     exit 1
   }
-  test_command=(./runtest --clients 1 --timeout 1200)
+  test_clients=1
+  [[ "$PACKAGE_VARIANT" == macos15 ]] && test_clients=2
+  test_command=(./runtest --clients "$test_clients" --timeout 1200)
   bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 fi
 
