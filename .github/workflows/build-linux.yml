@@ -242,15 +242,15 @@ jobs:
             release_exists=true
             mapfile -t expected_assets < <(
               python3 - "$version" <<'PY'
-            import sys
-            from pathlib import Path
+          import sys
+          from pathlib import Path
 
-            sys.path.insert(0, "scripts/release")
-            import full_release_metadata
+          sys.path.insert(0, "scripts/release")
+          import full_release_metadata
 
-            for name in sorted(full_release_metadata.expected_release_names(sys.argv[1])):
-                print(name)
-            PY
+          for name in sorted(full_release_metadata.expected_release_names(sys.argv[1])):
+              print(name)
+          PY
             )
             [[ "${#expected_assets[@]}" -eq 21 ]] || {
               echo "Unable to resolve the full Release asset contract." >&2
@@ -342,17 +342,17 @@ jobs:
                 "repos/${hashes_repository}/contents/${hashes_path}?ref=${release_hashes_commit}" \
                 >existing-release-hashes.txt
               python3 - "$version" "$source_sha256" <<'PY'
-              import sys
-              from pathlib import Path
+          import sys
+          from pathlib import Path
 
-              sys.path.insert(0, "scripts/release")
-              import resolve_versions
+          sys.path.insert(0, "scripts/release")
+          import resolve_versions
 
-              version = resolve_versions.parse_version(sys.argv[1])
-              hashes = resolve_versions.parse_hashes(Path("existing-release-hashes.txt"))
-              if version not in hashes or hashes[version]["sha256"] != sys.argv[2]:
-                  raise SystemExit("Existing Release is not bound to an official source snapshot.")
-              PY
+          version = resolve_versions.parse_version(sys.argv[1])
+          hashes = resolve_versions.parse_hashes(Path("existing-release-hashes.txt"))
+          if version not in hashes or hashes[version]["sha256"] != sys.argv[2]:
+              raise SystemExit("Existing Release is not bound to an official source snapshot.")
+          PY
               python3 scripts/release/full_release_metadata.py validate \
                 --asset-dir existing-release-assets \
                 --redis-version "$version" \
