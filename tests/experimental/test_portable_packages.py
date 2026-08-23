@@ -714,7 +714,7 @@ class PortablePackageTests(unittest.TestCase):
         macos_job = remainder.split("\n  windows:\n", 1)[0]
         self.assertIn("timeout-minutes: 90", glibc_job)
         self.assertIn("timeout-minutes: 90", musl_job)
-        self.assertIn("timeout-minutes: 90", macos_job)
+        self.assertIn("timeout-minutes: 150", macos_job)
 
     def test_platform_workflow_runs_release_lifecycle_acceptance(self) -> None:
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
