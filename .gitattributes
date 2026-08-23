@@ -1,5 +1,6 @@
 /.gitattributes text eol=lf
 /.github/workflows/build-experimental.yml text eol=lf
+/.github/workflows/build-linux.yml text eol=lf
 /THIRD_PARTY_NOTICES.md text eol=lf
 /scripts/experimental/*.py text eol=lf
 /scripts/experimental/*.sh text eol=lf

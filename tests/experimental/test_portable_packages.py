@@ -505,7 +505,15 @@ class PortablePackageTests(unittest.TestCase):
             )
 
     def test_windows_patchset_files_are_checked_out_with_lf_endings(self) -> None:
-        paths = portable_contract.patchset_paths("windows-msys2")
+        paths = sorted(
+            {
+                *portable_contract.patchset_paths("windows-msys2"),
+                *portable_contract.patchset_paths(
+                    "windows-msys2", Path(".github/workflows/build-linux.yml")
+                ),
+            },
+            key=lambda path: path.as_posix(),
+        )
         result = subprocess.run(
             ["git", "check-attr", "-z", "eol", "--", *map(str, paths)],
             cwd=ROOT,
