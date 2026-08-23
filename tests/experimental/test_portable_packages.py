@@ -140,13 +140,15 @@ def elf_fixture(
     return bytes(data)
 
 
-def macho_fixture(arch: str) -> bytes:
+def macho_fixture(arch: str, deployment_major: int = 15) -> bytes:
     data = bytearray(160)
     data[:4] = b"\xcf\xfa\xed\xfe"
     struct.pack_into("<I", data, 4, {"x64": 0x01000007, "arm64": 0x0100000C}[arch])
     struct.pack_into("<I", data, 16, 1)
     struct.pack_into("<I", data, 20, 24)
-    struct.pack_into("<IIIIII", data, 32, 0x32, 24, 1, 12 << 16, 15 << 16, 0)
+    struct.pack_into(
+        "<IIIIII", data, 32, 0x32, 24, 1, deployment_major << 16, 15 << 16, 0
+    )
     marker = b"\x00" + VERSION.encode("ascii") + b"\x00"
     data[96 : 96 + len(marker)] = marker
     return bytes(data)
@@ -428,6 +430,18 @@ class PortablePackageTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("do not match", result.stderr)
 
+    def test_macos_validator_requires_the_declared_15_0_deployment_target(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts/experimental"))
+        import validate_portable_asset as validator
+
+        for deployment_major in (12, 16):
+            with self.subTest(deployment_major=deployment_major), self.assertRaisesRegex(
+                validator.ContractError, "macOS 15.0 deployment target"
+            ):
+                validator.validate_macho(
+                    macho_fixture("x64", deployment_major), "x64", VERSION
+                )
+
     def test_musl_runtime_ignores_unreferenced_glibc_debug_text(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))
         import validate_portable_asset as validator
@@ -634,8 +648,12 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn(
             'temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"', script
         )
+        self.assertIn('test_clients=1', script)
         self.assertIn(
-            'test_command=(./runtest --clients 1 --timeout 1200)', script
+            '[[ "$PACKAGE_VARIANT" == macos15 ]] && test_clients=2', script
+        )
+        self.assertIn(
+            'test_command=(./runtest --clients "$test_clients" --timeout 1200)', script
         )
         self.assertNotIn('test_command=(make test', script)
         self.assertIn(

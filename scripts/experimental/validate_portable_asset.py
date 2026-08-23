@@ -496,8 +496,8 @@ def validate_macho(data: bytes, arch: str, version: str) -> None:
         offset += command_size
     if offset != 32 + command_bytes or not deployment_versions:
         raise ContractError("Redis Mach-O does not declare a deployment target")
-    if max(deployment_versions) > (12, 0, 0):
-        raise ContractError("Redis Mach-O requires a macOS version newer than 12.0")
+    if any(version != (15, 0, 0) for version in deployment_versions):
+        raise ContractError("Redis Mach-O does not declare the macOS 15.0 deployment target")
     if b"\x00" + version.encode("ascii") + b"\x00" not in data:
         raise ContractError("Redis Mach-O does not contain the declared version")
 
