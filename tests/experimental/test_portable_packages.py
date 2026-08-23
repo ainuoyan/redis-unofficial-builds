@@ -658,7 +658,8 @@ class PortablePackageTests(unittest.TestCase):
         )
         self.assertIn('test_clients=1', script)
         self.assertIn(
-            '[[ "$PACKAGE_VARIANT" == macos15 ]] && test_clients=2', script
+            '[[ "$PACKAGE_VARIANT:$PACKAGE_ARCH" == macos15:arm64 ]] && test_clients=2',
+            script,
         )
         self.assertIn(
             'test_command=(./runtest --clients "$test_clients" --timeout 1200)', script
@@ -722,7 +723,7 @@ class PortablePackageTests(unittest.TestCase):
         macos_job = remainder.split("\n  windows:\n", 1)[0]
         self.assertIn("timeout-minutes: 90", glibc_job)
         self.assertIn("timeout-minutes: 90", musl_job)
-        self.assertIn("timeout-minutes: 150", macos_job)
+        self.assertIn("timeout-minutes: 240", macos_job)
 
     def test_platform_workflow_runs_release_lifecycle_acceptance(self) -> None:
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
