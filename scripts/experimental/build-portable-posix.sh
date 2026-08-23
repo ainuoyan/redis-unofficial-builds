@@ -157,7 +157,7 @@ if [[ "$RUN_FULL_TESTS" == true ]]; then
     exit 1
   }
   test_clients=1
-  [[ "$PACKAGE_VARIANT" == macos15 ]] && test_clients=2
+  [[ "$PACKAGE_VARIANT:$PACKAGE_ARCH" == macos15:arm64 ]] && test_clients=2
   test_command=(./runtest --clients "$test_clients" --timeout 1200)
   bash "$PROJECT_ROOT/scripts/run-test-with-one-retry.sh" "${test_command[@]}"
 fi
