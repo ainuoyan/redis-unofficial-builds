@@ -22,6 +22,7 @@ try {
     if ([IO.Directory]::Exists($script:RedisPrefix) -or [IO.File]::Exists($script:RedisPrefix) -or $null -ne (Get-RedisService)) {
         throw 'Refusing to overwrite an existing path or service.'
     }
+    Assert-RedisPortAvailable
 
     $installed = $false
     try {
@@ -41,6 +42,7 @@ try {
         Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
         New-RedisService
         Start-RedisServiceAndWait
+        Set-RedisServiceRecovery
         $installed = $true
     } finally {
         if (-not $installed) {
