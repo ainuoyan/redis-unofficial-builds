@@ -781,6 +781,10 @@ class PortablePackageTests(unittest.TestCase):
         self.assertNotIn("Start-Service -Name $script:RedisServiceName", common)
         self.assertIn("$listener.Server.ExclusiveAddressUse = $true", common)
         self.assertIn("function Set-RedisServiceRecovery", common)
+        self.assertIn("$service.Status -in $pendingStatuses", common)
+        self.assertIn(
+            "[ServiceProcess.ServiceControllerStatus]::StartPending", common
+        )
         install = (ROOT / "packaging/windows/scripts/Install-Redis.ps1").read_text(
             encoding="utf-8"
         )

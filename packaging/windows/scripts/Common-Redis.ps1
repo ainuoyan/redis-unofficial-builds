@@ -341,11 +341,30 @@ function Start-RedisServiceAndWait {
 function Stop-RedisServiceIfRunning {
     $service = Get-RedisService
     try {
-        if ($null -ne $service -and $service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
-            & sc.exe stop $script:RedisServiceName | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
-            $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
+        if ($null -eq $service) { return }
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        $pendingStatuses = @(
+            [ServiceProcess.ServiceControllerStatus]::StartPending,
+            [ServiceProcess.ServiceControllerStatus]::StopPending,
+            [ServiceProcess.ServiceControllerStatus]::ContinuePending,
+            [ServiceProcess.ServiceControllerStatus]::PausePending
+        )
+        while ($service.Status -in $pendingStatuses) {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw 'Timed out waiting for the RedisUnofficial service to leave a pending state.'
+            }
+            Start-Sleep -Milliseconds 200
+            $service.Refresh()
         }
+        if ($service.Status -eq [ServiceProcess.ServiceControllerStatus]::Stopped) { return }
+
+        & sc.exe stop $script:RedisServiceName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
+        $remaining = $deadline - [DateTime]::UtcNow
+        if ($remaining -le [TimeSpan]::Zero) {
+            throw 'Timed out stopping the RedisUnofficial service.'
+        }
+        $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, $remaining)
     } finally {
         if ($null -ne $service) { $service.Dispose() }
     }
