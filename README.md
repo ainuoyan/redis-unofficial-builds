@@ -2,10 +2,11 @@
 
 [简体中文](README.zh-CN.md)
 
-Unofficial, versioned binary distributions of Redis. The stable publication
-path remains the glibc 2.28 Linux build. Additional ABI and operating-system
-backends have a separate experimental, manually triggered build and prerelease
-path.
+Unofficial, versioned binary distributions of Redis. One numeric stable
+Release is an atomic full-platform set: glibc 2.28 Linux, glibc 2.17 legacy
+Linux, musl 1.2 Linux, macOS 15+, and Windows x64. Publication cannot begin
+until every native build, package validator, and lifecycle acceptance job for
+the exact Redis version and packaging revision has passed.
 
 > This project is not affiliated with or endorsed by Redis Ltd. Redis and its
 > bundled dependencies remain subject to the license and notice files included
@@ -13,37 +14,34 @@ path.
 
 ## Available packages
 
-Only rows marked **implemented** are eligible for the numeric stable GitHub
-Release. An **experimental** row may be published only in a separately tagged
-GitHub prerelease after its full native workflow and downloaded-asset gates
-pass; it is not production-supported.
+All rows below are implemented, controller-enabled members of the same numeric
+stable GitHub Release. A missing or failed platform blocks the entire Release;
+the publisher never publishes a partial set.
 
 | Variant | Architecture | Runtime requirement | Status |
 | --- | --- | --- | --- |
 | `linux-glibc2.28` | `x64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
 | `linux-glibc2.28` | `arm64` | Linux, glibc 2.28+; systemd unless `--no-service` is used | Implemented |
-| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux, glibc 2.17+, systemd | Experimental prerelease |
-| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Experimental prerelease |
-| `macos12` | `x64` / `arm64` | macOS 12+, launchd | Experimental prerelease |
-| `windows-msys2` | `x64` | Windows Server 2022 test runner, Windows SCM | Experimental prerelease |
+| `linux-glibc2.17-legacy` | `x64` / `arm64` | Linux, glibc 2.17+; systemd unless `--no-service` is used | Implemented |
+| `linux-musl1.2` | `x64` / `arm64` | musl 1.2 Linux, OpenRC | Implemented |
+| `macos15` | `x64` / `arm64` | macOS 15+, launchd | Implemented |
+| `windows-msys2` | `x64` | x64 Windows, MSYS2 runtime, Windows SCM | Implemented |
 
-The implemented publication target remains glibc 2.28 Linux only. A glibc
-2.28 package normally runs on a newer glibc system of the same architecture;
-Alpine and other musl systems require the separately named musl artifact.
-Linux packages are plain `.tar.gz` archives and do not require RPM, DEB, Snap,
-or APK. Published files are available from the repository's
+glibc, musl, macOS, and Windows packages are separate runtime contracts and
+must not be interchanged. Linux packages are plain `.tar.gz` archives and do
+not require RPM, DEB, Snap, or APK. Windows uses `.zip`. Published files are
+available from the repository's
 [GitHub Releases](https://github.com/ainuoyan/redis-unofficial-builds/releases).
 
 Before using the lifecycle instructions below, confirm that the selected
-Release has the exact seven-asset current-format inventory described in the
-next section. Older four-asset Releases are legacy binary bundles: they do not
-contain the current lifecycle scripts or metadata, and automation deliberately
-refuses to modify or complete them.
+Release has the exact 21-asset full-platform inventory described in the next
+section. Older Releases are legacy bundles; immutable tags cannot be reused,
+and automation deliberately refuses to modify or complete them.
 
-Packages produced by the current Linux workflow use the fixed prefix
-`/usr/local/redis` and the `core` build profile. They include Redis server and
-command-line binaries but exclude the modules bundled with Redis 8 source
-releases. TLS is disabled, matching a default Redis `make` build.
+Packages use the `core` build profile and exclude modules bundled with Redis 8
+source releases. TLS is disabled, matching a default Redis `make` build.
+Linux and macOS use the fixed prefix `/usr/local/redis`; Windows uses
+`C:\Program Files\Redis-Unofficial`.
 
 The complete status and acceptance criteria are documented in the
 [multi-platform release design](docs/PLATFORM-DESIGN.md). The Windows design
@@ -51,14 +49,15 @@ references
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows)
 at fixed commit
 [`17fd667560f7903820dcabeebb9d20ade1159fe9`](https://github.com/redis-windows/redis-windows/commit/17fd667560f7903820dcabeebb9d20ade1159fe9).
-No stable Windows Release, Windows production support, or native Windows ARM64
-support is currently claimed. See
+The stable Windows member is the independent MSYS2 x64 implementation in this
+repository; it does not copy code from the referenced project and does not
+claim native Windows ARM64, TLS, or a managed Sentinel service. See
 [Windows issue coverage](docs/WINDOWS-ISSUE-COVERAGE.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).
 
-### Experimental manual artifacts and prereleases
+### Manual acceptance artifacts
 
-> **Experimental identity migration:** packages created before the current
+> **Package identity migration:** packages created before the current
 > naming cleanup are not in-place upgrade compatible. Back up `conf/` and
 > `data/`, uninstall with the scripts bundled in the installed package, and
 > then perform a fresh install from a newly built artifact.
@@ -66,64 +65,72 @@ support is currently claimed. See
 `.github/workflows/build-experimental.yml` can be triggered manually for an
 exact official stable Redis version. It verifies that version against an
 immutable `redis/redis-hashes` commit, builds each selected architecture
-natively, validates archive contents, and uploads seven-day Actions artifacts:
+natively, validates archive contents, and uploads seven-day **experimental**
+Actions artifacts. The same read-only workflow is also called by the stable
+publisher; only that caller-bound mode emits `PACKAGE_STATUS=release` packages.
 
 - glibc 2.17 legacy: x64 and ARM64 `.tar.gz` packages with the reviewed
   systemd lifecycle scripts;
 - musl 1.2: x64 and ARM64 `.tar.gz` packages with OpenRC lifecycle scripts;
-- macOS 12+: native x64 and ARM64 `.tar.gz` packages with launchd lifecycle
+- macOS 15+: native x64 and ARM64 `.tar.gz` packages with launchd lifecycle
   scripts; and
 - Windows: one x64 MSYS2 `.zip` package with a dedicated SCM wrapper and
   PowerShell lifecycle scripts.
 
-Each package has an adjacent `.sha256` file and declares `experimental` in its
-package metadata. The build workflow has `contents: read`, contains no
-Release/tag operation, is not callable by the release controller, and does not
-generate the stable Release manifest, SBOM, or attestations. Its disposable CI
-gates
-exercise no-systemd legacy Linux lifecycle paths, Alpine-container OpenRC,
-native macOS 15 launchd, and Windows Server 2022 SCM, including saved-data
-reload and ordinary-uninstall recovery. They do not cover a booted legacy
-systemd host, a booted OpenRC host, the oldest claimed macOS 12 host,
-fault-injected rollback, or the remaining platform security and load cases.
-Passing these gates therefore does not make an artifact production-supported.
-Use the package-local `README.txt` for its experimental layout; the stable
-lifecycle instructions below apply to `linux-glibc2.28` Release packages only.
-A checked-in experimental row does not prove that a successful native workflow
-run exists; verify the selected run and its logs before downloading an artifact.
+The reusable workflow itself has `contents: read` and cannot create a tag or
+Release. Stable publication additionally requires all nine package pairs,
+unified metadata, attestations, protected-default-branch identity, the
+`release` Environment, draft readback, and post-publication readback. Manual
+artifacts remain experimental and are never accepted by the numeric publisher.
 
-After all seven platform jobs for one exact Redis version and packaging
-revision pass, a maintainer may publish the downloaded and revalidated files
-under the separate prerelease tag `X.Y.Z-experimental.N`. Such a prerelease has
-exactly 15 assets: seven archives, seven adjacent `.sha256` files, and one
-`SHA256SUMS` covering the other 14 files. It never shares or mutates the numeric
-`X.Y.Z` stable Release, is published with `latest=false`, and remains
-experimental. If that prerelease tag or Release already exists, it is not
-overwritten or completed; a new full build and a higher `N` are required.
+Acceptance covers real binary architecture/runtime checks; glibc symbol
+ceilings; Redis build tests and protocol smoke tests; install/update/uninstall
+idempotency; persisted-data recovery; injected update rollback on OpenRC,
+launchd, and Windows; native macOS 15 launchd; and Windows port-conflict,
+non-ASCII staging path, BGSAVE, bounded load, child-process recovery, and
+password-file-authenticated graceful shutdown. The glibc 2.17 lifecycle gate
+runs in the pinned legacy user space without systemd; the shared systemd
+scripts are separately exercised by both glibc 2.28 architectures. These
+checks define the tested package contract, not vendor support from Redis Ltd.
 
 ## Release and package contents
 
-A Release produced by the current Linux publisher contains exactly seven
-assets. For an exact Redis version `X.Y.Z` they are:
+A Release produced by the full-platform publisher contains exactly 21 assets.
+For an exact Redis version `X.Y.Z` they are:
 
 ```text
 Redis-X.Y.Z-linux-glibc2.28-x64.tar.gz
 Redis-X.Y.Z-linux-glibc2.28-x64.tar.gz.sha256
 Redis-X.Y.Z-linux-glibc2.28-arm64.tar.gz
 Redis-X.Y.Z-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
+Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
+Redis-X.Y.Z-macos15-x64.tar.gz
+Redis-X.Y.Z-macos15-x64.tar.gz.sha256
+Redis-X.Y.Z-macos15-arm64.tar.gz
+Redis-X.Y.Z-macos15-arm64.tar.gz.sha256
+Redis-X.Y.Z-windows-msys2-x64.zip
+Redis-X.Y.Z-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-X.Y.Z.spdx.json
 ```
 
-`SHA256SUMS` covers the other six assets. `manifest.json` binds the Redis
+`SHA256SUMS` covers the other 20 assets. `manifest.json` binds the Redis
 source checksum, immutable `redis-hashes` snapshot commit, packaging revision,
-patch-set checksum, architecture, ABI baseline, archive size, and archive
-checksum. The SPDX 2.3 document is a **release-package-level inventory** of the
-Redis source and the two published archives; it is not a file-level or complete
+per-platform patch-set checksum, operating system, architecture, runtime/ABI
+baseline, service backend, archive size, and archive checksum. The SPDX 2.3
+document is a **release-package-level inventory** of the Redis source and all
+nine published archives; it is not a file-level or complete
 transitive-dependency SBOM.
 
-Every current `PACKAGE_FORMAT=2` archive has this `redis/` layout; the
+Every current glibc `PACKAGE_FORMAT=2` archive has this `redis/` layout; the
 contributor-license file is conditional for older Redis versions:
 
 ```text
@@ -178,7 +185,7 @@ archive="Redis-${version}-linux-glibc2.28-x64.tar.gz"
 sha256sum -c "${archive}.sha256"
 ```
 
-When all seven assets are present in one directory, verify the complete
+When all 21 assets are present in one directory, verify the complete
 checksummed set:
 
 ```bash
@@ -188,7 +195,7 @@ sha256sum -c SHA256SUMS
 The adjacent checksum and `SHA256SUMS` share the GitHub Release trust boundary
 with the archives; neither is an independent signature. Releases created by
 the current workflow also have GitHub Artifact Attestations: SLSA provenance
-for all seven assets and an SPDX predicate for each archive. With
+for all 21 assets and an SPDX predicate for each of the nine archives. With
 [GitHub CLI](https://cli.github.com/) installed, verify the two predicates
 separately:
 
@@ -226,9 +233,9 @@ The lifecycle scripts require root privileges and:
 - a running systemd instance and `systemctl` when service mode is selected;
   `--no-service` instead performs a complete managed installation without
   requiring or registering systemd; and
-- glibc 2.28 or newer on the implemented package variant. `getconf` is required
-  to verify the host glibc version, and the packaged binary is then executed as
-  the final compatibility check.
+- glibc 2.28 or newer for `linux-glibc2.28`, or glibc 2.17 or newer for
+  `linux-glibc2.17-legacy`. `getconf` verifies the host glibc version, and the
+  packaged binary is then executed as the final compatibility check.
 
 Distribution package names differ. Typical providers are `bash`, `coreutils`,
 `tar`, `findutils`, `gawk`, `grep`, `sed`, `util-linux`, `shadow-utils`,
@@ -466,14 +473,14 @@ archives. ARM64 kernel warnings such as `ARM64-COW-BUG` are not suppressed.
 
 ## Release automation and immutability
 
-The [Linux workflow](.github/workflows/build-linux.yml) has only manual and
+The [full-platform workflow](.github/workflows/build-linux.yml) has only manual and
 `workflow_call` entry points; it has no push or schedule trigger. Publication
 is disabled by default.
 
 The current publisher creates only a brand-new numeric `X.Y.Z` Release and
 tag. It:
 
-1. requires both architectures and the exact seven-asset contract;
+1. requires all nine platform archives and the exact 21-asset contract;
 2. runs only from the protected default branch through the GitHub Environment
    named `release`;
 3. creates one draft Release containing all assets;

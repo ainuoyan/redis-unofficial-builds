@@ -79,11 +79,17 @@ class ValidateReleaseAssetTests(unittest.TestCase):
                 "acceptance",
             )
 
-    def test_publication_status_is_bound_to_one_reviewed_linux_contract(self) -> None:
+    def test_publication_status_is_bound_to_reviewed_linux_contracts(self) -> None:
         validator.validate_build_contract(
             package_status="release",
             variant="linux-glibc2.28",
             min_glibc="2.28",
+            build_workflow=validator.DEFAULT_BUILD_WORKFLOW,
+        )
+        validator.validate_build_contract(
+            package_status="release",
+            variant="linux-glibc2.17-legacy",
+            min_glibc="2.17",
             build_workflow=validator.DEFAULT_BUILD_WORKFLOW,
         )
         validator.validate_build_contract(
@@ -93,7 +99,7 @@ class ValidateReleaseAssetTests(unittest.TestCase):
             build_workflow=validator.EXPERIMENTAL_BUILD_WORKFLOW,
         )
         for status, variant, baseline, workflow in (
-            ("release", "linux-glibc2.17-legacy", "2.17", validator.DEFAULT_BUILD_WORKFLOW),
+            ("release", "linux-glibc2.17-legacy", "2.28", validator.DEFAULT_BUILD_WORKFLOW),
             ("experimental", "linux-glibc2.28", "2.28", validator.EXPERIMENTAL_BUILD_WORKFLOW),
             ("experimental", "linux-glibc2.17-legacy", "2.17", validator.DEFAULT_BUILD_WORKFLOW),
         ):

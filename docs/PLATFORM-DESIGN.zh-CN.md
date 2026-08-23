@@ -2,10 +2,10 @@
 
 [English](PLATFORM-DESIGN.md)
 
-本文明确区分稳定发布能力、实验性预发布和后端设计。“已实现”表示代码、CI、校验、
-原生生命周期门禁和稳定发布策略均已存在；“实验性”表示已有手工构建/打包路径，只有
-全部验收门禁通过后才能进入使用独立 Tag 的 GitHub 预发布，但不宣称生产支持；
-“仅设计”表示不宣称存在构建产物。
+本文明确区分原子化稳定 Release、手工生成的实验性 Actions artifact 和仅设计后端。
+“已实现”表示代码、CI、语义校验、原生生命周期门禁和稳定发布策略均已存在。手工
+触发只读平台构建器时仍生成实验性 artifact；只有受保护的稳定发布调用方才能把这些
+Job 绑定到纯数字 Release。“仅设计”表示不宣称存在构建产物。
 
 ## Redis 发布系列
 
@@ -32,17 +32,18 @@ Redis 名称与标识仍受官方
 | 包变体 | 架构 | 构建基线 | 服务后端 | 状态 |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64、ARM64 | 按摘要固定的 Rocky Linux 8 用户态 | systemd | **已实现** |
-| `linux-glibc2.17-legacy` | x64、ARM64 | 按摘要固定的 manylinux2014（glibc 2.17） | systemd | **实验性预发布** |
-| `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **实验性预发布** |
-| `macos12` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 12.0 | launchd | **实验性预发布** |
-| `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **实验性预发布**；Windows 主后端 |
+| `linux-glibc2.17-legacy` | x64、ARM64 | 按摘要固定的 manylinux2014（glibc 2.17） | systemd 或无服务模式 | **已实现** |
+| `linux-musl1.2` | x64、ARM64 | 按摘要固定的 musllinux 1.2 | OpenRC | **已实现** |
+| `macos15` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 15.0 | launchd | **已实现** |
+| `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **已实现**；Windows 主后端 |
 
-只有 `linux-glibc2.28` 行已启用控制器。实验性行指向手工
-`build-experimental.yml`，但控制器仍禁用。所有 Linux 方案均使用 `.tar.gz`，不依赖
-RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。实验性 Windows 包使用
-`.zip` 和固定目录 `C:\Program Files\Redis-Unofficial`。
+9 个平台行均启用控制器，稳定包身份都绑定 `build-linux.yml`。发布器会调用只读平台
+工作流完成额外原生 Job，但这个实现细节不会改变包元数据记录的稳定工作流身份。
+所有 Linux 包均使用 `.tar.gz`，不依赖 RPM、DEB、Snap 或 APK，固定前缀为
+`/usr/local/redis`。Windows 使用 `.zip` 和固定目录
+`C:\Program Files\Redis-Unofficial`。
 
-当前运行身份清理之前创建的实验性安装会被新更新脚本明确拒绝。请先备份配置与
+当前运行身份清理之前创建的安装会被新更新脚本明确拒绝。请先备份配置与
 数据，使用已安装包内的生命周期脚本卸载，再执行全新安装。
 
 ### ABI 原则
@@ -58,7 +59,7 @@ RPM、DEB、Snap 或 APK，固定前缀为 `/usr/local/redis`。实验性 Window
 - 在模拟层运行的 x64 Windows 包不能标记为 ARM64。原生 Windows ARM64 必须具备
   兼容原生工具链，并在 ARM64 Windows 上完成服务、持久化及负载测试。
 
-## 已实现稳定 Linux 包约定
+## 已实现 glibc 包约定
 
 当前使用 `core` 配置：包含 Redis 服务端和命令行程序，不包含 Redis 8 捆绑模块。
 模块版必须使用独立变体，并设置独立编译器、依赖、许可证、持久化和升级门禁。
@@ -108,84 +109,70 @@ CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官�
 只读。DNF 依赖从 Rocky 软件源动态解析，因此记录编译器/运行库信息，但不宣称
 逐字节可复现。
 
-## 实验性 artifact 约定
+## 可复用平台构建约定
 
-仅手工触发的工作流先固定并严格解析官方 `redis/redis-hashes` 快照，下载对应源码包，
-再把已校验源码传给各构建 Job。仓库权限只有 `contents: read`，没有 Tag、Release、
-下游工作流分发 API 或发布步骤。artifact 保留 7 天，明确不属于稳定 Release 的 7 产物清单。
+平台工作流先固定并严格解析官方 `redis/redis-hashes` 快照，下载对应源码包，再把
+已校验源码传给各构建 Job。仓库权限只有 `contents: read`，没有 Tag、Release、下游
+工作流分发 API 或发布步骤。手工触发时设置 `PACKAGE_STATUS=experimental` 并记录
+`build-experimental.yml`；这些保留 7 天的 Actions artifact 不能进入纯数字 Release。
 
-glibc 2.17 包沿用第 2 版格式并增加 `PACKAGE_STATUS=experimental`；musl、macOS 和
-Windows 使用 `PACKAGE_FORMAT=3` 与 `PACKAGE_STATUS=experimental`。第 3 版元数据
-绑定源码摘要、redis-hashes 提交、打包提交、精确平台身份、经审查生命周期文件和
-平台补丁集。校验器不解压读取包，拒绝多余成员、路径穿越、链接、特殊文件、不安全
-权限、超大内容、压缩炸弹、架构/运行库不匹配和仍处于启用状态的 `loadmodule`。
+由 `build-linux.yml` 调用时，相同 Job 接收调用方的精确版本、源码 SHA-256 和不可变
+哈希提交，设置 `PACKAGE_STATUS=release` 并记录 `build-linux.yml`。glibc 2.17 使用
+第 2 版格式，musl、macOS 和 Windows 使用第 3 版格式。两种格式都绑定源码摘要、
+redis-hashes 提交、打包提交、精确平台身份、经审查生命周期文件和包含稳定工作流的
+补丁集摘要，因此手工包不能仅靠改名伪装成正式包。
 
-手工工作流对 Linux 和 macOS 执行上游构建测试及本地 Redis 协议冒烟。Windows Job
-执行以兼容性为重点的 MSYS2 构建，并构建仓库独立实现的自包含 SCM 包装器。
-一次性生命周期门禁
-分别覆盖两个 legacy Linux 架构的无 systemd 用户态、两个 musl 架构的 Alpine 容器内
-OpenRC、两个 macOS 架构在原生 macOS 15 Runner 上的 launchd，以及 Windows Server
-2022 上的 SCM。各后端按适用范围验证全新安装、同版本幂等、就绪、已保存数据重载、
-普通卸载后的恢复和彻底卸载。
+包校验不只信任文件名。校验器不解压读取包，拒绝多余成员、路径穿越、链接、特殊
+文件、不安全权限、超大内容、压缩炸弹、架构/运行库不匹配和启用状态的
+`loadmodule`。它从包内真实内容核对 ELF 架构、解释器、动态依赖、Redis 版本、最高
+`GLIBC_*` 符号，Mach-O 架构与最低系统版本，以及 Windows PE 架构、Redis 版本、
+MSYS2 DLL 清单/notices、生命周期脚本和服务包装器。
 
-稳定验收仍要求启动了 systemd 的代表性旧发行版、以 OpenRC 引导的环境、声明支持的
-最老 macOS 12、故障注入回滚，以及其余 Windows 认证、TLS、非 ASCII 路径、失败、
-安全和负载场景。因此即使手工运行成功，这些产物仍保持实验状态。
-
-### 实验性预发布
-
-构建工作流继续保持只读且不能发布。只有同一版本的七个平台 Job 均绑定同一个受保护
-默认分支打包提交并全部成功后，维护者才能发布。维护者必须下载所有 artifact，重新
-执行每个压缩包的语义校验与相邻校验和验证，并生成一个汇总 `SHA256SUMS`。
-
-预发布 Tag 为 `X.Y.Z-experimental.N`，必须精确包含 15 个产物：七个平台压缩包、
-七个相邻 `.sha256` 和覆盖这 14 个文件的 `SHA256SUMS`。发布过程先创建
-`latest=false` 的草稿预发布，在正式发布前核对 Tag 提交、状态、精确文件名、大小和
-摘要；正式发布后再次下载并复验全部产物。已有 Tag 或 Release 视为不可变输入，绝不
-添加、覆盖、删除或补全；替换时必须重新完成全量构建并递增 `N`。实验性预发布不包含
-稳定 manifest、SBOM、artifact attestation，也不代表生产支持。
-
-```text
-Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz
-Redis-X.Y.Z-linux-glibc2.17-legacy-x64.tar.gz.sha256
-Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz
-Redis-X.Y.Z-linux-glibc2.17-legacy-arm64.tar.gz.sha256
-Redis-X.Y.Z-linux-musl1.2-x64.tar.gz
-Redis-X.Y.Z-linux-musl1.2-x64.tar.gz.sha256
-Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz
-Redis-X.Y.Z-linux-musl1.2-arm64.tar.gz.sha256
-Redis-X.Y.Z-macos12-x64.tar.gz
-Redis-X.Y.Z-macos12-x64.tar.gz.sha256
-Redis-X.Y.Z-macos12-arm64.tar.gz
-Redis-X.Y.Z-macos12-arm64.tar.gz.sha256
-Redis-X.Y.Z-windows-msys2-x64.zip
-Redis-X.Y.Z-windows-msys2-x64.zip.sha256
-SHA256SUMS
-```
+生命周期验收覆盖全新和重复安装、就绪、更新、已保存数据重载、普通卸载恢复、彻底
+卸载及平台特定失败边界。OpenRC、launchd 和 Windows 执行故障注入更新回滚。Windows
+还测试含空格/非 ASCII 的暂存路径、端口冲突安装回滚、BGSAVE、有界
+`redis-benchmark`、Sentinel 二进制身份、子进程异常退出后的 SCM 恢复，以及密码文件
+认证的就绪与优雅关闭。TLS 未构建也不宣称支持。glibc 2.17 门禁在固定 legacy 用户态
+使用 `--no-service`；相同 systemd 生命周期文件由两个 glibc 2.28 架构独立测试。
 
 ## 当前 GitHub Release 约定
 
-一个纯数字 Redis `X.Y.Z` Tag 对应一个 Release。当前 Linux 发布器只接受以下
-精确 7 个产物：
+一个纯数字 Redis `X.Y.Z` Tag 对应一个 Release。全平台发布器只接受以下精确
+21 个产物：
 
 ```text
 Redis-{version}-linux-glibc2.28-x64.tar.gz
 Redis-{version}-linux-glibc2.28-x64.tar.gz.sha256
 Redis-{version}-linux-glibc2.28-arm64.tar.gz
 Redis-{version}-linux-glibc2.28-arm64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-x64.tar.gz.sha256
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz
+Redis-{version}-linux-glibc2.17-legacy-arm64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-x64.tar.gz
+Redis-{version}-linux-musl1.2-x64.tar.gz.sha256
+Redis-{version}-linux-musl1.2-arm64.tar.gz
+Redis-{version}-linux-musl1.2-arm64.tar.gz.sha256
+Redis-{version}-macos15-x64.tar.gz
+Redis-{version}-macos15-x64.tar.gz.sha256
+Redis-{version}-macos15-arm64.tar.gz
+Redis-{version}-macos15-arm64.tar.gz.sha256
+Redis-{version}-windows-msys2-x64.zip
+Redis-{version}-windows-msys2-x64.zip.sha256
 SHA256SUMS
 manifest.json
 redis-unofficial-builds-{version}.spdx.json
 ```
 
-缺少或多出任何产物都会失败。`SHA256SUMS` 校验其余 6 个文件。
+缺少或多出任何产物都会失败。`SHA256SUMS` 校验其余 20 个文件。
 `manifest.json` 绑定源码 URL/SHA-256、不可变 `redis-hashes` 提交、打包提交、
-补丁集校验和、工作流、构建配置、架构、ABI、大小和压缩包摘要。
+各平台补丁集校验和、工作流、构建配置、操作系统、架构、运行时/ABI 基线、服务
+后端、大小和压缩包摘要。
 
-SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个压缩包，其范围
+SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和 9 个压缩包，其范围
 明确为 `release-package-level`，不能宣传为完整文件级或传递依赖 SBOM。
 
-工作流为 7 个产物生成 SLSA 来源证明，并为两个压缩包生成 SPDX 证明。发布前会验证
+工作流为 21 个产物生成 SLSA 来源证明，并为 9 个压缩包生成 SPDX 证明。发布前会验证
 准确工作流身份、签名者/源码提交、受保护默认分支 ref、predicate 类型，并拒绝
 自托管 Runner 证明。
 
@@ -193,10 +180,10 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 
 发布器只在 Tag 和 Release 均不存在时工作：
 
-1. 两个架构构建及服务测试全部通过；
-2. 创建并按语义校验 7 个文件；
+1. 9 个平台构建及生命周期测试全部通过；
+2. 创建并按语义校验 21 个文件；
 3. 生成并验证证明；
-4. 一次创建包含所有 7 个文件的草稿 Release；
+4. 一次创建包含所有 21 个文件的草稿 Release；
 5. 通过 REST 回读草稿的 `target_commitish`、状态和精确产物清单；
 6. 把每个远端产物的数字 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，
    再下载全部产物并重复语义校验和证明验证；
@@ -290,34 +277,34 @@ SPDX 2.3 文件以 `filesAnalyzed=false` 描述已校验 Redis 源码和两个�
 - 普通卸载保留配置、数据、状态、账号和备份；`--purge` 在账号和挂载安全检查后
   删除固定前缀。
 
-## 实验性后端
+## 其他已实现后端
 
 ### glibc 2.17 legacy
 
-该包是独立命名的实验性兼容变体，不替代已实现基线。构建器使用按摘要固定的
-manylinux2014，并拒绝任何要求高于 `GLIBC_2.17` 符号的 ELF。手工门禁在对应的
+该包是独立命名的 legacy ABI 兼容包，不替代 glibc 2.28 基线。构建器使用按摘要固定的
+manylinux2014，并拒绝任何要求高于 `GLIBC_2.17` 符号的 ELF。正式门禁在对应的
 manylinux2014/CentOS 7 用户态中，以 `--no-service` 对两个架构测试全新安装、更新、
-已保存数据重载、普通卸载后的恢复和彻底卸载。稳定验收仍要求可维护的工具链/sysroot、
-代表性且仍受支持的旧操作系统、systemd 生命周期测试和故障注入回滚。说明必须明确
-旧 ABI 不提供操作系统安全维护。
+已保存数据重载、普通卸载后的恢复和彻底卸载。它复用相同的 systemd 生命周期文件；
+其安装、失败回滚、更新回滚、持久化和彻底卸载由两个 glibc 2.28 架构 Job 分别实测。
+这是 ABI 兼容约定，不代表已停止维护的发行版重新获得操作系统安全维护。
 
 ### musl 与 OpenRC
 
-实验性 musl 包在按摘要固定的 musllinux 1.2 镜像中构建，必须使用 musl 解释器，
-不得包含 `GLIBC_*` 引用，并包含独立 OpenRC 生命周期约定。手工门禁在一次性 Alpine
+musl 包在按摘要固定的 musllinux 1.2 镜像中构建，必须使用 musl 解释器，不得包含
+`GLIBC_*` 引用，并包含独立 OpenRC 生命周期约定。正式门禁在一次性 Alpine
 容器内对两个架构测试 OpenRC 全新和重复安装、服务重启、已保存数据重载、普通卸载、
-基于更新的恢复及彻底卸载。该容器并非以 OpenRC 作为 PID 1 引导，因此稳定验收仍需
-以 OpenRC 引导的环境、更广的原生依赖及 Shell/运行环境兼容覆盖和故障注入回滚。
-OpenRC 脚本不得依赖 systemd，并使用独立服务/状态约定。
+基于更新的恢复、故障注入更新回滚及彻底卸载。该容器使用 OpenRC softlevel 执行
+`rc-service`/`rc-update`，但并非以 OpenRC 作为 PID 1 引导；文档明确保留此限制，
+不会据此推断 systemd 兼容性。OpenRC 脚本使用独立服务/状态约定，不依赖 glibc 或
+systemd。
 
 ### macOS
 
-每个实验性架构都在原生 Runner 上以 12.0 部署目标构建；包校验器检查 Mach-O 架构、
-部署目标和允许的系统动态库路径。launchd 后端管理禁止登录账号，保留配置/数据，
-验证 PING，并包含更新/回滚/卸载脚本。手工门禁在原生 macOS 15 Runner 上对两个
-架构测试全新和重复安装、launchd 重启、已保存数据重载、普通卸载后的恢复及彻底卸载。
-稳定验收仍须在声明支持的最老 macOS 12 上运行这些路径并执行故障注入回滚。只有两个
-slice 分别通过后才能发布 universal 包。
+两个架构都在原生 macOS 15 Runner 上以 15.0 部署目标构建并执行生命周期验收；包
+校验器检查 Mach-O 架构、部署目标和允许的系统动态库路径。launchd 后端管理禁止登录
+账号，保留配置/数据，验证 PING，并包含更新/回滚/卸载脚本。正式门禁测试全新和
+重复安装、launchd 重启、已保存数据重载、普通卸载后的恢复、故障注入更新回滚和彻底
+卸载。不发布 universal 包；x64 和 ARM64 始终独立命名、独立校验。
 
 ### Windows
 
@@ -329,18 +316,19 @@ Windows 方案明确参考 Apache-2.0 许可的
 该项目任何源码文件。归属和未来代码合入要求见
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 
-MSYS2 是实验性 Windows 后端。服务包装器必须以前台模式运行 Redis，校验配置路径，
+MSYS2 x64 是已实现 Windows 后端。服务包装器以前台模式运行 Redis，校验配置路径，
 把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
 关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在固定安装前缀保存受
-保护状态；备份位于 `C:\ProgramData\Redis-Unofficial\Backups`。当前实验只支持默认无认证
-回环端点，认证关闭仍是明确的稳定验收项。
+保护状态；备份位于 `C:\ProgramData\Redis-Unofficial\Backups`。可选认证使用固定
+前缀内的受管密码文件；包装器只通过 `REDISCLI_AUTH` 传递密码，执行认证就绪和关闭，
+更新器保留 `RedisService.json`，具名 ACL 用户为可选项。
 
-当前 Windows Server 2022 门禁在固定默认路径覆盖全新安装、同版本更新、PING 就绪、
-显式 `SAVE`、SCM 重启后的键值重载、普通卸载保留、基于更新的服务恢复和彻底卸载。
-Windows 稳定验收仍要求真实测试空格/非 ASCII 路径、错误配置、端口冲突、BGSAVE/AOF、
-认证或 TLS 关闭、子进程异常退出、Sentinel、故障注入回滚和有界负载。原生 EXE 必须
-具有 PE VERSIONINFO。发布构建使用优化而非 `-O0`，公布实测限制，不承诺 POSIX
-兼容层具有 Linux 同等性能。详见
+Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲突安装回滚、全新和
+重复安装、同版本更新、PING、BGSAVE、有界负载、SCM 重启及子进程异常后的恢复与
+持久化键重载、普通卸载保留、基于更新的服务恢复、认证优雅停止/启动、故障注入更新
+回滚和彻底卸载。校验 Sentinel 二进制身份，但不发布受管 Sentinel 服务。未启用也不
+宣称 TLS 或 AOF 专项验收。发布构建使用优化而非 `-O0`，不承诺 POSIX 兼容层具有
+Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
 
 ## 版本解析与构建分离
@@ -357,7 +345,7 @@ flowchart TD
 ```
 
 它不会下载 Redis 源码、执行包代码、调用构建工作流、创建 Tag 或发布 Release。
-Release 名称清单只用于计划；内容和证明由具备发布能力的 Linux 工作流验证。
+Release 名称清单只用于计划；内容和证明由具备发布能力的全平台工作流验证。
 
 ## 发布门禁
 
@@ -371,10 +359,11 @@ Release 名称清单只用于计划；内容和证明由具备发布能力的 Li
   外部服务安全测试；
 - 英文和简体中文生命周期路径；
 - 默认仅本地 Socket，且保留接管的监听、认证、持久化、模块和 include 配置；
-- 精确 7 产物元数据和完整 `SHA256SUMS` 校验；
+- 精确 21 产物元数据和完整 `SHA256SUMS` 校验；
 - Release 包级 SPDX 校验；
 - 来源/SPDX 证明生成及受限验证；
 - 只创建新草稿、回读精确清单、下载验证和单向正式发布；
 - 受保护默认分支和 `release` Environment 审批。
 
-实验性或仅设计平台不能因为配置中存在工作流或产物名称就加入已实现 Release。
+仅设计平台不能因为配置中存在工作流或产物名称就加入已实现 Release；手工生成的
+实验性 artifact 也不能改名后作为稳定包发布。

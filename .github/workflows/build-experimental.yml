@@ -1,6 +1,29 @@
-name: Build experimental platform artifacts
+name: Build platform artifacts
 
 on:
+  workflow_call:
+    inputs:
+      redis_version:
+        description: Exact stable Redis version (X.Y.Z)
+        required: true
+        type: string
+      source_sha256:
+        description: Expected official Redis source SHA-256
+        required: true
+        type: string
+      hashes_commit:
+        description: Immutable redis-hashes snapshot commit
+        required: true
+        type: string
+      platform:
+        description: Platform family
+        required: false
+        default: all
+        type: string
+      release_contract:
+        description: Bind packages to the stable full-release contract
+        required: true
+        type: boolean
   workflow_dispatch:
     inputs:
       redis_version:
@@ -12,7 +35,7 @@ on:
         required: false
         type: string
       platform:
-        description: Experimental platform family
+        description: Platform family
         required: true
         default: all
         type: choice
@@ -20,14 +43,14 @@ on:
           - all
           - glibc2.17
           - musl1.2
-          - macos12
+          - macos15
           - windows-msys2
 
 permissions:
   contents: read
 
 concurrency:
-  group: experimental-${{ inputs.redis_version }}-${{ inputs.platform }}
+  group: platform-packages-${{ inputs.redis_version }}-${{ inputs.platform }}-${{ github.event_name }}
   cancel-in-progress: false
 
 env:
@@ -58,6 +81,8 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.redis_version }}
           PROVIDED_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          PROVIDED_HASHES_COMMIT: ${{ inputs.hashes_commit }}
+          RELEASE_CONTRACT: ${{ inputs.release_contract }}
         run: |
           set -euo pipefail
           version="$REQUESTED_VERSION"
@@ -74,13 +99,21 @@ jobs:
             --platform-config config/platforms.json \
             --workflows-dir .github/workflows
 
-          mapfile -t refs < <(git ls-remote https://github.com/redis/redis-hashes.git refs/heads/master)
-          [[ "${#refs[@]}" -eq 1 ]] || { echo "Unable to resolve one redis-hashes master ref." >&2; exit 1; }
-          read -r hashes_commit ref_name <<<"${refs[0]}"
-          [[ "$hashes_commit" =~ ^[0-9a-f]{40}$ && "$ref_name" == refs/heads/master ]] || {
-            echo "Invalid redis-hashes snapshot." >&2
-            exit 1
-          }
+          if [[ "$RELEASE_CONTRACT" == true ]]; then
+            hashes_commit="$PROVIDED_HASHES_COMMIT"
+            [[ "$hashes_commit" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Reusable build received an invalid redis-hashes snapshot." >&2
+              exit 1
+            }
+          else
+            mapfile -t refs < <(git ls-remote https://github.com/redis/redis-hashes.git refs/heads/master)
+            [[ "${#refs[@]}" -eq 1 ]] || { echo "Unable to resolve one redis-hashes master ref." >&2; exit 1; }
+            read -r hashes_commit ref_name <<<"${refs[0]}"
+            [[ "$hashes_commit" =~ ^[0-9a-f]{40}$ && "$ref_name" == refs/heads/master ]] || {
+              echo "Invalid redis-hashes snapshot." >&2
+              exit 1
+            }
+          fi
           curl --fail --silent --show-error --location \
             --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 3 \
             --connect-timeout 20 --max-time 120 \
@@ -176,6 +209,8 @@ jobs:
           PACKAGE_ARCH: ${{ matrix.package_arch }}
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           IMAGE_ENV: ${{ matrix.image_env }}
+          PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           image="${!IMAGE_ENV}"
@@ -183,7 +218,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:rw" \
             --env REDIS_VERSION --env REDIS_SOURCE_SHA256 --env REDIS_HASHES_COMMIT \
-            --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH \
+            --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH --env PACKAGE_STATUS --env BUILD_WORKFLOW_PATH \
             --env GITHUB_SHA --env GITHUB_SERVER_URL --env GITHUB_REPOSITORY --env GITHUB_RUN_ID \
             --env BUILD_IMAGE="$image" \
             "$image" /bin/bash -euo pipefail -c '
@@ -215,7 +250,7 @@ jobs:
                 REDIS_HASHES_COMMIT="$REDIS_HASHES_COMMIT" PACKAGE_ARCH="$PACKAGE_ARCH" \
                 EXPECTED_MACHINE_ARCH="$EXPECTED_MACHINE_ARCH" \
                 PACKAGE_VARIANT=linux-glibc2.17-legacy GLIBC_BASELINE=2.17 \
-                BUILD_WORKFLOW_PATH=.github/workflows/build-experimental.yml \
+                BUILD_WORKFLOW_PATH="$BUILD_WORKFLOW_PATH" \
                 REDIS_SOURCE_ARCHIVE="/workspace/source/redis-${REDIS_VERSION}.tar.gz" \
                 OUTPUT_DIR=/workspace/dist BUILD_IMAGE="$BUILD_IMAGE" \
                 GITHUB_SHA="$GITHUB_SHA" GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
@@ -227,7 +262,7 @@ jobs:
             --archive "$archive" --checksum "${archive}.sha256" \
             --redis-version "$REDIS_VERSION" --source-sha256 "$REDIS_SOURCE_SHA256" \
             --variant linux-glibc2.17-legacy --arch "$PACKAGE_ARCH" --min-glibc 2.17 \
-            --package-status experimental --build-workflow .github/workflows/build-experimental.yml \
+            --package-status "$PACKAGE_STATUS" --build-workflow "$BUILD_WORKFLOW_PATH" \
             --packaging-root "$GITHUB_WORKSPACE" --packaging-revision "$GITHUB_SHA"
       - name: Test legacy userspace lifecycle without systemd
         shell: bash
@@ -313,7 +348,7 @@ jobs:
               "$package/scripts/uninstall.sh" --purge
               trap - EXIT
             '
-      - name: Upload experimental package
+      - name: Upload platform package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Redis-${{ needs.prepare.outputs.version }}-linux-glibc2.17-legacy-${{ matrix.package_arch }}
@@ -361,6 +396,8 @@ jobs:
           PACKAGE_ARCH: ${{ matrix.package_arch }}
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           IMAGE_ENV: ${{ matrix.image_env }}
+          PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           image="${!IMAGE_ENV}"
@@ -369,6 +406,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:rw" \
             --env REDIS_VERSION --env REDIS_SOURCE_SHA256 --env REDIS_HASHES_COMMIT \
             --env PACKAGE_ARCH --env EXPECTED_MACHINE_ARCH --env GITHUB_SHA \
+            --env PACKAGE_STATUS --env BUILD_WORKFLOW_PATH \
             --env BUILD_ENVIRONMENT="$image" \
             "$image" /bin/bash -euo pipefail -c '
               apk add --no-cache bash coreutils findutils gcc libc-dev linux-headers make musl-dev procps python3 tcl util-linux
@@ -387,6 +425,7 @@ jobs:
                 REDIS_SOURCE_ARCHIVE="/workspace/source/redis-${REDIS_VERSION}.tar.gz" \
                 PACKAGE_VARIANT=linux-musl1.2 PACKAGE_ARCH="$PACKAGE_ARCH" \
                 EXPECTED_MACHINE_ARCH="$EXPECTED_MACHINE_ARCH" BUILD_ENVIRONMENT="$BUILD_ENVIRONMENT" \
+                PACKAGE_STATUS="$PACKAGE_STATUS" BUILD_WORKFLOW_PATH="$BUILD_WORKFLOW_PATH" \
                 PACKAGING_REVISION="$GITHUB_SHA" OUTPUT_DIR=/workspace/dist \
                 /workspace/scripts/experimental/build-portable-posix.sh
             '
@@ -477,12 +516,43 @@ jobs:
               assert_equal persisted \
                 "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" \
                 "OpenRC recovery did not reload persisted data"
+
+              state="$prefix/.redis-package-state"
+              sed -i 's/^REDIS_VERSION=.*/REDIS_VERSION=0.0.0/' "$state"
+              mock_bin="$stage/mock-bin"
+              marker="$stage/install-failure-injected"
+              install -d -o root -g root -m 0700 "$mock_bin"
+              cat >"$mock_bin/install" <<EOF
+              #!/bin/sh
+              last=
+              for argument in "\$@"; do last="\$argument"; done
+              if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
+                : >"$marker"
+                exit 73
+              fi
+              exec /usr/bin/install "\$@"
+              EOF
+              chmod 0700 "$mock_bin/install"
+              if PATH="$mock_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+                "$package/scripts/update.sh"; then
+                echo "Fault-injected OpenRC update unexpectedly succeeded." >&2
+                exit 1
+              fi
+              sed -i "s/^REDIS_VERSION=.*/REDIS_VERSION=$REDIS_VERSION/" "$state"
+              wait_ready
+              assert_equal persisted \
+                "$("$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" \
+                "OpenRC rollback did not restart the previous installation"
+              assert_equal "$config_sha" \
+                "$(sha256sum "$prefix/conf/redis.conf" | awk "{print \$1}")" \
+                "OpenRC rollback changed redis.conf"
+
               "$package/scripts/uninstall.sh" --purge
               [[ ! -e "$prefix" && ! -e /etc/init.d/redis-unofficial ]]
               "$package/scripts/uninstall.sh" --purge
               trap - EXIT
             '
-      - name: Upload experimental package
+      - name: Upload platform package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Redis-${{ needs.prepare.outputs.version }}-linux-musl1.2-${{ matrix.package_arch }}
@@ -493,9 +563,9 @@ jobs:
           retention-days: 7
 
   macos:
-    name: macOS 12+ ${{ matrix.package_arch }}
+    name: macOS 15+ ${{ matrix.package_arch }}
     needs: prepare
-    if: inputs.platform == 'all' || inputs.platform == 'macos12'
+    if: inputs.platform == 'all' || inputs.platform == 'macos15'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -528,10 +598,12 @@ jobs:
           PACKAGE_ARCH: ${{ matrix.package_arch }}
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           REDIS_SOURCE_ARCHIVE: ${{ github.workspace }}/source/redis-${{ needs.prepare.outputs.version }}.tar.gz
-          PACKAGE_VARIANT: macos12
-          BUILD_ENVIRONMENT: ${{ matrix.runner }} with MACOSX_DEPLOYMENT_TARGET=12.0
+          PACKAGE_VARIANT: macos15
+          BUILD_ENVIRONMENT: ${{ matrix.runner }} with MACOSX_DEPLOYMENT_TARGET=15.0
           PACKAGING_REVISION: ${{ github.sha }}
           OUTPUT_DIR: ${{ github.workspace }}/dist
+          PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
         run: scripts/experimental/build-portable-posix.sh
       - name: Test launchd install, persistence, recovery, and purge
         shell: bash
@@ -540,7 +612,7 @@ jobs:
           PACKAGE_ARCH: ${{ matrix.package_arch }}
         run: |
           set -euo pipefail
-          archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-macos12-${PACKAGE_ARCH}.tar.gz"
+          archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-macos15-${PACKAGE_ARCH}.tar.gz"
           [[ -f "$archive" && ! -L "$archive" ]]
           stage="$(sudo mktemp -d /private/tmp/redis-unofficial-lifecycle.XXXXXX)"
           sudo tar -xzf "$archive" -C "$stage"
@@ -581,18 +653,45 @@ jobs:
           wait_ready
           [[ "$(sudo shasum -a 256 "$prefix/conf/redis.conf" | awk '{print $1}')" == "$config_sha" ]]
           [[ "$(sudo "$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+
+          state="$prefix/.redis-package-state"
+          sudo sed -i '' 's/^REDIS_VERSION=.*/REDIS_VERSION=0.0.0/' "$state"
+          mock_bin="$stage/mock-bin"
+          marker="$stage/install-failure-injected"
+          sudo install -d -o root -g wheel -m 0700 "$mock_bin"
+          sudo tee "$mock_bin/install" >/dev/null <<EOF
+          #!/bin/sh
+          last=
+          for argument in "\$@"; do last="\$argument"; done
+          if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
+            : >"$marker"
+            exit 73
+          fi
+          exec /usr/bin/install "\$@"
+          EOF
+          sudo chmod 0700 "$mock_bin/install"
+          if sudo env PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            "$package/scripts/update.sh"; then
+            echo "Fault-injected launchd update unexpectedly succeeded." >&2
+            exit 1
+          fi
+          sudo sed -i '' "s/^REDIS_VERSION=.*/REDIS_VERSION=$REDIS_VERSION/" "$state"
+          wait_ready
+          [[ "$(sudo "$prefix/bin/redis-cli" -s "$socket" get redis-unofficial-acceptance-persistence)" == persisted ]]
+          [[ "$(sudo shasum -a 256 "$prefix/conf/redis.conf" | awk '{print $1}')" == "$config_sha" ]]
+
           sudo "$package/scripts/uninstall.sh" --purge
           sudo test ! -e "$prefix"
           sudo test ! -e /Library/LaunchDaemons/io.github.ainuoyan.redis-unofficial.plist
           sudo "$package/scripts/uninstall.sh" --purge
           trap - EXIT
-      - name: Upload experimental package
+      - name: Upload platform package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Redis-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}
+          name: Redis-${{ needs.prepare.outputs.version }}-macos15-${{ matrix.package_arch }}
           path: |
-            dist/Redis-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}.tar.gz
-            dist/Redis-${{ needs.prepare.outputs.version }}-macos12-${{ matrix.package_arch }}.tar.gz.sha256
+            dist/Redis-${{ needs.prepare.outputs.version }}-macos15-${{ matrix.package_arch }}.tar.gz
+            dist/Redis-${{ needs.prepare.outputs.version }}-macos15-${{ matrix.package_arch }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -642,6 +741,8 @@ jobs:
           REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
           PACKAGING_REVISION: ${{ github.sha }}
           SERVICE_WRAPPER_WINDOWS: ${{ github.workspace }}\service-publish\RedisService.exe
+          PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           export REDIS_SOURCE_ARCHIVE="$PWD/source/redis-${REDIS_VERSION}.tar.gz"
@@ -653,64 +754,156 @@ jobs:
           export SERVICE_WRAPPER="$(cygpath -u "$SERVICE_WRAPPER_WINDOWS")"
           export RUN_FULL_TESTS=false
           scripts/experimental/build-portable-posix.sh
-      - name: Test Windows install, uninstall recovery, and purge
+      - name: Test Windows security, lifecycle, recovery, and purge
         shell: pwsh
         env:
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $archive = "dist/Redis-$env:REDIS_VERSION-windows-msys2-x64.zip"
-          Expand-Archive -LiteralPath $archive -DestinationPath lifecycle-test
-          try {
-            & lifecycle-test/redis/scripts/Install-Redis.ps1
-            & lifecycle-test/redis/scripts/Update-Redis.ps1
-            $response = & 'C:\Program Files\Redis-Unofficial\bin\redis-cli.exe' -h 127.0.0.1 -p 6379 ping
-            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
-              throw 'Installed Windows service did not answer PING.'
+          $stage = Join-Path $env:RUNNER_TEMP 'Redis 生命周期 验收'
+          Expand-Archive -LiteralPath $archive -DestinationPath $stage
+          $scripts = Join-Path $stage 'redis\scripts'
+          $prefix = 'C:\Program Files\Redis-Unofficial'
+          $cli = Join-Path $prefix 'bin\redis-cli.exe'
+
+          function Wait-RedisReady {
+            param([string]$Password = '')
+            foreach ($attempt in 1..60) {
+              if ($Password) { $env:REDISCLI_AUTH = $Password }
+              try {
+                $response = & $cli -h 127.0.0.1 -p 6379 ping 2>$null
+                if ($LASTEXITCODE -eq 0 -and ([string]$response).Trim() -ceq 'PONG') { return }
+              } finally {
+                Remove-Item Env:REDISCLI_AUTH -ErrorAction SilentlyContinue
+              }
+              Start-Sleep -Seconds 1
             }
-            $cli = 'C:\Program Files\Redis-Unofficial\bin\redis-cli.exe'
+            throw 'Windows Redis service did not pass readiness.'
+          }
+
+          $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 6379)
+          $conflictRejected = $false
+          try {
+            $listener.Start()
+            & (Join-Path $scripts 'Install-Redis.ps1')
+          } catch {
+            $conflictRejected = $true
+          } finally {
+            $listener.Stop()
+          }
+          if (-not $conflictRejected) { throw 'Port-conflict installation unexpectedly succeeded.' }
+          if ((Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) -or
+              (Test-Path -LiteralPath $prefix)) {
+            throw 'Port-conflict installation did not roll back completely.'
+          }
+
+          try {
+            & (Join-Path $scripts 'Install-Redis.ps1')
+            & (Join-Path $scripts 'Install-Redis.ps1')
+            & (Join-Path $scripts 'Update-Redis.ps1')
+            Wait-RedisReady
+
             $response = & $cli -h 127.0.0.1 -p 6379 set redis-unofficial-acceptance-persistence persisted
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
               throw 'Windows persistence setup failed.'
             }
-            $response = & $cli -h 127.0.0.1 -p 6379 save
-            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
-              throw 'Windows persistence SAVE failed.'
-            }
-            Restart-Service -Name RedisUnofficial -Force
-            $ready = $false
+            $response = & $cli -h 127.0.0.1 -p 6379 bgsave
+            if ($LASTEXITCODE -ne 0) { throw 'Windows persistence BGSAVE failed.' }
+            $dump = Join-Path $prefix 'data\dump.rdb'
             foreach ($attempt in 1..30) {
-              $response = & $cli -h 127.0.0.1 -p 6379 ping 2>$null
-              if ($LASTEXITCODE -eq 0 -and ([string]$response).Trim() -ceq 'PONG') {
-                $ready = $true
-                break
-              }
+              if (Test-Path -LiteralPath $dump -PathType Leaf) { break }
               Start-Sleep -Seconds 1
             }
-            if (-not $ready) {
-              throw 'Windows service did not recover after restart.'
+            if (-not (Test-Path -LiteralPath $dump -PathType Leaf)) {
+              throw 'Windows BGSAVE did not create dump.rdb.'
             }
+
+            & (Join-Path $prefix 'bin\redis-benchmark.exe') -h 127.0.0.1 -p 6379 -n 1000 -c 5 -q
+            if ($LASTEXITCODE -ne 0) { throw 'Bounded Windows redis-benchmark failed.' }
+            $sentinelVersion = & (Join-Path $prefix 'bin\redis-sentinel.exe') --version
+            if ($LASTEXITCODE -ne 0 -or ([string]$sentinelVersion) -notmatch [regex]::Escape($env:REDIS_VERSION)) {
+              throw 'Windows redis-sentinel binary identity is invalid.'
+            }
+
+            Restart-Service -Name RedisUnofficial -Force
+            Wait-RedisReady
             $response = & $cli -h 127.0.0.1 -p 6379 get redis-unofficial-acceptance-persistence
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'persisted') {
               throw 'Windows service did not preserve data across restart.'
             }
-            & lifecycle-test/redis/scripts/Uninstall-Redis.ps1
+
+            $server = Get-CimInstance Win32_Process | Where-Object {
+              $_.ExecutablePath -and
+              [string]::Equals($_.ExecutablePath, (Join-Path $prefix 'bin\redis-server.exe'),
+                [StringComparison]::OrdinalIgnoreCase)
+            }
+            if (@($server).Count -ne 1) { throw 'Unable to identify one managed redis-server process.' }
+            Stop-Process -Id $server.ProcessId -Force
+            Wait-RedisReady
+
+            & (Join-Path $scripts 'Uninstall-Redis.ps1')
             if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {
               throw 'RedisUnofficial service remained after ordinary uninstall.'
             }
             foreach ($retained in @(
-                'C:\Program Files\Redis-Unofficial\.redis-package-state.json',
-                'C:\Program Files\Redis-Unofficial\conf',
-                'C:\Program Files\Redis-Unofficial\data')) {
+                (Join-Path $prefix '.redis-package-state.json'),
+                (Join-Path $prefix 'conf'),
+                (Join-Path $prefix 'data'))) {
               if (-not (Test-Path -LiteralPath $retained)) {
                 throw "Ordinary uninstall did not retain $retained."
               }
             }
-            & lifecycle-test/redis/scripts/Update-Redis.ps1
-            $response = & 'C:\Program Files\Redis-Unofficial\bin\redis-cli.exe' -h 127.0.0.1 -p 6379 ping
-            if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'PONG') {
-              throw 'Windows service recovery did not answer PING.'
+
+            & (Join-Path $scripts 'Update-Redis.ps1')
+            Wait-RedisReady
+
+            $secret = 'redis-unofficial-ci-secret'
+            Stop-Service -Name RedisUnofficial
+            $configPath = Join-Path $prefix 'conf\redis.conf'
+            [IO.File]::AppendAllText($configPath, "`nrequirepass $secret`n", (New-Object Text.UTF8Encoding($false)))
+            $passwordPath = Join-Path $prefix 'conf\service-password.txt'
+            [IO.File]::WriteAllText($passwordPath, $secret, (New-Object Text.UTF8Encoding($false)))
+            $settingsPath = Join-Path $prefix 'RedisService.json'
+            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+            $settings | Add-Member -NotePropertyName PasswordFile -NotePropertyValue 'conf\service-password.txt'
+            [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+            & (Join-Path $prefix 'bin\RedisService.exe') --self-test
+            if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows service settings failed self-test.' }
+            Start-Service -Name RedisUnofficial
+            Wait-RedisReady -Password $secret
+            Stop-Service -Name RedisUnofficial
+            (Get-Service -Name RedisUnofficial).WaitForStatus(
+              [ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
+            Start-Service -Name RedisUnofficial
+            Wait-RedisReady -Password $secret
+
+            $statePath = Join-Path $prefix '.redis-package-state.json'
+            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            $state.RedisVersion = '0.0.0'
+            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+            $installedWrapper = Join-Path $prefix 'bin\RedisService.exe'
+            $wrapperDigest = (Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash
+            $candidateWrapper = Join-Path $stage 'redis\bin\RedisService.exe'
+            $savedCandidate = Join-Path $env:RUNNER_TEMP 'RedisService.acceptance.exe'
+            Copy-Item -LiteralPath $candidateWrapper -Destination $savedCandidate
+            Copy-Item -LiteralPath (Join-Path $stage 'redis\bin\redis-cli.exe') -Destination $candidateWrapper -Force
+            $updateFailed = $false
+            try {
+              & (Join-Path $scripts 'Update-Redis.ps1')
+            } catch {
+              $updateFailed = $true
+            } finally {
+              Copy-Item -LiteralPath $savedCandidate -Destination $candidateWrapper -Force
             }
+            if (-not $updateFailed) { throw 'Fault-injected Windows update unexpectedly succeeded.' }
+            if ((Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash -cne $wrapperDigest) {
+              throw 'Windows update rollback did not restore the service wrapper.'
+            }
+            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            $state.RedisVersion = $env:REDIS_VERSION
+            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+            Wait-RedisReady -Password $secret
           } catch {
             Write-Host 'Windows lifecycle test failed; collecting diagnostics before cleanup.'
             & sc.exe queryex RedisUnofficial
@@ -724,17 +917,18 @@ jobs:
             }
             throw
           } finally {
-            if (Test-Path -LiteralPath 'C:\Program Files\Redis-Unofficial\.redis-package-state.json') {
-              & lifecycle-test/redis/scripts/Uninstall-Redis.ps1 -Purge
+            Remove-Item Env:REDISCLI_AUTH -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath (Join-Path $prefix '.redis-package-state.json')) {
+              & (Join-Path $scripts 'Uninstall-Redis.ps1') -Purge
             }
           }
           if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {
             throw 'RedisUnofficial service remained after purge.'
           }
-          if (Test-Path -LiteralPath 'C:\Program Files\Redis-Unofficial') {
+          if (Test-Path -LiteralPath $prefix) {
             throw 'Redis install prefix remained after purge.'
           }
-      - name: Upload experimental package
+      - name: Upload platform package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Redis-${{ needs.prepare.outputs.version }}-windows-msys2-x64

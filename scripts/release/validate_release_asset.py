@@ -1066,18 +1066,23 @@ def validate_build_contract(
     *, package_status: str, variant: str, min_glibc: str, build_workflow: Path
 ) -> None:
     expected = {
-        "release": ("linux-glibc2.28", "2.28", DEFAULT_BUILD_WORKFLOW),
-        "experimental": (
-            "linux-glibc2.17-legacy",
-            "2.17",
-            EXPERIMENTAL_BUILD_WORKFLOW,
-        ),
+        "release": {
+            ("linux-glibc2.28", "2.28", DEFAULT_BUILD_WORKFLOW),
+            ("linux-glibc2.17-legacy", "2.17", DEFAULT_BUILD_WORKFLOW),
+        },
+        "experimental": {
+            (
+                "linux-glibc2.17-legacy",
+                "2.17",
+                EXPERIMENTAL_BUILD_WORKFLOW,
+            )
+        },
     }
     try:
-        required = expected[package_status]
+        allowed = expected[package_status]
     except KeyError as exc:
         raise ValidationError("unsupported package publication status") from exc
-    if (variant, min_glibc, build_workflow) != required:
+    if (variant, min_glibc, build_workflow) not in allowed:
         raise ValidationError(
             "package status, variant, glibc baseline, and workflow do not match"
         )

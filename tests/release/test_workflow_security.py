@@ -39,6 +39,13 @@ class WorkflowSecurityTests(unittest.TestCase):
             actions = re.findall(r"^\s*uses:\s*([^\s#]+)", workflow, re.MULTILINE)
             self.assertTrue(actions, workflow_path.name)
             for action in actions:
+                if action.startswith("./"):
+                    self.assertEqual(
+                        action,
+                        "./.github/workflows/build-experimental.yml",
+                        f"unreviewed local reusable workflow in {workflow_path.name}",
+                    )
+                    continue
                 self.assertRegex(
                     action,
                     r"^[^@]+@[0-9a-f]{40}$",
@@ -69,6 +76,13 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("artifact-metadata: write", self.workflow)
         self.assertIn("id-token: write", self.workflow)
         self.assertIn("attestations: write", self.workflow)
+        self.assertIn(
+            "needs: [prepare, build, service_test, platform_build]", self.workflow
+        )
+        self.assertIn("needs: [prepare, release_acceptance]", self.workflow)
+        self.assertIn("uses: ./.github/workflows/build-experimental.yml", self.workflow)
+        self.assertIn("release_contract: true", self.workflow)
+        self.assertNotIn("github.event_name == 'workflow_call'", self.experimental_workflow)
 
     def test_release_policy_and_graphql_fail_closed_are_wired(self) -> None:
         self.assertIn("validate_publish_policy.py", self.workflow)
@@ -184,6 +198,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("--source-digest", self.workflow)
         self.assertIn("--deny-self-hosted-runners", self.workflow)
         self.assertIn("for asset in published-assets/*", self.workflow)
+        self.assertIn("full_release_metadata.py", self.workflow)
+        self.assertIn("published-assets/*.zip", self.workflow)
+        self.assertIn("release_acceptance:", self.workflow)
+        self.assertIn("Create and validate exact 21-asset candidate", self.workflow)
+        self.assertIn("full-release-candidate", self.workflow)
+        self.assertIn("Download verified full-platform candidate", self.workflow)
 
     def test_release_notes_include_both_attestation_verification_commands(self) -> None:
         notes = self.workflow.split("- name: Prepare release notes", 1)[1].split(
@@ -195,15 +215,17 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("--repo ${GITHUB_REPOSITORY}", notes)
         self.assertEqual(notes.count("--deny-self-hosted-runners"), 2)
 
-    def test_release_notes_describe_no_service_as_a_managed_install(self) -> None:
+    def test_release_notes_describe_the_full_platform_contract(self) -> None:
         notes = self.workflow.split("- name: Prepare release notes", 1)[1].split(
             "- name: Create verified draft and publish once", 1
         )[0]
-        self.assertIn("complete managed installation", notes)
-        self.assertIn("完整受管安装", notes)
-        self.assertIn("/usr/local/redis/bin/redis-server", notes)
-        self.assertNotIn("binary-only", notes)
-        self.assertNotIn("仅安装程序", notes)
+        self.assertIn("exactly 21 assets", notes)
+        self.assertIn("精确包含 21 个资产", notes)
+        self.assertIn("Linux glibc 2.17 legacy", notes)
+        self.assertIn("Linux musl 1.2", notes)
+        self.assertIn("macOS 15+", notes)
+        self.assertIn("Windows x64", notes)
+        self.assertNotIn("${PACKAGE_VARIANT}", notes)
 
     def test_upstream_build_is_unprivileged_with_read_only_packaging(self) -> None:
         self.assertIn("Create unprivileged builder", self.workflow)

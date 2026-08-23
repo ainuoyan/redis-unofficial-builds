@@ -13,7 +13,7 @@ try {
     $packageRoot = Get-RedisPackageRoot -ScriptDirectory $PSScriptRoot
     $info = Test-RedisPackage -PackageRoot $packageRoot
     if ([version]$info['REDIS_VERSION'] -lt [version]$state.RedisVersion) {
-        throw 'Downgrades require a separate data-compatibility migration and are not supported by this experimental updater.'
+        throw 'Downgrades require a separate data-compatibility migration and are not supported by this updater.'
     }
     $service = Get-RedisService
     if ($state.RedisVersion -ceq $info['REDIS_VERSION'] -and $null -ne $service -and
@@ -44,11 +44,12 @@ try {
         Stop-RedisServiceIfRunning
         if ($null -ne (Get-RedisService)) { Remove-RedisService }
         Copy-RedisProgramFiles -PackageRoot $packageRoot
-        Write-RedisServiceSettings
+        $settingsPath = Join-Path $script:RedisPrefix 'RedisService.json'
+        if (-not [IO.File]::Exists($settingsPath)) { Write-RedisServiceSettings }
         Set-RedisAccessControl
         & (Join-Path $script:RedisPrefix 'bin\RedisService.exe') --self-test
         if ($LASTEXITCODE -ne 0) { throw 'RedisService self-test failed.' }
-        Write-RedisState -Version $info['REDIS_VERSION']
+        Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
         New-RedisService
         if ($wasRunning -or -not $serviceWasPresent) { Start-RedisServiceAndWait }
         $updated = $true

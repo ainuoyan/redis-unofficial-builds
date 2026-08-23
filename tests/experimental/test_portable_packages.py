@@ -275,7 +275,7 @@ class PortablePackageTests(unittest.TestCase):
         if variant == "linux-musl1.2":
             body = elf_fixture(arch)
             suffix = ""
-        elif variant == "macos12":
+        elif variant == "macos15":
             body = macho_fixture(arch)
             suffix = ""
         else:
@@ -303,7 +303,14 @@ class PortablePackageTests(unittest.TestCase):
             service_wrapper.write_bytes(pe_fixture(include_version=False))
         return binaries, service_wrapper
 
-    def create_and_validate(self, root: Path, variant: str, arch: str) -> Path:
+    def create_and_validate(
+        self,
+        root: Path,
+        variant: str,
+        arch: str,
+        *,
+        package_status: str = "experimental",
+    ) -> Path:
         source = self.make_source(root)
         binaries, service_wrapper = self.make_binaries(root, variant, arch)
         output = root / "output"
@@ -322,6 +329,13 @@ class PortablePackageTests(unittest.TestCase):
             "--arch", arch,
             "--build-environment", "unit-test fixture",
             "--compiler", "fixture compiler",
+            "--package-status", package_status,
+            "--build-workflow",
+            (
+                ".github/workflows/build-linux.yml"
+                if package_status == "release"
+                else ".github/workflows/build-experimental.yml"
+            ),
         ]
         if service_wrapper is not None:
             command.extend(("--service-wrapper", str(service_wrapper)))
@@ -342,6 +356,13 @@ class PortablePackageTests(unittest.TestCase):
                 "--packaging-revision", REVISION,
                 "--variant", variant,
                 "--arch", arch,
+                "--package-status", package_status,
+                "--build-workflow",
+                (
+                    ".github/workflows/build-linux.yml"
+                    if package_status == "release"
+                    else ".github/workflows/build-experimental.yml"
+                ),
             ],
             check=False,
             capture_output=True,
@@ -354,13 +375,58 @@ class PortablePackageTests(unittest.TestCase):
         for variant, arch in (
             ("linux-musl1.2", "x64"),
             ("linux-musl1.2", "arm64"),
-            ("macos12", "x64"),
-            ("macos12", "arm64"),
+            ("macos15", "x64"),
+            ("macos15", "arm64"),
             ("windows-msys2", "x64"),
         ):
             with self.subTest(variant=variant, arch=arch), tempfile.TemporaryDirectory() as directory:
                 archive = self.create_and_validate(Path(directory), variant, arch)
                 self.assertGreater(archive.stat().st_size, 0)
+
+    def test_all_portable_variants_support_the_release_contract(self) -> None:
+        for variant, arch in (
+            ("linux-musl1.2", "x64"),
+            ("linux-musl1.2", "arm64"),
+            ("macos15", "x64"),
+            ("macos15", "arm64"),
+            ("windows-msys2", "x64"),
+        ):
+            with self.subTest(variant=variant, arch=arch), tempfile.TemporaryDirectory() as directory:
+                archive = self.create_and_validate(
+                    Path(directory), variant, arch, package_status="release"
+                )
+                self.assertGreater(archive.stat().st_size, 0)
+
+    def test_release_status_rejects_the_experimental_workflow_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self.make_source(root)
+            binaries, _ = self.make_binaries(root, "macos15", "x64")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(CREATE),
+                    "--source-root", str(source),
+                    "--binary-dir", str(binaries),
+                    "--output-dir", str(root / "output"),
+                    "--packaging-root", str(ROOT),
+                    "--redis-version", VERSION,
+                    "--source-sha256", SOURCE_SHA256,
+                    "--hashes-commit", HASHES_COMMIT,
+                    "--packaging-revision", REVISION,
+                    "--variant", "macos15",
+                    "--arch", "x64",
+                    "--build-environment", "unit-test fixture",
+                    "--compiler", "fixture compiler",
+                    "--package-status", "release",
+                    "--build-workflow", ".github/workflows/build-experimental.yml",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("do not match", result.stderr)
 
     def test_musl_runtime_ignores_unreferenced_glibc_debug_text(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts/experimental"))
@@ -389,13 +455,13 @@ class PortablePackageTests(unittest.TestCase):
                 self.assertIsNotNone(member)
                 assert member is not None
                 config = member.read().decode("utf-8")
-            self.assertIn("# Disabled by the experimental core profile: loadmodule", config)
+            self.assertIn("# Disabled by the core package profile: loadmodule", config)
             self.assertNotRegex(config, r"(?m)^\s*loadmodule\s")
 
     def test_archive_generation_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            left = self.create_and_validate(Path(first), "macos12", "x64")
-            right = self.create_and_validate(Path(second), "macos12", "x64")
+            left = self.create_and_validate(Path(first), "macos15", "x64")
+            right = self.create_and_validate(Path(second), "macos15", "x64")
             self.assertEqual(hashlib.sha256(left.read_bytes()).digest(), hashlib.sha256(right.read_bytes()).digest())
 
     def test_windows_patchset_hash_ignores_dotnet_build_outputs(self) -> None:
@@ -443,7 +509,7 @@ class PortablePackageTests(unittest.TestCase):
 
     def test_hashes_snapshot_is_bound_to_the_validated_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            archive = self.create_and_validate(Path(directory), "macos12", "x64")
+            archive = self.create_and_validate(Path(directory), "macos15", "x64")
             result = subprocess.run(
                 [
                     sys.executable,
@@ -455,7 +521,7 @@ class PortablePackageTests(unittest.TestCase):
                     "--source-sha256", SOURCE_SHA256,
                     "--hashes-commit", "d" * 40,
                     "--packaging-revision", REVISION,
-                    "--variant", "macos12",
+                    "--variant", "macos15",
                     "--arch", "x64",
                 ],
                 check=False,
@@ -542,25 +608,28 @@ class PortablePackageTests(unittest.TestCase):
             with self.assertRaisesRegex(validator.ContractError, "regular file"):
                 validator.read_zip(archive)
 
-    def test_experimental_workflow_is_read_only_and_nonpublishing(self) -> None:
+    def test_platform_workflow_is_read_only_and_release_status_is_caller_bound(self) -> None:
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("workflow_call:", workflow)
+        self.assertIn("workflow_call:", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("gh release", workflow.lower())
         self.assertNotIn("create-release", workflow.lower())
+        self.assertIn("PACKAGE_STATUS: ${{ inputs.release_contract && 'release'", workflow)
+        self.assertIn("RELEASE_CONTRACT: ${{ inputs.release_contract }}", workflow)
+        self.assertNotIn("github.event_name == 'workflow_call'", workflow)
         platforms = json.loads((ROOT / "config/platforms.json").read_text(encoding="utf-8"))
-        experimental = [item for item in platforms["platforms"] if item["status"] == "experimental"]
-        self.assertEqual(len(experimental), 7)
-        self.assertTrue(all(item["controller_enabled"] is False for item in experimental))
-        self.assertTrue(all(item["build_workflow"] == "build-experimental.yml" for item in experimental))
+        implemented = [item for item in platforms["platforms"] if item["status"] == "implemented"]
+        self.assertEqual(len(implemented), 9)
+        self.assertTrue(all(item["controller_enabled"] is True for item in implemented))
+        self.assertTrue(all(item["build_workflow"] == "build-linux.yml" for item in implemented))
 
     def test_portable_build_stabilizes_tests_and_uses_a_short_macos_temp_root(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
         self.assertRegex(
             script,
-            r'if \[\[ "\$PACKAGE_VARIANT" == macos12 \]\]; then\s+temp_parent=/tmp\s+fi',
+            r'if \[\[ "\$PACKAGE_VARIANT" == macos15 \]\]; then\s+temp_parent=/tmp\s+fi',
         )
         self.assertIn(
             'temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"', script
@@ -588,15 +657,15 @@ class PortablePackageTests(unittest.TestCase):
         )
         self.assertIn(
             Path("packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch"),
-            portable_contract.patchset_paths("macos12"),
+            portable_contract.patchset_paths("macos15"),
         )
         self.assertIn(
             Path("packaging/linux/patches/redis-8.10.1-hfe-test-timeout.patch"),
-            portable_contract.patchset_paths("macos12"),
+            portable_contract.patchset_paths("macos15"),
         )
         self.assertIn(
             Path("packaging/linux/patches/redis-8.2.9-latency-test-timeout.patch"),
-            portable_contract.patchset_paths("macos12"),
+            portable_contract.patchset_paths("macos15"),
         )
         self.assertNotIn(
             Path("packaging/linux/patches/apply_upstream_test_fixes.py"),
@@ -610,7 +679,8 @@ class PortablePackageTests(unittest.TestCase):
             Path("packaging/linux/patches/redis-8.2.9-latency-test-timeout.patch"),
             portable_contract.patchset_paths("windows-msys2"),
         )
-        self.assertNotIn('${TMPDIR:-/tmp}/redis-experimental', script)
+        self.assertNotIn('${TMPDIR:-/tmp}/redis-portable', script)
+        self.assertIn('"$temp_parent/redis-portable.XXXXXX"', script)
 
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
             encoding="utf-8"
@@ -626,7 +696,7 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 90", musl_job)
         self.assertIn("timeout-minutes: 90", macos_job)
 
-    def test_experimental_workflow_runs_platform_lifecycle_acceptance(self) -> None:
+    def test_platform_workflow_runs_release_lifecycle_acceptance(self) -> None:
         workflow = (ROOT / ".github/workflows/build-experimental.yml").read_text(
             encoding="utf-8"
         )
@@ -656,15 +726,45 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("OpenRC recovery did not reload persisted data", musl_job)
         self.assertIn("OpenRC lifecycle failed; collecting diagnostics", musl_job)
         self.assertIn('tail -n 200 "$prefix/log/redis.log"', musl_job)
+        self.assertIn("Fault-injected OpenRC update unexpectedly succeeded", musl_job)
+        self.assertIn("OpenRC rollback did not restart the previous installation", musl_job)
 
         self.assertIn("Test launchd install, persistence, recovery, and purge", macos_job)
         self.assertIn("launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial", macos_job)
         self.assertIn('redis-cli" -s "$socket" save', macos_job.lower())
         self.assertIn('"$package/scripts/update.sh"', macos_job)
         self.assertIn('uninstall.sh" --purge', macos_job)
+        self.assertIn("Fault-injected launchd update unexpectedly succeeded", macos_job)
 
         self.assertIn("Restart-Service -Name RedisUnofficial", windows_job)
         self.assertIn("redis-unofficial-acceptance-persistence", windows_job)
+        self.assertIn("Redis 生命周期 验收", windows_job)
+        self.assertIn("Port-conflict installation unexpectedly succeeded", windows_job)
+        self.assertIn("bgsave", windows_job.lower())
+        self.assertIn("redis-benchmark.exe", windows_job)
+        self.assertIn("redis-sentinel.exe", windows_job)
+        self.assertIn("Stop-Process -Id", windows_job)
+        self.assertIn("PasswordFile", windows_job)
+        self.assertIn("Authenticated Windows service settings failed self-test", windows_job)
+        self.assertIn("Fault-injected Windows update unexpectedly succeeded", windows_job)
+
+    def test_windows_service_supports_managed_authentication_without_command_line_secrets(self) -> None:
+        service = (
+            ROOT / "packaging/windows/service/RedisService/Program.cs"
+        ).read_text(encoding="utf-8")
+        common = WINDOWS_COMMON_SCRIPT.read_text(encoding="utf-8")
+        update = (ROOT / "packaging/windows/scripts/Update-Redis.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("string? PasswordFile = null", service)
+        self.assertIn('Environment["REDISCLI_AUTH"] = password', service)
+        self.assertNotIn('ArgumentList.Add(password)', service)
+        self.assertIn('RunRedisCli(settings, "shutdown", out _)', service)
+        self.assertIn("Path.IsPathFullyQualified(candidate)", service)
+        self.assertIn("reports Running only after its authenticated Redis PING passes", common)
+        self.assertIn("if (-not [IO.File]::Exists($settingsPath))", update)
+        self.assertNotIn("Experimental MSYS2", common)
 
     def test_musl_readiness_requires_a_stable_service(self) -> None:
         common = (ROOT / "packaging/musl/scripts/common.sh").read_text(

@@ -16,15 +16,17 @@ readonly PACKAGING_REVISION="${PACKAGING_REVISION:?PACKAGING_REVISION is require
 readonly OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/dist}"
 readonly SERVICE_WRAPPER="${SERVICE_WRAPPER:-}"
 readonly RUN_FULL_TESTS="${RUN_FULL_TESTS:-true}"
+readonly PACKAGE_STATUS="${PACKAGE_STATUS:-experimental}"
+readonly BUILD_WORKFLOW_PATH="${BUILD_WORKFLOW_PATH:-.github/workflows/build-experimental.yml}"
 readonly SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 export SOURCE_DATE_EPOCH
 
 case "$PACKAGE_VARIANT:$PACKAGE_ARCH:$EXPECTED_MACHINE_ARCH" in
   linux-musl1.2:x64:x86_64|linux-musl1.2:arm64:aarch64|\
-  macos12:x64:x86_64|macos12:arm64:arm64|\
+  macos15:x64:x86_64|macos15:arm64:arm64|\
   windows-msys2:x64:x86_64) ;;
   *)
-    echo "Unsupported experimental platform identity." >&2
+    echo "Unsupported portable platform identity." >&2
     exit 1
     ;;
 esac
@@ -40,6 +42,11 @@ esac
 [[ "$SOURCE_DATE_EPOCH" == 0 ]] \
   || { echo "SOURCE_DATE_EPOCH must be zero." >&2; exit 1; }
 case "$RUN_FULL_TESTS" in true|false) ;; *) echo "Invalid RUN_FULL_TESTS value." >&2; exit 1 ;; esac
+case "$PACKAGE_STATUS:$BUILD_WORKFLOW_PATH" in
+  experimental:.github/workflows/build-experimental.yml|\
+  release:.github/workflows/build-linux.yml) ;;
+  *) echo "Package status and workflow do not match." >&2; exit 1 ;;
+esac
 
 if (( EUID == 0 )); then
   echo "Refusing to execute upstream Redis code as root." >&2
@@ -82,7 +89,7 @@ except portable_contract.ContractError as exc:
 PY
 
 temp_parent="${TMPDIR:-/tmp}"
-if [[ "$PACKAGE_VARIANT" == macos12 ]]; then
+if [[ "$PACKAGE_VARIANT" == macos15 ]]; then
   temp_parent=/tmp
 fi
 if ! temp_parent="$(cd "$temp_parent" 2>/dev/null && pwd -P)"; then
@@ -93,7 +100,7 @@ fi
   echo "Temporary directory is not writable: $temp_parent" >&2
   exit 1
 }
-work_dir="$(mktemp -d "$temp_parent/redis-experimental.XXXXXX")"
+work_dir="$(mktemp -d "$temp_parent/redis-portable.XXXXXX")"
 server_pid=""
 cleanup() {
   if [[ "$server_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -101,7 +108,7 @@ cleanup() {
     wait "$server_pid" 2>/dev/null || true
   fi
   case "$work_dir" in
-    "$temp_parent"/redis-experimental.*) rm -rf -- "$work_dir" ;;
+    "$temp_parent"/redis-portable.*) rm -rf -- "$work_dir" ;;
     *) echo "Refusing to remove unexpected temporary path: $work_dir" >&2 ;;
   esac
 }
@@ -132,8 +139,8 @@ if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
   # Redis 7.x exits before its version probe at higher optimization on the
   # current MSYS2 toolchain. O0 matches the reviewed redis-windows build path.
   make_args+=(MALLOC=libc "CFLAGS=-D__GNU_VISIBLE=1 -Wno-char-subscripts -O0")
-elif [[ "$PACKAGE_VARIANT" == macos12 ]]; then
-  export MACOSX_DEPLOYMENT_TARGET=12.0
+elif [[ "$PACKAGE_VARIANT" == macos15 ]]; then
+  export MACOSX_DEPLOYMENT_TARGET=15.0
 fi
 
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '2')"
@@ -324,6 +331,8 @@ package_args=(
   --arch "$PACKAGE_ARCH"
   --build-environment "$BUILD_ENVIRONMENT"
   --compiler "$compiler"
+  --package-status "$PACKAGE_STATUS"
+  --build-workflow "$BUILD_WORKFLOW_PATH"
 )
 if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
   [[ -n "$SERVICE_WRAPPER" ]] || {
@@ -348,4 +357,6 @@ python3 "$PROJECT_ROOT/scripts/experimental/validate_portable_asset.py" \
   --hashes-commit "$REDIS_HASHES_COMMIT" \
   --packaging-revision "$PACKAGING_REVISION" \
   --variant "$PACKAGE_VARIANT" \
-  --arch "$PACKAGE_ARCH"
+  --arch "$PACKAGE_ARCH" \
+  --package-status "$PACKAGE_STATUS" \
+  --build-workflow "$BUILD_WORKFLOW_PATH"

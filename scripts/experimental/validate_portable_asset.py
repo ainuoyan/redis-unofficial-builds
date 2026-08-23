@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a nonpublishing cross-platform Redis package without extracting it."""
+"""Validate a cross-platform Redis package without extracting it."""
 
 from __future__ import annotations
 
@@ -15,12 +15,14 @@ from pathlib import Path
 
 from portable_contract import (
     ContractError,
+    EXPERIMENTAL_WORKFLOW,
     archive_name,
     backend_for,
     backend_assets,
     packaging_patchset_sha256,
     require_regular_file,
     validate_identity,
+    validate_publication_contract,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
@@ -51,9 +53,6 @@ WINDOWS_DLL_MAPPING_RE = re.compile(
     re.I,
 )
 WINDOWS_PACKAGE_RE = re.compile(r"^PACKAGE=([A-Za-z0-9@._+-]+) ([^\x00-\x20\x7f]+)$")
-EXPERIMENTAL_PACKAGE_STATUS = (
-    "experimental; separate GitHub prerelease publication is allowed after acceptance"
-)
 METADATA_KEYS = {
     "PACKAGE_FORMAT",
     "PACKAGE_STATUS",
@@ -96,6 +95,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--packaging-revision", required=True)
     parser.add_argument("--variant", required=True)
     parser.add_argument("--arch", required=True)
+    parser.add_argument(
+        "--package-status",
+        choices=("experimental", "release"),
+        default="experimental",
+    )
+    parser.add_argument(
+        "--build-workflow",
+        type=Path,
+        default=EXPERIMENTAL_WORKFLOW,
+    )
     return parser.parse_args()
 
 
@@ -605,6 +614,9 @@ def main() -> int:
     args = parse_args()
     try:
         backend = validate_identity(args.redis_version, args.variant, args.arch)
+        build_workflow = validate_publication_contract(
+            args.package_status, args.build_workflow
+        )
         expected_name = archive_name(args.redis_version, args.variant, args.arch)
         if args.archive.name != expected_name or args.checksum.name != f"{expected_name}.sha256":
             raise ContractError("archive or checksum filename violates the package contract")
@@ -660,7 +672,7 @@ def main() -> int:
         version_parts = args.redis_version.split(".")
         metadata_expected = {
             "PACKAGE_FORMAT": "3",
-            "PACKAGE_STATUS": "experimental",
+            "PACKAGE_STATUS": args.package_status,
             "PACKAGE_ID": "redis-unofficial-builds",
             "REDIS_VERSION": args.redis_version,
             "REDIS_SERIES": ".".join(version_parts[:2]),
@@ -677,7 +689,9 @@ def main() -> int:
         for key, value in metadata_expected.items():
             if values.get(key) != value:
                 raise ContractError(f"PACKAGE-INFO {key} does not match")
-        patchset = packaging_patchset_sha256(args.packaging_root.resolve(), args.variant)
+        patchset = packaging_patchset_sha256(
+            args.packaging_root.resolve(), args.variant, build_workflow
+        )
         if values["PATCHSET_SHA256"] != patchset:
             raise ContractError("PACKAGE-INFO patch-set hash does not match reviewed source")
         if build_info_value(files["redis/BUILD-INFO"], "Packaging patch-set SHA256") != patchset:
@@ -693,11 +707,10 @@ def main() -> int:
         ):
             if build_info_value(files["redis/BUILD-INFO"], label) != expected_value:
                 raise ContractError(f"BUILD-INFO {label} does not match")
-        if (
-            build_info_value(files["redis/BUILD-INFO"], "Package status")
-            != EXPERIMENTAL_PACKAGE_STATUS
-        ):
-            raise ContractError("BUILD-INFO does not preserve the publication boundary")
+        if build_info_value(
+            files["redis/BUILD-INFO"], "Package status"
+        ) != args.package_status:
+            raise ContractError("BUILD-INFO package status does not match")
 
         contributor = files.get("redis/UPSTREAM-CONTRIBUTOR-LICENSE.txt")
         validate_upstream_notice_payloads(
@@ -726,20 +739,22 @@ def main() -> int:
             ):
                 raise ContractError(f"active loadmodule remains in {config_name}")
         readme_text = files["redis/README.txt"].decode("utf-8")
-        if (
-            re.search(
+        if args.package_status == "experimental":
+            required_readme_patterns = (
                 r"published\s+only\s+in\s+a\s+separately\s+tagged\s+GitHub\s+prerelease",
-                readme_text,
-            )
-            is None
-            or re.search(
                 r"not\s+eligible\s+for\s+the\s+numeric\s+stable\s+Release",
-                readme_text,
             )
-            is None
+        else:
+            required_readme_patterns = (
+                r"part\s+of\s+the\s+numeric\s+stable\s+GitHub\s+Release",
+                r"GitHub\s+attestations\s+must\s+be\s+verified",
+            )
+        if any(
+            re.search(pattern, readme_text) is None
+            for pattern in required_readme_patterns
         ):
-            raise ContractError("README does not state the experimental publication boundary")
-        print(f"Validated experimental package: {args.archive.name}")
+            raise ContractError("README does not state the publication boundary")
+        print(f"Validated {args.package_status} package: {args.archive.name}")
         return 0
     except (
         ContractError,
@@ -750,7 +765,7 @@ def main() -> int:
         tarfile.TarError,
         zipfile.BadZipFile,
     ) as exc:
-        print(f"experimental asset validation error: {exc}", file=sys.stderr)
+        print(f"portable asset validation error: {exc}", file=sys.stderr)
         return 2
 
 

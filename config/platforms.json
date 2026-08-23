@@ -28,9 +28,9 @@
       "os": "linux",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
       "id": "linux-glibc2.17-legacy-arm64",
@@ -38,9 +38,9 @@
       "os": "linux",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
       "id": "linux-musl1.2-x64",
@@ -48,9 +48,9 @@
       "os": "linux",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
       "id": "linux-musl1.2-arm64",
@@ -58,29 +58,29 @@
       "os": "linux",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
-      "id": "macos12-x64",
-      "variant": "macos12",
+      "id": "macos15-x64",
+      "variant": "macos15",
       "os": "macos",
       "arch": "x64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
-      "id": "macos12-arm64",
-      "variant": "macos12",
+      "id": "macos15-arm64",
+      "variant": "macos15",
       "os": "macos",
       "arch": "arm64",
       "archive_extension": "tar.gz",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     },
     {
       "id": "windows-msys2-x64",
@@ -88,9 +88,9 @@
       "os": "windows",
       "arch": "x64",
       "archive_extension": "zip",
-      "status": "experimental",
-      "controller_enabled": false,
-      "build_workflow": "build-experimental.yml"
+      "status": "implemented",
+      "controller_enabled": true,
+      "build_workflow": "build-linux.yml"
     }
   ]
 }

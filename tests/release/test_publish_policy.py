@@ -58,7 +58,17 @@ class PublishPolicyTests(unittest.TestCase):
                 for platform in self.platform_config["platforms"]
                 if platform["controller_enabled"]
             },
-            {"linux-glibc2.28-x64", "linux-glibc2.28-arm64"},
+            {
+                "linux-glibc2.28-x64",
+                "linux-glibc2.28-arm64",
+                "linux-glibc2.17-legacy-x64",
+                "linux-glibc2.17-legacy-arm64",
+                "linux-musl1.2-x64",
+                "linux-musl1.2-arm64",
+                "macos15-x64",
+                "macos15-arm64",
+                "windows-msys2-x64",
+            },
         )
 
     def test_real_platform_matrix_contains_only_current_targets(self) -> None:
@@ -71,8 +81,8 @@ class PublishPolicyTests(unittest.TestCase):
                 "linux-glibc2.17-legacy-arm64",
                 "linux-musl1.2-x64",
                 "linux-musl1.2-arm64",
-                "macos12-x64",
-                "macos12-arm64",
+                "macos15-x64",
+                "macos15-arm64",
                 "windows-msys2-x64",
             },
         )

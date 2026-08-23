@@ -12,6 +12,7 @@ acquire_lock
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
 version="$(metadata_value "$package_root/PACKAGE-INFO" REDIS_VERSION)"
+package_status="$(metadata_value "$package_root/PACKAGE-INFO" PACKAGE_STATUS)"
 if [[ -e "$REDIS_STATE_FILE" || -L "$REDIS_STATE_FILE" ]]; then
   validate_state
   if [[ "$(metadata_value "$REDIS_STATE_FILE" REDIS_VERSION)" == "$version" \
@@ -44,8 +45,8 @@ chown root:"$REDIS_GROUP" "$REDIS_PREFIX/conf"/*.conf
 chmod 0640 "$REDIS_PREFIX/conf"/*.conf
 install_program_files "$package_root"
 install -o root -g wheel -m 0644 "$package_root/launchd/io.github.ainuoyan.redis-unofficial.plist" "$REDIS_PLIST"
-write_state "$version"
+write_state "$version" "$package_status"
 start_service
 wait_ready "$REDIS_PREFIX" || false
 trap - ERR INT TERM HUP
-info "Installed Redis $version as the experimental LaunchDaemon $REDIS_LABEL."
+info "Installed Redis $version as the LaunchDaemon $REDIS_LABEL."
