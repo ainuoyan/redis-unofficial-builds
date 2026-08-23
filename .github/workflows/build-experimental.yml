@@ -441,6 +441,7 @@ jobs:
           archive="$GITHUB_WORKSPACE/dist/Redis-${REDIS_VERSION}-linux-musl1.2-${PACKAGE_ARCH}.tar.gz"
           [[ -f "$archive" && ! -L "$archive" ]]
           docker run --rm \
+            --env REDIS_VERSION \
             --volume "$archive:/tmp/redis-package.tar.gz:ro" \
             "$image" /bin/bash -euo pipefail -c '
               apk add --no-cache bash coreutils findutils musl-utils openrc util-linux
@@ -519,22 +520,26 @@ jobs:
 
               state="$prefix/.redis-package-state"
               sed -i 's/^REDIS_VERSION=.*/REDIS_VERSION=0.0.0/' "$state"
-              mock_bin="$stage/mock-bin"
-              marker="$stage/install-failure-injected"
-              install -d -o root -g root -m 0700 "$mock_bin"
-              cat >"$mock_bin/install" <<EOF
+              candidate_server="$package/bin/redis-server"
+              saved_candidate="$stage/redis-server.acceptance"
+              install -m 0755 "$candidate_server" "$saved_candidate"
+              cat >"$candidate_server" <<EOF
           #!/bin/sh
-          last=
-          for argument in "\$@"; do last="\$argument"; done
-          if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
-            : >"$marker"
-            exit 73
+          if [ "\${1:-}" = "--version" ]; then
+            echo "Redis server v=$REDIS_VERSION sha=00000000:0 malloc=libc bits=64 build=0000000000000000"
+            exit 0
           fi
-          exec /usr/bin/install "\$@"
+          exit 73
           EOF
-              chmod 0700 "$mock_bin/install"
-              if PATH="$mock_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-                "$package/scripts/update.sh"; then
+              chmod 0755 "$candidate_server"
+              update_failed=false
+              if "$package/scripts/update.sh"; then
+                :
+              else
+                update_failed=true
+              fi
+              install -m 0755 "$saved_candidate" "$candidate_server"
+              if [[ "$update_failed" != true ]]; then
                 echo "Fault-injected OpenRC update unexpectedly succeeded." >&2
                 exit 1
               fi
@@ -656,22 +661,26 @@ jobs:
 
           state="$prefix/.redis-package-state"
           sudo sed -i '' 's/^REDIS_VERSION=.*/REDIS_VERSION=0.0.0/' "$state"
-          mock_bin="$stage/mock-bin"
-          marker="$stage/install-failure-injected"
-          sudo install -d -o root -g wheel -m 0700 "$mock_bin"
-          sudo tee "$mock_bin/install" >/dev/null <<EOF
+          candidate_server="$package/bin/redis-server"
+          saved_candidate="$stage/redis-server.acceptance"
+          sudo install -m 0755 "$candidate_server" "$saved_candidate"
+          sudo tee "$candidate_server" >/dev/null <<EOF
           #!/bin/sh
-          last=
-          for argument in "\$@"; do last="\$argument"; done
-          if [ "\$last" = "$prefix/bin/redis-server" ] && [ ! -e "$marker" ]; then
-            : >"$marker"
-            exit 73
+          if [ "\${1:-}" = "--version" ]; then
+            echo "Redis server v=$REDIS_VERSION sha=00000000:0 malloc=libc bits=64 build=0000000000000000"
+            exit 0
           fi
-          exec /usr/bin/install "\$@"
+          exit 73
           EOF
-          sudo chmod 0700 "$mock_bin/install"
-          if sudo env PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-            "$package/scripts/update.sh"; then
+          sudo chmod 0755 "$candidate_server"
+          update_failed=false
+          if sudo "$package/scripts/update.sh"; then
+            :
+          else
+            update_failed=true
+          fi
+          sudo install -m 0755 "$saved_candidate" "$candidate_server"
+          if [[ "$update_failed" != true ]]; then
             echo "Fault-injected launchd update unexpectedly succeeded." >&2
             exit 1
           fi

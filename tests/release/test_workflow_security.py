@@ -265,6 +265,28 @@ class WorkflowSecurityTests(unittest.TestCase):
         )[0]
         self.assertIn("make musl-dev procps python3", musl_job)
 
+    def test_portable_update_rollback_uses_a_startup_failure(self) -> None:
+        musl_job = self.experimental_workflow.split("  musl:\n", 1)[1].split(
+            "\n  macos:\n", 1
+        )[0]
+        macos_job = self.experimental_workflow.split("  macos:\n", 1)[1].split(
+            "\n  windows:\n", 1
+        )[0]
+        self.assertIn(
+            "docker run --rm \\\n"
+            "            --env REDIS_VERSION \\\n"
+            '            --volume "$archive:/tmp/redis-package.tar.gz:ro"',
+            musl_job,
+        )
+        for job in (musl_job, macos_job):
+            self.assertIn('candidate_server="$package/bin/redis-server"', job)
+            self.assertIn('saved_candidate="$stage/redis-server.acceptance"', job)
+            self.assertIn('if [ "\\${1:-}" = "--version" ]; then', job)
+            self.assertIn("exit 73", job)
+            self.assertIn("update_failed=false", job)
+            self.assertNotIn("mock-bin", job)
+            self.assertNotIn("install-failure-injected", job)
+
     def test_glibc217_build_preserves_only_the_pinned_manylinux_toolchain(self) -> None:
         glibc_job = self.experimental_workflow.split("  glibc217:\n", 1)[1].split(
             "\n  musl:\n", 1
