@@ -7,8 +7,8 @@ experimental Actions artifacts, and design-only backends. **Implemented** means
 that code, CI, semantic validation, native lifecycle gates, and stable
 publication policy exist. Manual dispatch of the read-only platform builder
 still emits experimental artifacts; only the protected stable caller can bind
-those jobs into a numeric Release. **Design only** means that no build artifact
-is claimed.
+those jobs into a `Redis-X.Y.Z` Release. **Design only** means that no build
+artifact is claimed.
 
 ## Redis release lines
 
@@ -140,7 +140,7 @@ passes the verified archive between jobs. It has repository `contents: read`
 permission and no tag, Release, downstream workflow-dispatch API, or
 publication step. Manual dispatch sets `PACKAGE_STATUS=experimental` and
 records `build-experimental.yml`; those seven-day Actions artifacts cannot
-enter a numeric Release.
+enter a `Redis-X.Y.Z` Release.
 
 When called by `build-linux.yml`, the same jobs receive the caller's exact
 version, source SHA-256, and immutable hashes commit, set

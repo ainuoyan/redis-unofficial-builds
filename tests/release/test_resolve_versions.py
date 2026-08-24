@@ -134,7 +134,7 @@ class ResolveVersionsTests(unittest.TestCase):
         releases = resolver.index_releases(
             [
                 {
-                    "tag_name": "7.4.11",
+                    "tag_name": "Redis-7.4.11",
                     "assets": [
                         {
                             "name": (
@@ -313,7 +313,7 @@ class ResolveVersionsTests(unittest.TestCase):
         releases = resolver.index_releases(
             [
                 {
-                    "tag_name": "7.4.11",
+                    "tag_name": "Redis-7.4.11",
                     "draft": True,
                     "assets": [
                         {"name": archive},
@@ -348,8 +348,23 @@ class ResolveVersionsTests(unittest.TestCase):
         )
         self.assertEqual(releases, {})
 
+    def test_legacy_release_tags_are_ignored(self) -> None:
+        releases = resolver.index_releases(
+            [
+                {"tag_name": "7.4.11", "assets": []},
+                {
+                    "tag_name": "7.4.11-experimental.1",
+                    "prerelease": True,
+                    "assets": [],
+                },
+            ]
+        )
+        self.assertEqual(releases, {})
+
     def test_published_release_without_assets_is_blocked_and_not_rebuilt(self) -> None:
-        releases = resolver.index_releases([{"tag_name": "7.4.11", "assets": []}])
+        releases = resolver.index_releases(
+            [{"tag_name": "Redis-7.4.11", "assets": []}]
+        )
         plan = resolver.resolve(
             self.release_config,
             self.platform_config,
@@ -370,7 +385,7 @@ class ResolveVersionsTests(unittest.TestCase):
         releases = resolver.index_releases(
             [
                 {
-                    "tag_name": "7.4.11",
+                    "tag_name": "Redis-7.4.11",
                     "assets": self.complete_assets("7.4.11"),
                 }
             ]
@@ -391,7 +406,7 @@ class ResolveVersionsTests(unittest.TestCase):
         assets = self.complete_assets("7.4.11")
         assets = [asset for asset in assets if asset["name"] != "manifest.json"]
         releases = resolver.index_releases(
-            [{"tag_name": "7.4.11", "assets": assets}]
+            [{"tag_name": "Redis-7.4.11", "assets": assets}]
         )
         plan = resolver.resolve(
             self.release_config,
@@ -408,7 +423,7 @@ class ResolveVersionsTests(unittest.TestCase):
     def test_unexpected_existing_asset_is_reported_as_blocked(self) -> None:
         assets = self.complete_assets("7.4.11") + [{"name": "legacy.zip"}]
         releases = resolver.index_releases(
-            [{"tag_name": "7.4.11", "assets": assets}]
+            [{"tag_name": "Redis-7.4.11", "assets": assets}]
         )
         plan = resolver.resolve(
             self.release_config,
@@ -425,7 +440,11 @@ class ResolveVersionsTests(unittest.TestCase):
         self.assertEqual(item["unexpected_assets"], ["legacy.zip"])
 
     def test_noncanonical_release_tag_is_rejected(self) -> None:
-        for tag in ("redis-v7.4.11", "07.4.11"):
+        for tag in (
+            "Redis-v7.4.11",
+            "Redis-07.4.11",
+            "Redis-7.4.11-extra",
+        ):
             with self.subTest(tag=tag), self.assertRaisesRegex(
                 resolver.PlanError, "Noncanonical"
             ):
@@ -445,7 +464,13 @@ class ResolveVersionsTests(unittest.TestCase):
     def test_malformed_release_state_is_rejected(self) -> None:
         with self.assertRaisesRegex(resolver.PlanError, "publication state"):
             resolver.index_releases(
-                [{"tag_name": "7.4.11", "draft": "false", "assets": []}]
+                [
+                    {
+                        "tag_name": "Redis-7.4.11",
+                        "draft": "false",
+                        "assets": [],
+                    }
+                ]
             )
 
     def test_unknown_release_configuration_key_is_rejected(self) -> None:
@@ -524,15 +549,15 @@ class ResolveVersionsTests(unittest.TestCase):
         with self.assertRaisesRegex(resolver.PlanError, "duplicate release tag"):
             resolver.index_releases(
                 [
-                    {"tag_name": "7.4.11", "assets": []},
-                    {"tag_name": "7.4.11", "assets": []},
+                    {"tag_name": "Redis-7.4.11", "assets": []},
+                    {"tag_name": "Redis-7.4.11", "assets": []},
                 ]
             )
 
     def test_partial_archive_checksum_pair_is_blocked_not_rebuilt(self) -> None:
         archive = "Redis-7.4.11-linux-glibc2.28-x64.tar.gz"
         releases = resolver.index_releases(
-            [{"tag_name": "7.4.11", "assets": [{"name": archive}]}]
+            [{"tag_name": "Redis-7.4.11", "assets": [{"name": archive}]}]
         )
         plan = resolver.resolve(
             self.release_config,
@@ -590,7 +615,7 @@ class ResolveVersionsTests(unittest.TestCase):
 
     def test_blocked_summary_is_explicit(self) -> None:
         releases = resolver.index_releases(
-            [{"tag_name": "7.4.11", "assets": []}]
+            [{"tag_name": "Redis-7.4.11", "assets": []}]
         )
         plan = resolver.resolve(
             self.release_config,

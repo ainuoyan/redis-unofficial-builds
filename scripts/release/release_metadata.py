@@ -26,10 +26,16 @@ CREATED_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
 )
 MAX_JSON_BYTES = 1024 * 1024
+RELEASE_TAG_PREFIX = "Redis-"
 
 
 class MetadataError(RuntimeError):
     """Raised when release metadata is missing, ambiguous, or inconsistent."""
+
+
+def release_tag(version: str) -> str:
+    asset_validator.parse_version(version)
+    return f"{RELEASE_TAG_PREFIX}{version}"
 
 
 def sbom_name(version: str) -> str:
@@ -181,7 +187,7 @@ def build_manifest(
     return {
         "schema": 1,
         "package_id": "redis-unofficial-builds",
-        "release_tag": version,
+        "release_tag": release_tag(version),
         "redis_version": version,
         "redis_series": f"{parsed[0]}.{parsed[1]}",
         "source": {
@@ -267,7 +273,7 @@ def build_spdx(
                 "packageFileName": artifact["name"],
                 "downloadLocation": (
                     f"https://github.com/{repository}/releases/download/"
-                    f"{version}/{artifact['name']}"
+                    f"{manifest['release_tag']}/{artifact['name']}"
                 ),
                 "filesAnalyzed": False,
                 "checksums": [
@@ -299,7 +305,8 @@ def build_spdx(
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": f"redis-unofficial-builds-{version}",
         "documentNamespace": (
-            f"https://github.com/{repository}/releases/tag/{version}/spdx/{revision}"
+            f"https://github.com/{repository}/releases/tag/"
+            f"{manifest['release_tag']}/spdx/{revision}"
         ),
         "creationInfo": {
             "created": created,

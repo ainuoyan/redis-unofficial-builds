@@ -245,7 +245,7 @@ def build_manifest(
     return {
         "schema": 2,
         "package_id": "redis-unofficial-builds",
-        "release_tag": version,
+        "release_tag": release_metadata.release_tag(version),
         "redis_version": version,
         "redis_series": f"{parsed[0]}.{parsed[1]}",
         "source": {

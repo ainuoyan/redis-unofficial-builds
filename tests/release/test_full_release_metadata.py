@@ -88,6 +88,7 @@ class FullReleaseMetadataTests(unittest.TestCase):
             artifacts=artifacts,
         )
         self.assertEqual(manifest["schema"], 2)
+        self.assertEqual(manifest["release_tag"], f"Redis-{VERSION}")
         self.assertEqual(len(manifest["artifacts"]), 9)
         spdx = release_metadata.build_spdx(
             manifest=manifest,
@@ -97,6 +98,17 @@ class FullReleaseMetadataTests(unittest.TestCase):
         package_ids = [item["SPDXID"] for item in spdx["packages"]]
         self.assertEqual(len(package_ids), len(set(package_ids)))
         self.assertEqual(len(spdx["packages"]), 10)
+        self.assertIn(
+            f"/releases/tag/Redis-{VERSION}/spdx/",
+            spdx["documentNamespace"],
+        )
+        for package in spdx["packages"]:
+            if package["SPDXID"] == "SPDXRef-Package-Redis-Upstream":
+                continue
+            self.assertIn(
+                f"/releases/download/Redis-{VERSION}/",
+                package["downloadLocation"],
+            )
 
     def test_mixed_packaging_revisions_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

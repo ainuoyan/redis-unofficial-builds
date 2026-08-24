@@ -90,7 +90,7 @@ The resulting actions are:
 | --- | --- | --- |
 | `plan_new_release` | No Release exists; all enabled platform and release metadata assets are missing | Add version and platform rows |
 | `skip_complete` | The published Release name inventory exactly matches all 21 names | Add no rows |
-| `blocked_nonfinal_release_state` | A numeric stable Release is a draft or prerelease | Report a blocking item; add no rows |
+| `blocked_nonfinal_release_state` | A canonical stable Release is a draft or prerelease | Report a blocking item; add no rows |
 | `blocked_incomplete_immutable_release` | An existing Release lacks any required package or release-level metadata file | Report a blocking item; add no rows |
 | `blocked_unexpected_immutable_release_assets` | All required names exist, but the Release also has an extra asset | Report a blocking item; add no rows |
 | `blocked_no_official_stable_release` | A full run found no stable official SHA-256 record for an enrolled series | Report a blocking item; add no rows |
@@ -107,11 +107,12 @@ downloads an exact existing Release, validates archives and aggregate
 metadata, checks the tag's packaging revision, and verifies all required
 attestations before it skips a build.
 
-Canonical stable Release tags are numeric `X.Y.Z`. Stable aliases such as
-`vX.Y.Z`, `redis-X.Y.Z`, and `redis-vX.Y.Z` in the Release inventory fail
-closed instead of being merged. Draft and prerelease states on a canonical
-stable version are blocking conditions; unrelated non-stable Release tags are
-ignored.
+Canonical stable Release tags are `Redis-X.Y.Z`, and the visible Release title
+is exactly `Redis X.Y.Z`. Historical bare numeric tags and experimental tags
+are ignored. Names beginning with `Redis-` but not matching the canonical
+stable form fail closed instead of being merged. Draft and prerelease states
+on a canonical stable version are blocking conditions; other unrelated
+Release tags are ignored.
 
 ### Local execution
 
@@ -153,8 +154,8 @@ Direct publication requires all nine platform packages, the exact 21 assets, a
 protected default-branch ref, and the protected GitHub Environment named
 `release`.
 
-The publisher starts only when neither the numeric Release nor tag exists. It
-creates a new draft targeted at the packaging commit, uploads all 21 files
+The publisher starts only when neither the `Redis-X.Y.Z` Release nor tag
+exists. It creates a new draft targeted at the packaging commit, uploads all 21 files
 together, validates attestations, reads back the draft's REST
 `target_commitish` and exact inventory, binds remote asset IDs, sizes, and
 GitHub SHA-256 digests to the verified local files, then downloads and
@@ -263,7 +264,7 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 | --- | --- | --- |
 | `plan_new_release` | Release 不存在，全部启用平台与元数据产物均待创建 | 加入版本和平台行 |
 | `skip_complete` | 正式 Release 的名称清单精确匹配 21 个名称 | 不加入 |
-| `blocked_nonfinal_release_state` | 纯数字稳定 Release 是草稿或预发布 | 报告阻塞项，不加入 |
+| `blocked_nonfinal_release_state` | 规范稳定 Release 是草稿或预发布 | 报告阻塞项，不加入 |
 | `blocked_incomplete_immutable_release` | 已有 Release 缺少任一包或 Release 级元数据 | 报告阻塞项，不加入 |
 | `blocked_unexpected_immutable_release_assets` | 必需名称均存在，但 Release 还含额外产物 | 报告阻塞项，不加入 |
 | `blocked_no_official_stable_release` | 完整运行时，已登记系列没有任何官方稳定版 SHA-256 记录 | 报告阻塞项，不加入 |
@@ -277,9 +278,10 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 发布能力的全平台工作流会下载已有精确 Release，校验包和聚合元数据、检查 Tag
 打包提交并验证全部证明后，才跳过构建。
 
-稳定 Release Tag 必须是纯数字 `X.Y.Z`。Release 清单中的 `vX.Y.Z`、
-`redis-X.Y.Z`、`redis-vX.Y.Z` 等稳定别名会直接失败，不会合并身份。规范稳定版
-上的草稿或预发布状态属于阻塞项；无关的非稳定 Tag 会忽略。
+正式 Release Tag 为 `Redis-X.Y.Z`，可见 Release 标题严格为 `Redis X.Y.Z`。
+历史纯数字 Tag 和 experimental Tag 会被忽略；以 `Redis-` 开头但不符合上述规范
+稳定格式的名称会直接失败，不会合并身份。规范稳定版上的草稿或预发布状态属于
+阻塞项；其他无关 Release Tag 会忽略。
 
 ### 本地执行
 
@@ -317,7 +319,8 @@ python3 scripts/release/resolve_versions.py \
 `workflow_call` 入口，计划工作流不会调用它。直接发布要求 9 个平台包、精确 21 个
 产物、受保护默认分支 ref 和名为 `release` 的受保护 GitHub Environment。
 
-发布器只在对应纯数字 Release 和 Tag 均不存在时开始。它创建目标为打包提交的新草稿，
+发布器只在对应 `Redis-X.Y.Z` Release 和 Tag 均不存在时开始。它创建目标为打包提交的
+新草稿，
 一次上传 21 个文件、校验证明、通过 REST 回读草稿的 `target_commitish` 和精确清单，
 把远端产物 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，再下载并按语义
 复验每个文件。临发布前重新核对同一草稿身份、状态、Tag OID 和产物记录，然后按数字

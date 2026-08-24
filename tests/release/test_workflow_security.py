@@ -192,6 +192,24 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("gh release delete", self.workflow)
         self.assertNotIn("--method DELETE", self.workflow)
 
+    def test_release_identity_contains_only_redis_and_version(self) -> None:
+        self.assertIn('release_tag="Redis-${version}"', self.workflow)
+        self.assertIn('release_tag="Redis-${REDIS_VERSION}"', self.workflow)
+        self.assertIn('gh release create "$release_tag"', self.workflow)
+        self.assertIn('--title "Redis ${REDIS_VERSION}"', self.workflow)
+        self.assertNotIn(
+            '--title "Redis ${REDIS_VERSION} unofficial builds"',
+            self.workflow,
+        )
+        self.assertNotIn(
+            '--title "Redis ${REDIS_VERSION} experimental builds"',
+            self.workflow,
+        )
+        self.assertGreaterEqual(
+            self.workflow.count('gh release download "$release_tag"'),
+            3,
+        )
+
     def test_release_metadata_and_attestations_are_current(self) -> None:
         self.assertIn("manifest.json", self.workflow)
         self.assertIn("SHA256SUMS", self.workflow)
