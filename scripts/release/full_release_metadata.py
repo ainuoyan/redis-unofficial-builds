@@ -20,7 +20,7 @@ import release_metadata  # noqa: E402
 import validate_release_asset as linux_validator  # noqa: E402
 
 
-WORKFLOW_PATH = ".github/workflows/build-linux.yml"
+WORKFLOW_PATH = ".github/workflows/build-all-platforms.yml"
 PLATFORMS: tuple[dict[str, str], ...] = (
     {"variant": "linux-glibc2.28", "os": "linux", "arch": "x64", "extension": "tar.gz", "runtime": "glibc", "baseline": "2.28", "service": "systemd", "validator": "linux"},
     {"variant": "linux-glibc2.28", "os": "linux", "arch": "arm64", "extension": "tar.gz", "runtime": "glibc", "baseline": "2.28", "service": "systemd", "validator": "linux"},

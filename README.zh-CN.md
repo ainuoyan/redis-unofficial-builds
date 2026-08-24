@@ -398,7 +398,7 @@ Rocky 软件源依赖在构建时解析，因此会记录编译器/运行库信�
 
 ## 发布自动化与不可变策略
 
-[全平台工作流](.github/workflows/build-linux.yml)具有手工和 `workflow_call`
+[全平台工作流](.github/workflows/build-all-platforms.yml)具有手工和 `workflow_call`
 入口，定时触发由控制器负责。定时控制器会对每个可发布版本自动调用一次全平台构建。
 手工控制器默认只生成计划，只有设置 `run_builds=true` 才执行；直接手工运行全平台
 工作流仍默认关闭发布。

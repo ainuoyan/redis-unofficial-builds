@@ -21,7 +21,7 @@ SAFE_VALUE_RE = re.compile(r"^[ -~]{1,512}$")
 SAFE_MEMBER_RE = re.compile(r"^[A-Za-z0-9._+/-]+$")
 PACKAGE_PREFIX = "Redis"
 EXPERIMENTAL_WORKFLOW = Path(".github/workflows/build-experimental.yml")
-RELEASE_WORKFLOW = Path(".github/workflows/build-linux.yml")
+RELEASE_WORKFLOW = Path(".github/workflows/build-all-platforms.yml")
 SUPPORTED_WORKFLOWS = {EXPERIMENTAL_WORKFLOW, RELEASE_WORKFLOW}
 
 COMMON_PATCHSET_PATHS = (

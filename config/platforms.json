@@ -10,7 +10,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "linux-glibc2.28-arm64",
@@ -20,7 +20,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "linux-glibc2.17-legacy-x64",
@@ -30,7 +30,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "linux-glibc2.17-legacy-arm64",
@@ -40,7 +40,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "linux-musl1.2-x64",
@@ -50,7 +50,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "linux-musl1.2-arm64",
@@ -60,7 +60,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "macos15-x64",
@@ -70,7 +70,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "macos15-arm64",
@@ -80,7 +80,7 @@
       "archive_extension": "tar.gz",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     },
     {
       "id": "windows-msys2-x64",
@@ -90,7 +90,7 @@
       "archive_extension": "zip",
       "status": "implemented",
       "controller_enabled": true,
-      "build_workflow": "build-linux.yml"
+      "build_workflow": "build-all-platforms.yml"
     }
   ]
 }

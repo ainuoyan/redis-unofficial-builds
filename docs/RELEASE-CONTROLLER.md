@@ -151,7 +151,7 @@ reproducible.
 
 ### Automatic build and publication
 
-The [full-platform workflow](../.github/workflows/build-linux.yml) has explicit
+The [full-platform workflow](../.github/workflows/build-all-platforms.yml) has explicit
 manual and `workflow_call` entry points. A scheduled controller run, or a
 manual controller run with `run_builds=true`, calls it once per eligible
 version with `package_arch=all` and `publish_release=true`. Blocked rows are
@@ -323,7 +323,7 @@ python3 scripts/release/resolve_versions.py \
 
 ### 自动构建与发布
 
-[全平台工作流](../.github/workflows/build-linux.yml)具有明确手工和
+[全平台工作流](../.github/workflows/build-all-platforms.yml)具有明确手工和
 `workflow_call` 入口。定时运行，或设置 `run_builds=true` 的手工控制器运行，会按每个
 可发布版本调用一次，并传入 `package_arch=all` 与 `publish_release=true`。阻塞行会被
 排除，不会抑制其他系列的可发布行。直接发布仍要求 9 个平台包、精确 21 个产物、

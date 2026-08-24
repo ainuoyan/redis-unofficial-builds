@@ -45,7 +45,7 @@ marks remain subject to the official
 | `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Implemented**; primary Windows backend |
 
 All nine rows are controller-enabled and bind their stable package identity to
-`build-linux.yml`. The full-platform workflow calls the read-only platform
+`build-all-platforms.yml`. The full-platform workflow calls the read-only platform
 workflow for the additional native jobs, but that implementation detail does
 not change the stable workflow identity recorded in package metadata. All Linux archives use
 `.tar.gz` rather than RPM, DEB, Snap, or APK and use the fixed prefix
@@ -142,9 +142,9 @@ publication step. Manual dispatch sets `PACKAGE_STATUS=experimental` and
 records `build-experimental.yml`; those seven-day Actions artifacts cannot
 enter a `Redis-X.Y.Z` Release.
 
-When called by `build-linux.yml`, the same jobs receive the caller's exact
+When called by `build-all-platforms.yml`, the same jobs receive the caller's exact
 version, source SHA-256, and immutable hashes commit, set
-`PACKAGE_STATUS=release`, and record `build-linux.yml`. The glibc 2.17 package
+`PACKAGE_STATUS=release`, and record `build-all-platforms.yml`. The glibc 2.17 package
 uses format 2; musl, macOS, and Windows use format 3. Both formats bind source
 digest, redis-hashes commit, packaging revision, exact platform identity,
 reviewed lifecycle assets, and a patch-set digest that includes the stable

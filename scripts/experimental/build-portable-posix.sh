@@ -44,7 +44,7 @@ esac
 case "$RUN_FULL_TESTS" in true|false) ;; *) echo "Invalid RUN_FULL_TESTS value." >&2; exit 1 ;; esac
 case "$PACKAGE_STATUS:$BUILD_WORKFLOW_PATH" in
   experimental:.github/workflows/build-experimental.yml|\
-  release:.github/workflows/build-linux.yml) ;;
+  release:.github/workflows/build-all-platforms.yml) ;;
   *) echo "Package status and workflow do not match." >&2; exit 1 ;;
 esac
 

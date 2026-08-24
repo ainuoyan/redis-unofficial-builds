@@ -376,7 +376,7 @@ jobs:
                 --packaging-revision "$release_revision" \
                 --packaging-root "$GITHUB_WORKSPACE"
 
-              attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+              attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-all-platforms.yml@refs/heads/${DEFAULT_BRANCH}"
               verify_attestation() {
                 local asset="$1"
                 local predicate_type="$2"
@@ -1017,7 +1017,7 @@ jobs:
             --packaging-revision "$GITHUB_SHA" \
             --packaging-root "$GITHUB_WORKSPACE"
 
-          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-all-platforms.yml@refs/heads/${DEFAULT_BRANCH}"
           verify_attestation() {
             local asset="$1"
             local predicate_type="$2"
@@ -1300,7 +1300,7 @@ jobs:
             --packaging-revision "$GITHUB_SHA" \
             --packaging-root "$GITHUB_WORKSPACE"
 
-          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-linux.yml@refs/heads/${DEFAULT_BRANCH}"
+          attestation_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/build-all-platforms.yml@refs/heads/${DEFAULT_BRANCH}"
           verify_downloaded_attestation() {
             local asset="$1"
             local predicate_type="$2"

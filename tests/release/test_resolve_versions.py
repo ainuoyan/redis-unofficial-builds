@@ -70,7 +70,7 @@ class ResolveVersionsTests(unittest.TestCase):
                     "archive_extension": "tar.gz",
                     "status": "implemented",
                     "controller_enabled": True,
-                    "build_workflow": "build-linux.yml",
+                    "build_workflow": "build-all-platforms.yml",
                 },
                 {
                     "id": "linux-glibc2.28-arm64",
@@ -80,7 +80,7 @@ class ResolveVersionsTests(unittest.TestCase):
                     "archive_extension": "tar.gz",
                     "status": "implemented",
                     "controller_enabled": True,
-                    "build_workflow": "build-linux.yml",
+                    "build_workflow": "build-all-platforms.yml",
                 },
                 {
                     "id": "windows-msys2-x64",

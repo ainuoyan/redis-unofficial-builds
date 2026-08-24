@@ -37,7 +37,7 @@ Redis 名称与标识仍受官方
 | `macos15` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 15.0 | launchd | **已实现** |
 | `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **已实现**；Windows 主后端 |
 
-9 个平台行均启用控制器，稳定包身份都绑定 `build-linux.yml`。全平台工作流会调用只读
+9 个平台行均启用控制器，稳定包身份都绑定 `build-all-platforms.yml`。全平台工作流会调用只读
 平台工作流完成额外原生 Job，但这个实现细节不会改变包元数据记录的稳定工作流身份。
 所有 Linux 包均使用 `.tar.gz`，不依赖 RPM、DEB、Snap 或 APK，固定前缀为
 `/usr/local/redis`。Windows 使用 `.zip` 和固定目录
@@ -117,8 +117,8 @@ CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官�
 `build-experimental.yml`；这些保留 7 天的 Actions artifact 不能进入
 `Redis-X.Y.Z` Release。
 
-由 `build-linux.yml` 调用时，相同 Job 接收调用方的精确版本、源码 SHA-256 和不可变
-哈希提交，设置 `PACKAGE_STATUS=release` 并记录 `build-linux.yml`。glibc 2.17 使用
+由 `build-all-platforms.yml` 调用时，相同 Job 接收调用方的精确版本、源码 SHA-256 和不可变
+哈希提交，设置 `PACKAGE_STATUS=release` 并记录 `build-all-platforms.yml`。glibc 2.17 使用
 第 2 版格式，musl、macOS 和 Windows 使用第 3 版格式。两种格式都绑定源码摘要、
 redis-hashes 提交、打包提交、精确平台身份、经审查生命周期文件和包含稳定工作流的
 补丁集摘要，因此手工包不能仅靠改名伪装成正式包。

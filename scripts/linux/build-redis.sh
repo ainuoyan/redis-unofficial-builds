@@ -15,7 +15,7 @@ readonly PACKAGE_ARCH="${PACKAGE_ARCH:?PACKAGE_ARCH is required}"
 readonly PACKAGE_VARIANT="${PACKAGE_VARIANT:-linux-glibc2.28}"
 readonly GLIBC_BASELINE="${GLIBC_BASELINE:-2.28}"
 readonly BUILD_IMAGE="${BUILD_IMAGE:-unknown}"
-readonly BUILD_WORKFLOW_PATH="${BUILD_WORKFLOW_PATH:-.github/workflows/build-linux.yml}"
+readonly BUILD_WORKFLOW_PATH="${BUILD_WORKFLOW_PATH:-.github/workflows/build-all-platforms.yml}"
 readonly REQUESTED_PACKAGING_REVISION="${PACKAGING_REVISION:-}"
 readonly REQUESTED_SOURCE_ARCHIVE="${REDIS_SOURCE_ARCHIVE:-}"
 readonly SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
@@ -55,7 +55,7 @@ if [[ ! "$GLIBC_BASELINE" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
 fi
 
 case "$BUILD_WORKFLOW_PATH" in
-  .github/workflows/build-linux.yml)
+  .github/workflows/build-all-platforms.yml)
     case "$PACKAGE_VARIANT:$GLIBC_BASELINE" in
       linux-glibc2.28:2.28|linux-glibc2.17-legacy:2.17) ;;
       *)

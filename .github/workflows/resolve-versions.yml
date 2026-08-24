@@ -175,7 +175,7 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
-    uses: ./.github/workflows/build-linux.yml
+    uses: ./.github/workflows/build-all-platforms.yml
     with:
       redis_version: ${{ matrix.version }}
       source_sha256: ${{ matrix.source_sha256 }}

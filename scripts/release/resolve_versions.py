@@ -25,7 +25,7 @@ WORKFLOW_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$")
 GIT_OID_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$")
 SUPPORTED_BACKEND_CONTRACTS = {
-    "build-linux.yml": {
+    "build-all-platforms.yml": {
         ("linux-glibc2.28", "linux", "x64", "tar.gz"),
         ("linux-glibc2.28", "linux", "arm64", "tar.gz"),
         ("linux-glibc2.17-legacy", "linux", "x64", "tar.gz"),
