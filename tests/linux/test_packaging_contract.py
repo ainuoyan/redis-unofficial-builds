@@ -76,7 +76,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("UPSTREAM-CONTRIBUTOR-LICENSE.txt", script)
 
     def test_release_assets_are_immutable_and_build_image_is_pinned(self) -> None:
-        workflow = (ROOT / ".github/workflows/build-linux.yml").read_text(
+        workflow = (ROOT / ".github/workflows/build-all-platforms.yml").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("--clobber", workflow)
@@ -1379,7 +1379,7 @@ exit 99
                     self.assertEqual(result.returncode == 0, expected_success)
 
     def test_release_workflow_validates_existing_and_new_draft_assets(self) -> None:
-        workflow = (ROOT / ".github/workflows/build-linux.yml").read_text(
+        workflow = (ROOT / ".github/workflows/build-all-platforms.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("gh release download", workflow)
@@ -1408,7 +1408,7 @@ exit 99
         generated_readme = (ROOT / "scripts/linux/build-redis.sh").read_text(
             encoding="utf-8"
         )
-        workflow = (ROOT / ".github/workflows/build-linux.yml").read_text(
+        workflow = (ROOT / ".github/workflows/build-all-platforms.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("umask 022; exec tar", generated_readme)

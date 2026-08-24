@@ -18,7 +18,7 @@ import validate_release_asset as asset_validator
 
 MANIFEST_NAME = "manifest.json"
 CHECKSUMS_NAME = "SHA256SUMS"
-WORKFLOW_PATH = ".github/workflows/build-linux.yml"
+WORKFLOW_PATH = ".github/workflows/build-all-platforms.yml"
 ARCHITECTURES = ("x64", "arm64")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")

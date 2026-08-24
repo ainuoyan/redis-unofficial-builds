@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW_PATH = ROOT / ".github/workflows/build-linux.yml"
+WORKFLOW_PATH = ROOT / ".github/workflows/build-all-platforms.yml"
 EXPERIMENTAL_WORKFLOW_PATH = ROOT / ".github/workflows/build-experimental.yml"
 LINUX_BUILD_SCRIPT_PATH = ROOT / "scripts/linux/build-redis.sh"
 LINUX_UPDATE_SCRIPT_PATH = ROOT / "packaging/linux/scripts/update.sh"
@@ -44,7 +44,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         action,
                         {
                             "./.github/workflows/build-experimental.yml",
-                            "./.github/workflows/build-linux.yml",
+                            "./.github/workflows/build-all-platforms.yml",
                         },
                         f"unreviewed local reusable workflow in {workflow_path.name}",
                     )

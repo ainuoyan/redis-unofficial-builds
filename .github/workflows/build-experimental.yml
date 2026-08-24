@@ -210,7 +210,7 @@ jobs:
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           IMAGE_ENV: ${{ matrix.image_env }}
           PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
-          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-all-platforms.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           image="${!IMAGE_ENV}"
@@ -397,7 +397,7 @@ jobs:
           EXPECTED_MACHINE_ARCH: ${{ matrix.machine_arch }}
           IMAGE_ENV: ${{ matrix.image_env }}
           PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
-          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-all-platforms.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           image="${!IMAGE_ENV}"
@@ -608,7 +608,7 @@ jobs:
           PACKAGING_REVISION: ${{ github.sha }}
           OUTPUT_DIR: ${{ github.workspace }}/dist
           PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
-          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-all-platforms.yml' || '.github/workflows/build-experimental.yml' }}
         run: scripts/experimental/build-portable-posix.sh
       - name: Test launchd install, persistence, recovery, and purge
         shell: bash
@@ -751,7 +751,7 @@ jobs:
           PACKAGING_REVISION: ${{ github.sha }}
           SERVICE_WRAPPER_WINDOWS: ${{ github.workspace }}\service-publish\RedisService.exe
           PACKAGE_STATUS: ${{ inputs.release_contract && 'release' || 'experimental' }}
-          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-linux.yml' || '.github/workflows/build-experimental.yml' }}
+          BUILD_WORKFLOW_PATH: ${{ inputs.release_contract && '.github/workflows/build-all-platforms.yml' || '.github/workflows/build-experimental.yml' }}
         run: |
           set -euo pipefail
           export REDIS_SOURCE_ARCHIVE="$PWD/source/redis-${REDIS_VERSION}.tar.gz"

@@ -96,11 +96,11 @@ PACKAGING_BINDINGS = {
     "redis/THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
 }
 PATCHSET_FIXED_PATHS = (
-    ".github/workflows/build-linux.yml",
+    ".github/workflows/build-all-platforms.yml",
     "scripts/linux/build-redis.sh",
     "THIRD_PARTY_NOTICES.md",
 )
-DEFAULT_BUILD_WORKFLOW = Path(".github/workflows/build-linux.yml")
+DEFAULT_BUILD_WORKFLOW = Path(".github/workflows/build-all-platforms.yml")
 EXPERIMENTAL_BUILD_WORKFLOW = Path(".github/workflows/build-experimental.yml")
 MAX_ARCHIVE_MEMBERS = 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024

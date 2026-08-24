@@ -474,7 +474,7 @@ archives. ARM64 kernel warnings such as `ARM64-COW-BUG` are not suppressed.
 
 ## Release automation and immutability
 
-The [full-platform workflow](.github/workflows/build-linux.yml) has manual and
+The [full-platform workflow](.github/workflows/build-all-platforms.yml) has manual and
 `workflow_call` entry points; the controller owns the schedule. Scheduled
 controller runs automatically call one full-platform build per eligible
 version. Manual controller runs remain plan-only unless `run_builds=true` is

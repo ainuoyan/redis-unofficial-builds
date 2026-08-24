@@ -113,7 +113,7 @@ class PublishPolicyTests(unittest.TestCase):
         config = copy.deepcopy(self.platform_config)
         config["platforms"][0]["variant"] = "linux-other"
         config["platforms"][0]["id"] = "linux-other-x64"
-        with self.assertRaisesRegex(resolve_versions.PlanError, "build-linux"):
+        with self.assertRaisesRegex(resolve_versions.PlanError, "build-all-platforms"):
             resolve_versions.validate_platform_config(config)
 
     def test_missing_enabled_workflow_is_rejected(self) -> None:
@@ -145,7 +145,7 @@ class PublishPolicyTests(unittest.TestCase):
         self.assertNotIn("curl ", workflow)
         self.assertIn("build_and_release:", workflow)
         self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs.version_matrix) }}", workflow)
-        self.assertIn("uses: ./.github/workflows/build-linux.yml", workflow)
+        self.assertIn("uses: ./.github/workflows/build-all-platforms.yml", workflow)
         self.assertIn("hashes_commit: ${{ needs.plan.outputs.hashes_commit }}", workflow)
         self.assertIn("publish_release: true", workflow)
         self.assertIn("github.event_name == 'schedule'", workflow)
@@ -168,7 +168,7 @@ class PublishPolicyTests(unittest.TestCase):
                     if action.startswith("./"):
                         self.assertEqual(
                             action,
-                            "./.github/workflows/build-linux.yml",
+                            "./.github/workflows/build-all-platforms.yml",
                         )
                         continue
                     self.assertRegex(action, r"^[^@\s]+@[0-9a-f]{40}$")

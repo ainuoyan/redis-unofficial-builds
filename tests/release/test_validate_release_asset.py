@@ -414,7 +414,7 @@ class ValidateReleaseAssetTests(unittest.TestCase):
                     set -euo pipefail
                     {
                       printf '%s\\0' \\
-                        .github/workflows/build-linux.yml \\
+                        .github/workflows/build-all-platforms.yml \\
                         scripts/linux/build-redis.sh \\
                         THIRD_PARTY_NOTICES.md
                       find packaging/linux -type f -print0

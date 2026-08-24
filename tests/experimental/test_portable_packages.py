@@ -334,7 +334,7 @@ class PortablePackageTests(unittest.TestCase):
             "--package-status", package_status,
             "--build-workflow",
             (
-                ".github/workflows/build-linux.yml"
+                ".github/workflows/build-all-platforms.yml"
                 if package_status == "release"
                 else ".github/workflows/build-experimental.yml"
             ),
@@ -361,7 +361,7 @@ class PortablePackageTests(unittest.TestCase):
                 "--package-status", package_status,
                 "--build-workflow",
                 (
-                    ".github/workflows/build-linux.yml"
+                ".github/workflows/build-all-platforms.yml"
                     if package_status == "release"
                     else ".github/workflows/build-experimental.yml"
                 ),
@@ -509,7 +509,7 @@ class PortablePackageTests(unittest.TestCase):
             {
                 *portable_contract.patchset_paths("windows-msys2"),
                 *portable_contract.patchset_paths(
-                    "windows-msys2", Path(".github/workflows/build-linux.yml")
+                    "windows-msys2", Path(".github/workflows/build-all-platforms.yml")
                 ),
             },
             key=lambda path: path.as_posix(),
@@ -645,7 +645,7 @@ class PortablePackageTests(unittest.TestCase):
         implemented = [item for item in platforms["platforms"] if item["status"] == "implemented"]
         self.assertEqual(len(implemented), 9)
         self.assertTrue(all(item["controller_enabled"] is True for item in implemented))
-        self.assertTrue(all(item["build_workflow"] == "build-linux.yml" for item in implemented))
+        self.assertTrue(all(item["build_workflow"] == "build-all-platforms.yml" for item in implemented))
 
     def test_portable_build_stabilizes_tests_and_uses_a_short_macos_temp_root(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
