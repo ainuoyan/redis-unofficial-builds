@@ -52,6 +52,7 @@ class PublishPolicyTests(unittest.TestCase):
             },
         )
         self.assertEqual(self.release_config["policy"]["new_series_floor"], "8.10")
+        self.assertEqual(self.release_config["policy"]["controller_mode"], "auto_release")
         self.assertEqual(
             {
                 platform["id"]
@@ -142,6 +143,18 @@ class PublishPolicyTests(unittest.TestCase):
         self.assertIn("contents/${hashes_path}?ref=${hashes_commit}", workflow)
         self.assertIn('--hashes-commit "$HASHES_COMMIT"', workflow)
         self.assertNotIn("curl ", workflow)
+        self.assertIn("build_and_release:", workflow)
+        self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs.version_matrix) }}", workflow)
+        self.assertIn("uses: ./.github/workflows/build-linux.yml", workflow)
+        self.assertIn("hashes_commit: ${{ needs.plan.outputs.hashes_commit }}", workflow)
+        self.assertIn("publish_release: true", workflow)
+        self.assertIn("github.event_name == 'schedule'", workflow)
+        self.assertIn("inputs.run_builds == true", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        build_job = workflow.split("  build_and_release:\n", 1)[1]
+        build_condition = build_job.split("    strategy:\n", 1)[0]
+        self.assertNotIn("blocked_release_count", build_condition)
+        self.assertNotIn("gh workflow run", workflow)
 
     def test_external_actions_are_pinned_to_full_commit_oids(self) -> None:
         for name in ("resolve-versions.yml", "validate.yml"):
@@ -152,6 +165,12 @@ class PublishPolicyTests(unittest.TestCase):
             self.assertTrue(uses, name)
             for action in uses:
                 with self.subTest(workflow=name, action=action):
+                    if action.startswith("./"):
+                        self.assertEqual(
+                            action,
+                            "./.github/workflows/build-linux.yml",
+                        )
+                        continue
                     self.assertRegex(action, r"^[^@\s]+@[0-9a-f]{40}$")
 
     def test_validation_workflow_checks_all_release_scripts_and_real_configs(self) -> None:

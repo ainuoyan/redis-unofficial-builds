@@ -40,9 +40,12 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertTrue(actions, workflow_path.name)
             for action in actions:
                 if action.startswith("./"):
-                    self.assertEqual(
+                    self.assertIn(
                         action,
-                        "./.github/workflows/build-experimental.yml",
+                        {
+                            "./.github/workflows/build-experimental.yml",
+                            "./.github/workflows/build-linux.yml",
+                        },
                         f"unreviewed local reusable workflow in {workflow_path.name}",
                     )
                     continue
@@ -120,6 +123,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("commits/${hashes_ref}", self.workflow)
         self.assertIn("contents/${hashes_path}?ref=${hashes_commit}", self.workflow)
         self.assertIn("hashes_commit: ${{ steps.resolve.outputs.hashes_commit }}", self.workflow)
+        self.assertIn("PROVIDED_HASHES_COMMIT: ${{ inputs.hashes_commit }}", self.workflow)
+        self.assertIn('if [[ -n "${PROVIDED_HASHES_COMMIT:-}" ]]', self.workflow)
         self.assertIn("REDIS_HASHES_COMMIT", self.workflow)
         self.assertIn("[0-9]{0,5}", self.workflow)
 

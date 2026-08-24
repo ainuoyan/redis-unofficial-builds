@@ -11,6 +11,10 @@ on:
         description: Expected official Redis source SHA-256
         required: true
         type: string
+      hashes_commit:
+        description: Immutable redis-hashes snapshot commit
+        required: true
+        type: string
       package_arch:
         description: Package architecture
         required: true
@@ -33,6 +37,10 @@ on:
         type: string
       source_sha256:
         description: Optional official source SHA-256 cross-check
+        required: false
+        type: string
+      hashes_commit:
+        description: Optional immutable redis-hashes snapshot cross-check
         required: false
         type: string
       package_arch:
@@ -97,6 +105,7 @@ jobs:
           REQUESTED_PACKAGE_ARCH: ${{ inputs.package_arch }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          PROVIDED_HASHES_COMMIT: ${{ inputs.hashes_commit }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           TRIGGER_REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
@@ -130,12 +139,16 @@ jobs:
           hashes_repository="$(jq -er '.upstream.hashes_repository' config/release-lines.json)"
           hashes_ref="$(jq -er '.upstream.hashes_ref' config/release-lines.json)"
           hashes_path="$(jq -er '.upstream.hashes_path' config/release-lines.json)"
-          hashes_commit="$(
-            gh api \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "repos/${hashes_repository}/commits/${hashes_ref}" \
-              --jq '.sha'
-          )"
+          if [[ -n "${PROVIDED_HASHES_COMMIT:-}" ]]; then
+            hashes_commit="$PROVIDED_HASHES_COMMIT"
+          else
+            hashes_commit="$(
+              gh api \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "repos/${hashes_repository}/commits/${hashes_ref}" \
+                --jq '.sha'
+            )"
+          fi
           if [[ ! "$hashes_commit" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid Redis hashes snapshot Git OID." >&2
             exit 1

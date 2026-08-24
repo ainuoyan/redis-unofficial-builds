@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve Redis release lines into a deterministic, plan-only build matrix."""
+"""Resolve Redis release lines into deterministic build and release matrices."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ EXPECTED_POLICY = {
     "new_series": "candidate_then_pull_request",
     "stop_after_eol": True,
     "retain_existing_releases": True,
-    "controller_mode": "plan_only",
+    "controller_mode": "auto_release",
 }
 
 
@@ -736,7 +736,7 @@ def resolve(
 
     return {
         "schema": 1,
-        "controller_mode": "plan_only",
+        "controller_mode": "auto_release",
         "as_of": as_of.isoformat(),
         "hashes_commit": hashes_commit,
         "release_plans": plans,
@@ -753,7 +753,7 @@ def render_summary(plan: dict[str, Any]) -> str:
     lines = [
         "# Redis release controller plan",
         "",
-        "> Plan only: this controller does not dispatch builds or publish releases.",
+        "> Automatic policy: scheduled runs and manual runs with `run_builds=true` send eligible versions to the protected full-platform workflow; blocked rows remain excluded.",
         "",
         f"As of: `{plan['as_of']}`",
         f"Redis hashes snapshot: `{plan['hashes_commit'] or 'not recorded'}`",

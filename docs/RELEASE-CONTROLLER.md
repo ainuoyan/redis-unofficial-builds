@@ -2,16 +2,19 @@
 
 ## English
 
-The multi-version controller is an enforced **plan-only** component. It
-discovers official stable versions, compares expected names with GitHub
-Release inventories, and writes review artifacts. It cannot dispatch a build,
-create a tag, modify a Release, or publish assets.
+The multi-version controller discovers official stable versions, compares
+expected names with GitHub Release inventories, writes review artifacts, and
+automatically calls the full-platform workflow once for each eligible version
+on scheduled runs. A manual run remains plan-only unless its `run_builds`
+input is explicitly enabled. The controller does not itself create tags or
+upload assets; the protected full-platform workflow owns those operations.
 
-`policy.patch_updates=auto_release` is a fixed policy marker. Configuration
-validation requires this exact value, but no component currently consumes it
-to publish automatically, and the resolver has no publication authority. Both
-configuration validation and the workflow safety gate require
-`policy.controller_mode=plan_only`.
+`policy.patch_updates=auto_release` and
+`policy.controller_mode=auto_release` are fixed policy values. Configuration
+validation and the workflow safety gate require these exact values. The
+controller passes the selected version, source checksum, and immutable
+`redis-hashes` commit to the protected full-platform workflow; that workflow
+performs the nine-platform build, acceptance checks, and Release publication.
 
 ### Configuration and trust inputs
 
@@ -24,7 +27,7 @@ configuration validation and the workflow safety gate require
 - [`scripts/release/resolve_versions.py`](../scripts/release/resolve_versions.py)
   performs strict, standard-library-only resolution.
 - [`.github/workflows/resolve-versions.yml`](../.github/workflows/resolve-versions.yml)
-  supplies the scheduled/manual GitHub plan.
+  supplies scheduled/manual resolution and automatic build orchestration.
 
 After checkout, the workflow validates both configuration files before it
 fetches upstream hash data or the Release inventory. It resolves
@@ -146,13 +149,16 @@ selects an exact official version in a tracked series. Series and exact-version
 filters are mutually exclusive. `--as-of YYYY-MM-DD` makes EOL decisions
 reproducible.
 
-### Separation from publication
+### Automatic build and publication
 
 The [full-platform workflow](../.github/workflows/build-linux.yml) has explicit
-manual and `workflow_call` entry points. The plan workflow does not call it.
-Direct publication requires all nine platform packages, the exact 21 assets, a
-protected default-branch ref, and the protected GitHub Environment named
-`release`.
+manual and `workflow_call` entry points. A scheduled controller run, or a
+manual controller run with `run_builds=true`, calls it once per eligible
+version with `package_arch=all` and `publish_release=true`. Blocked rows are
+excluded from the matrix and do not suppress eligible rows from other series.
+Direct publication still requires all nine platform packages, the exact 21
+assets, a protected default-branch ref, and the protected GitHub Environment
+named `release`.
 
 The publisher starts only when neither the `Redis-X.Y.Z` Release nor tag
 exists. It creates a new draft targeted at the packaging commit, uploads all 21 files
@@ -188,13 +194,15 @@ GitHub Release trust boundary and are not independent signatures.
 
 ## 简体中文
 
-多版本控制器被强制限制为**仅生成计划（plan-only）**。它发现官方稳定版本、比较
-预期名称与 GitHub Release 清单并生成审查产物；不能触发构建、创建 Tag、修改
-Release 或发布产物。
+多版本控制器负责发现官方稳定版本、比较预期名称与 GitHub Release 清单并生成审查
+产物；定时运行会对每个可发布版本自动调用一次全平台工作流。手工运行默认只生成
+计划，只有明确把 `run_builds` 设为 `true` 才会构建和发布。控制器本身不创建 Tag
+或上传产物，这些操作由受保护的全平台工作流负责。
 
-`policy.patch_updates=auto_release` 是固定的策略标识：配置校验强制要求该取值，
-但当前没有任何组件据此自动发布，解析器也不具备发布权限。配置校验和工作流
-安全门都要求 `policy.controller_mode=plan_only`。
+`policy.patch_updates=auto_release` 和 `policy.controller_mode=auto_release` 是固定
+策略值，配置校验和工作流安全门都会强制要求。控制器把选定版本、源码校验和以及
+不可变的 `redis-hashes` 提交传给受保护的全平台工作流；该工作流负责 9 平台构建、
+验收和 Release 发布。
 
 ### 配置与信任输入
 
@@ -205,7 +213,7 @@ Release 或发布产物。
 - [`scripts/release/resolve_versions.py`](../scripts/release/resolve_versions.py)使用
   Python 标准库执行严格解析；
 - [`.github/workflows/resolve-versions.yml`](../.github/workflows/resolve-versions.yml)
-  提供定时和手工计划。
+  提供定时/手工解析及自动构建编排。
 
 完成 checkout 后，工作流会在获取上游哈希数据或 Release 清单前校验两个配置文件。
 它通过 GitHub API 把 `redis/redis-hashes` 的 `master` 解析为小写 40 位 Git 提交，
@@ -313,11 +321,13 @@ python3 scripts/release/resolve_versions.py \
 `--series X.Y` 可重复选择已跟踪系列；`--version X.Y.Z` 选择已跟踪系列中的确切
 官方版本。系列和确切版本筛选互斥。`--as-of YYYY-MM-DD` 可复现 EOL 判断。
 
-### 与发布分离
+### 自动构建与发布
 
 [全平台工作流](../.github/workflows/build-linux.yml)具有明确手工和
-`workflow_call` 入口，计划工作流不会调用它。直接发布要求 9 个平台包、精确 21 个
-产物、受保护默认分支 ref 和名为 `release` 的受保护 GitHub Environment。
+`workflow_call` 入口。定时运行，或设置 `run_builds=true` 的手工控制器运行，会按每个
+可发布版本调用一次，并传入 `package_arch=all` 与 `publish_release=true`。阻塞行会被
+排除，不会抑制其他系列的可发布行。直接发布仍要求 9 个平台包、精确 21 个产物、
+受保护默认分支 ref 和名为 `release` 的受保护 GitHub Environment。
 
 发布器只在对应 `Redis-X.Y.Z` Release 和 Tag 均不存在时开始。它创建目标为打包提交的
 新草稿，

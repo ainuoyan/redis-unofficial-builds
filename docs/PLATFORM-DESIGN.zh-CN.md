@@ -37,8 +37,8 @@ Redis 名称与标识仍受官方
 | `macos15` | x64、ARM64 | 原生 macOS 15 Runner、部署目标 15.0 | launchd | **已实现** |
 | `windows-msys2` | x64 | Windows Server 2022 Runner 与 MSYS2 | Windows SCM | **已实现**；Windows 主后端 |
 
-9 个平台行均启用控制器，稳定包身份都绑定 `build-linux.yml`。发布器会调用只读平台
-工作流完成额外原生 Job，但这个实现细节不会改变包元数据记录的稳定工作流身份。
+9 个平台行均启用控制器，稳定包身份都绑定 `build-linux.yml`。全平台工作流会调用只读
+平台工作流完成额外原生 Job，但这个实现细节不会改变包元数据记录的稳定工作流身份。
 所有 Linux 包均使用 `.tar.gz`，不依赖 RPM、DEB、Snap 或 APK，固定前缀为
 `/usr/local/redis`。Windows 使用 `.zip` 和固定目录
 `C:\Program Files\Redis-Unofficial`。
@@ -332,10 +332,12 @@ Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲�
 Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
 
-## 版本解析与构建分离
+## 版本解析与构建编排
 
-[发布控制器](RELEASE-CONTROLLER.md)受检入仓库的
-`controller_mode=plan_only` 强制限制：
+[发布控制器](RELEASE-CONTROLLER.md)使用检入仓库的
+`controller_mode=auto_release` 策略。定时运行会自动把每个可发布的已登记版本传给
+受保护的全平台工作流。手工运行默认只生成计划，只有选择 `run_builds=true` 才会
+执行构建；新系列候选仍需经过配置审查后登记：
 
 ```mermaid
 flowchart TD
@@ -343,10 +345,14 @@ flowchart TD
     B --> C["解析 GA 版本"]
     C --> D["检查 Release 名称"]
     D --> E["写入计划产物"]
+    E --> F["调用全平台工作流"]
+    F --> G["受保护 Release 环境"]
 ```
 
-它不会下载 Redis 源码、执行包代码、调用构建工作流、创建 Tag 或发布 Release。
-Release 名称清单只用于计划；内容和证明由具备发布能力的全平台工作流验证。
+控制器本身不编译包也不创建 Tag，而是把源码校验和及不可变的 `redis-hashes` 提交传给
+每个可发布版本的一次 `package_arch=all` 工作流调用。全平台工作流负责内容和证明
+校验，只有通过受保护默认分支和 `release` Environment 门禁后才创建并发布 Release。
+阻塞行会被排除，但不会抑制其他系列的可发布行。
 
 ## 发布门禁
 

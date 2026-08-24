@@ -1,4 +1,4 @@
-name: Plan Redis releases
+name: Resolve and release Redis versions
 
 on:
   workflow_dispatch:
@@ -11,6 +11,11 @@ on:
         description: Optional exact official version (do not combine with series)
         required: false
         type: string
+      run_builds:
+        description: Run the full-platform build and protected Release publication
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -27,7 +32,7 @@ permissions:
 
 concurrency:
   group: redis-release-plan-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -105,7 +110,7 @@ jobs:
             assets: [.assets[] | {name}]
           } ]' release-pages.json >github-releases.json
 
-      - name: Generate plan-only matrices
+      - name: Generate release matrices
         id: resolve
         env:
           HASHES_COMMIT: ${{ steps.hashes.outputs.commit }}
@@ -132,17 +137,17 @@ jobs:
           fi
           python3 scripts/release/resolve_versions.py "${args[@]}"
 
-      - name: Enforce plan-only safety gate
+      - name: Enforce automatic-release safety gate
         env:
           CONTROLLER_MODE: ${{ steps.resolve.outputs.controller_mode }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$CONTROLLER_MODE" != "plan_only" ]]; then
+          if [[ "$CONTROLLER_MODE" != "auto_release" ]]; then
             echo "Unexpected controller mode: $CONTROLLER_MODE" >&2
             exit 1
           fi
-          echo "No build workflow is dispatched by this controller."
+          echo "Eligible tracked versions may be sent to the protected full-platform workflow."
 
       - name: Publish plan in job summary
         shell: bash
@@ -155,3 +160,26 @@ jobs:
           path: release-plan/
           if-no-files-found: error
           retention-days: 14
+
+  build_and_release:
+    name: Build and publish Redis ${{ matrix.version }}
+    needs: plan
+    if: >-
+      needs.plan.outputs.has_planned_builds == 'true' &&
+      (github.event_name == 'schedule' || inputs.run_builds == true)
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.version_matrix) }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      redis_version: ${{ matrix.version }}
+      source_sha256: ${{ matrix.source_sha256 }}
+      hashes_commit: ${{ needs.plan.outputs.hashes_commit }}
+      package_arch: all
+      publish_release: true
+      force_rebuild: false
