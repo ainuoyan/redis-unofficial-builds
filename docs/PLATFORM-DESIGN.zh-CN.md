@@ -5,7 +5,7 @@
 本文明确区分原子化稳定 Release、手工生成的实验性 Actions artifact 和仅设计后端。
 “已实现”表示代码、CI、语义校验、原生生命周期门禁和稳定发布策略均已存在。手工
 触发只读平台构建器时仍生成实验性 artifact；只有受保护的稳定发布调用方才能把这些
-Job 绑定到纯数字 Release。“仅设计”表示不宣称存在构建产物。
+Job 绑定到 `Redis-X.Y.Z` Release。“仅设计”表示不宣称存在构建产物。
 
 ## Redis 发布系列
 
@@ -114,7 +114,8 @@ CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官�
 平台工作流先固定并严格解析官方 `redis/redis-hashes` 快照，下载对应源码包，再把
 已校验源码传给各构建 Job。仓库权限只有 `contents: read`，没有 Tag、Release、下游
 工作流分发 API 或发布步骤。手工触发时设置 `PACKAGE_STATUS=experimental` 并记录
-`build-experimental.yml`；这些保留 7 天的 Actions artifact 不能进入纯数字 Release。
+`build-experimental.yml`；这些保留 7 天的 Actions artifact 不能进入
+`Redis-X.Y.Z` Release。
 
 由 `build-linux.yml` 调用时，相同 Job 接收调用方的精确版本、源码 SHA-256 和不可变
 哈希提交，设置 `PACKAGE_STATUS=release` 并记录 `build-linux.yml`。glibc 2.17 使用

@@ -47,6 +47,7 @@ SUPPORTED_BACKEND_CONTRACTS = {
     },
 }
 EXPECTED_PACKAGE_NAME_PREFIX = "Redis"
+RELEASE_TAG_PREFIX = "Redis-"
 REQUIRED_ENABLED_PLATFORM_IDS = {
     "linux-glibc2.28-x64",
     "linux-glibc2.28-arm64",
@@ -467,20 +468,23 @@ def index_releases(data: Any) -> dict[str, dict[str, Any]]:
             release.get("prerelease", False), bool
         ):
             raise PlanError(f"GitHub release {tag} has invalid publication state")
-        normalized = tag.removeprefix("redis-").removeprefix("v")
-        if VERSION_RE.fullmatch(normalized) and tag != normalized:
-            raise PlanError(
-                f"Noncanonical stable Redis release tag {tag}; expected {normalized}"
-            )
-        if not VERSION_RE.fullmatch(tag):
+        if not tag.startswith(RELEASE_TAG_PREFIX):
             continue
-        parsed_tag = tuple(int(part) for part in VERSION_RE.fullmatch(tag).groups())
-        canonical_tag = version_text(parsed_tag)
+        normalized = tag.removeprefix(RELEASE_TAG_PREFIX)
+        match = VERSION_RE.fullmatch(normalized)
+        if match is None:
+            raise PlanError(
+                f"Noncanonical stable Redis release tag {tag}; "
+                f"expected {RELEASE_TAG_PREFIX}X.Y.Z"
+            )
+        parsed_tag = tuple(int(part) for part in match.groups())
+        canonical_version = version_text(parsed_tag)
+        canonical_tag = f"{RELEASE_TAG_PREFIX}{canonical_version}"
         if tag != canonical_tag:
             raise PlanError(
                 f"Noncanonical stable Redis release tag {tag}; expected {canonical_tag}"
             )
-        normalized = tag
+        normalized = canonical_version
         if normalized in indexed:
             raise PlanError(f"GitHub inventory contains duplicate release tag {tag}")
         assets = release.get("assets", [])

@@ -4,8 +4,8 @@ This document records how the implemented MSYS2 x64 backend uses reports from
 [`redis-windows/redis-windows`](https://github.com/redis-windows/redis-windows).
 The full-platform publisher includes this backend only after its native release
 gate passes. Manual workflow artifacts remain seven-day experimental artifacts
-and cannot enter a numeric Release. A stable package is still an unofficial,
-tested package contract rather than Redis Ltd. production support. The table
+and cannot enter a `Redis-X.Y.Z` Release. A stable package is still an
+unofficial, tested package contract rather than Redis Ltd. production support. The table
 prevents a packaging change or a narrower regression from being presented as
 proof that every upstream or compatibility-runtime defect is fixed.
 
