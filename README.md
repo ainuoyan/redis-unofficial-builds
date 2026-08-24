@@ -77,11 +77,12 @@ publisher; only that caller-bound mode emits `PACKAGE_STATUS=release` packages.
 - Windows: one x64 MSYS2 `.zip` package with a dedicated SCM wrapper and
   PowerShell lifecycle scripts.
 
-The reusable workflow itself has `contents: read` and cannot create a tag or
-Release. Stable publication additionally requires all nine package pairs,
-unified metadata, attestations, protected-default-branch identity, the
-`release` Environment, draft readback, and post-publication readback. Manual
-artifacts remain experimental and are never accepted by the numeric publisher.
+Build and acceptance jobs use `contents: read`; only the separate release job
+requests `contents: write` together with the attestation permissions. It still
+requires all nine package pairs, unified metadata, attestations,
+protected-default-branch identity, the `release` Environment, draft readback,
+and post-publication readback before creating a Release. Manual artifacts
+remain experimental and are never accepted by the numeric publisher.
 
 Acceptance covers real binary architecture/runtime checks; glibc symbol
 ceilings; Redis build tests and protocol smoke tests; install/update/uninstall
@@ -473,9 +474,12 @@ archives. ARM64 kernel warnings such as `ARM64-COW-BUG` are not suppressed.
 
 ## Release automation and immutability
 
-The [full-platform workflow](.github/workflows/build-linux.yml) has only manual and
-`workflow_call` entry points; it has no push or schedule trigger. Publication
-is disabled by default.
+The [full-platform workflow](.github/workflows/build-linux.yml) has manual and
+`workflow_call` entry points; the controller owns the schedule. Scheduled
+controller runs automatically call one full-platform build per eligible
+version. Manual controller runs remain plan-only unless `run_builds=true` is
+selected, and direct manual full-platform runs keep publication disabled by
+default.
 
 The current publisher creates only a brand-new numeric `X.Y.Z` Release and
 tag. It:
@@ -508,13 +512,15 @@ configure a branch protection rule or ruleset for the default branch, set
 required reviewers plus deployment-branch restrictions on the `release`
 Environment, and enable repository-level Immutable Releases.
 
-The [plan workflow](.github/workflows/resolve-versions.yml) runs daily, on
-relevant changes to `main`, or manually. It validates configuration, resolves
-`redis/redis-hashes` `master` to an immutable 40-character commit, downloads
-the hash index at that commit, and records the commit in its output. It
-produces plans only; it cannot dispatch builds or publish Releases. New Redis
-`X.Y` series require reviewed configuration enrollment. See the
-[release controller guide](docs/RELEASE-CONTROLLER.md).
+The [release controller workflow](.github/workflows/resolve-versions.yml) runs
+daily, on relevant changes to `main`, or manually. It validates configuration,
+resolves `redis/redis-hashes` `master` to an immutable 40-character commit,
+downloads the hash index at that commit, and records the commit in its output.
+Scheduled runs and manual runs with `run_builds=true` pass each eligible
+version to the full-platform workflow with that exact snapshot; blocked rows
+remain excluded without suppressing other series. New Redis `X.Y` series
+require reviewed configuration enrollment. See the [release controller
+guide](docs/RELEASE-CONTROLLER.md).
 
 ## Local Linux build
 

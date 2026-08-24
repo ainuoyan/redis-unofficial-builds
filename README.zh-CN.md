@@ -63,10 +63,10 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 - macOS 15+：原生 x64、ARM64 `.tar.gz`，包含 launchd 生命周期脚本；
 - Windows：一个 x64 MSYS2 `.zip`，包含专用 SCM 包装器和 PowerShell 生命周期脚本。
 
-可复用工作流自身只有 `contents: read`，不能创建 Tag 或 Release。稳定发布还必须完成
-9 组包与校验文件的精确集合、统一元数据、证明、受保护默认分支身份、`release`
-Environment、草稿回读和发布后回读。手工 artifact 始终是实验性产物，纯数字发布器
-不会接受它们。
+构建和验收 Job 使用 `contents: read`；只有独立的发布 Job 请求
+`contents: write` 及证明相关权限。它仍必须完成 9 组包与校验文件的精确集合、统一
+元数据、证明、受保护默认分支身份、`release` Environment、草稿回读和发布后回读，
+才会创建 Release。手工 artifact 始终是实验性产物，纯数字发布器不会接受它们。
 
 验收覆盖真实二进制架构与运行时、glibc 符号上限、Redis 构建测试与协议冒烟、
 安装/更新/卸载幂等性、持久化数据恢复、OpenRC/launchd/Windows 故障注入更新回滚、
@@ -398,8 +398,10 @@ Rocky 软件源依赖在构建时解析，因此会记录编译器/运行库信�
 
 ## 发布自动化与不可变策略
 
-[全平台工作流](.github/workflows/build-linux.yml)只有手工和 `workflow_call`
-入口，没有 push 或 schedule 触发器；发布默认关闭。
+[全平台工作流](.github/workflows/build-linux.yml)具有手工和 `workflow_call`
+入口，定时触发由控制器负责。定时控制器会对每个可发布版本自动调用一次全平台构建。
+手工控制器默认只生成计划，只有设置 `run_builds=true` 才执行；直接手工运行全平台
+工作流仍默认关闭发布。
 
 当前发布器只创建全新的纯数字 `X.Y.Z` Release 和 Tag：
 
@@ -424,11 +426,12 @@ Release。生产发布前**必须启用仓库级 Immutable Releases**，并把 R
 为 `release` Environment 配置必需审核人和部署分支限制，并启用仓库级
 Immutable Releases。
 
-[计划工作流](.github/workflows/resolve-versions.yml)每日、相关控制器变更进入 `main`
-或手工触发时运行。它先校验配置，把 `redis/redis-hashes` 的 `master` 解析为不可变
-40 位提交，再从该提交下载哈希索引并把提交写入输出。它只生成计划，不能触发构建或
-发布 Release。新的 Redis `X.Y` 系列必须经配置审查后登记。详见
-[发布控制器说明](docs/RELEASE-CONTROLLER.md)。
+[发布控制器工作流](.github/workflows/resolve-versions.yml)每日、相关控制器变更进入
+`main` 或手工触发时运行。它先校验配置，把 `redis/redis-hashes` 的 `master` 解析为
+不可变 40 位提交，再从该提交下载哈希索引并把提交写入输出。定时运行或设置
+`run_builds=true` 的手工运行，会把每个可发布版本连同该精确提交传给全平台工作流；
+阻塞行会被排除，不会抑制其他系列。新的 Redis `X.Y` 系列必须经配置审查后登记。
+详见[发布控制器说明](docs/RELEASE-CONTROLLER.md)。
 
 ## 本地构建 Linux 包
 

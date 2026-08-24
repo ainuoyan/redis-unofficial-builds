@@ -45,9 +45,9 @@ marks remain subject to the official
 | `windows-msys2` | x64 | Windows Server 2022 runner and MSYS2 | Windows SCM | **Implemented**; primary Windows backend |
 
 All nine rows are controller-enabled and bind their stable package identity to
-`build-linux.yml`. The publisher calls the read-only platform workflow for the
-additional native jobs, but that implementation detail does not change the
-stable workflow identity recorded in package metadata. All Linux archives use
+`build-linux.yml`. The full-platform workflow calls the read-only platform
+workflow for the additional native jobs, but that implementation detail does
+not change the stable workflow identity recorded in package metadata. All Linux archives use
 `.tar.gz` rather than RPM, DEB, Snap, or APK and use the fixed prefix
 `/usr/local/redis`. Windows uses `.zip` and the fixed prefix
 `C:\Program Files\Redis-Unofficial`.
@@ -429,10 +429,13 @@ acceptance are not enabled or claimed. Release builds use optimization rather
 than `-O0` and do not promise Linux-equivalent behavior through a POSIX layer. See
 [Windows issue coverage](WINDOWS-ISSUE-COVERAGE.md).
 
-## Version resolution and build separation
+## Version resolution and build orchestration
 
-The [release controller](RELEASE-CONTROLLER.md) is permanently constrained by
-the checked-in `controller_mode=plan_only` setting:
+The [release controller](RELEASE-CONTROLLER.md) uses the checked-in
+`controller_mode=auto_release` policy. Scheduled runs automatically pass each
+eligible tracked version to the protected full-platform workflow. Manual runs
+remain plan-only unless `run_builds=true` is selected; new series candidates
+still require reviewed configuration enrollment:
 
 ```mermaid
 flowchart TD
@@ -440,12 +443,16 @@ flowchart TD
     B --> C["Resolve GA versions"]
     C --> D["Inspect Release names"]
     D --> E["Write plan artifacts"]
+    E --> F["Call full-platform workflow"]
+    F --> G["Protected Release environment"]
 ```
 
-It does not download Redis source, execute package code, call a build
-workflow, create a tag, or publish a Release. Release-name inventory is only a
-planning signal; content and attestations are validated by the publish-capable
-full-platform workflow.
+The controller does not build packages or create tags itself. It passes the
+source checksum and immutable `redis-hashes` commit to one `package_arch=all`
+workflow call per eligible version. The full-platform workflow validates
+content and attestations, then creates and publishes the Release only after
+its protected default-branch and `release` Environment gates pass. Blocked
+rows remain excluded without suppressing eligible rows from other series.
 
 ## Release gates
 

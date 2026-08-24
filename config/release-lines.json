@@ -15,7 +15,7 @@
     "new_series_floor": "8.10",
     "stop_after_eol": true,
     "retain_existing_releases": true,
-    "controller_mode": "plan_only"
+    "controller_mode": "auto_release"
   },
   "series": [
     {

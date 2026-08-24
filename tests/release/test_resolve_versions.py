@@ -39,7 +39,7 @@ class ResolveVersionsTests(unittest.TestCase):
             },
             "policy": {
                 "patch_updates": "auto_release",
-                "controller_mode": "plan_only",
+                "controller_mode": "auto_release",
                 "new_series": "candidate_then_pull_request",
                 "new_series_floor": "8.0",
                 "stop_after_eol": True,
@@ -626,6 +626,8 @@ class ResolveVersionsTests(unittest.TestCase):
             requested_series={"7.4"},
         )
         summary = resolver.render_summary(plan)
+        self.assertEqual(plan["controller_mode"], "auto_release")
+        self.assertIn("Automatic policy", summary)
         self.assertIn("Blocked rows: **1**", summary)
         self.assertIn("excluded from all build matrices", summary)
 
