@@ -291,21 +291,44 @@ Update:    .\scripts\Update-Redis.ps1   (run from the newly extracted package)
 Uninstall: & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1'
 Purge:     & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1' -Purge
 
-For password authentication, stop the service, configure Redis, store the exact
-password without a trailing newline in conf\service-password.txt, and add
-"PasswordFile": "conf\\service-password.txt" to RedisService.json. Add the
-matching "Username" only when using a named ACL user. BindAddress and Port in
-RedisService.json must match redis.conf. The wrapper passes the password through
-REDISCLI_AUTH, performs authenticated readiness and shutdown, and never places
-the password on a command line. Update preserves RedisService.json.
+Edit only C:\Program Files\Redis-Unofficial\conf\redis.conf, then run:
+Restart-Service -Name RedisUnofficial
+
+The wrapper reads bind, port and requirepass directly from redis.conf. No
+RedisService.json or separate password file is needed. A local non-loopback
+bind address and a nondefault port are supported. Passwords containing spaces
+must be quoted using Redis configuration syntax. Save as UTF-8 without BOM.
+Readiness and graceful shutdown use REDISCLI_AUTH, not a password argument.
+Stopping uses the settings captured at startup; restarting reads the edited
+configuration. Runtime CONFIG SET/ACL changes are not tracked by the wrapper.
+
+Use daemonize no, supervised no and a nonzero plain TCP port. Inline user ACLs,
+aclfile, TLS and renamed PING/AUTH/SHUTDOWN commands are not supported by this
+service wrapper; existing ACL deployments must not upgrade without a separate
+access-control migration. Explicit include paths inside the installation
+directory are supported (no globs or symbolic links); relative includes follow
+Redis's working directory, including preceding dir directives. Graceful stop
+waits up to 60 seconds after the shutdown command before process-tree fallback.
+Update preserves conf/data, backs up legacy RedisService.json for rollback,
+and removes it from the active installation after the new wrapper self-test.
+Run Update-Redis.ps1 from the new package even if the Redis version is unchanged.
 
 主机前提：x64 Windows，以及以管理员身份运行的 Windows PowerShell 5.1 或
-更高版本。默认服务端点为 127.0.0.1:6379。启用密码认证时，先停止服务并配置
-Redis，再将不含末尾换行的精确密码写入 conf\service-password.txt，并在
-RedisService.json 中增加 "PasswordFile": "conf\\service-password.txt"；仅在
-使用具名 ACL 用户时增加匹配的 "Username"。RedisService.json 的 BindAddress
-与 Port 必须和 redis.conf 一致。包装器通过 REDISCLI_AUTH 完成认证就绪和优雅
-关闭，不把密码放入命令行；更新会保留 RedisService.json。""",
+更高版本。默认服务端点为 127.0.0.1:6379。只需修改
+C:\Program Files\Redis-Unofficial\conf\redis.conf，再执行
+Restart-Service -Name RedisUnofficial。包装器直接读取 bind、port、requirepass，
+支持本机非回环 IP 和自定义端口，不再需要 RedisService.json 或独立密码文件。
+带空格的密码按 Redis 语法加引号，配置保存为无 BOM 的 UTF-8。认证使用
+REDISCLI_AUTH，不把密码放入命令行。停止使用启动时的配置，重启读取新配置；
+不会跟踪运行时 CONFIG SET/ACL 修改。
+
+服务要求 daemonize no、supervised no、非零普通 TCP 端口；不支持内联 user ACL、
+aclfile、TLS 或重命名 PING/AUTH/SHUTDOWN。已有 ACL 部署需单独评估权限迁移，
+不能直接升级或简单删除 ACL 规则。支持安装目录内的明确 include 路径，不支持
+通配符或符号链接；相对路径按 Redis 当前工作目录解析，受前面的 dir 影响。
+发送关闭命令后最多等待 60 秒，再终止进程树。更新保留 conf/data，备份旧 JSON
+供失败回滚，并在新包装器自检成功后移除活动目录中的 JSON。即使 Redis 版本相同，
+也应从新包运行 Update-Redis.ps1 更新包装器。""",
     }[args.variant]
     if args.package_status == "release":
         title = "unofficial release package"

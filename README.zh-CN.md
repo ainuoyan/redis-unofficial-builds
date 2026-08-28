@@ -71,9 +71,20 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 验收覆盖真实二进制架构与运行时、glibc 符号上限、Redis 构建测试与协议冒烟、
 安装/更新/卸载幂等性、持久化数据恢复、OpenRC/launchd/Windows 故障注入更新回滚、
 原生 macOS 15 launchd，以及 Windows 端口冲突、非 ASCII 暂存路径、BGSAVE、
-有界负载、子进程异常恢复和密码文件认证的优雅关闭。glibc 2.17 生命周期门禁在固定
+有界负载、子进程异常恢复和基于 `redis.conf` 认证的优雅关闭。glibc 2.17 生命周期门禁在固定
 legacy 用户态中以无 systemd 模式运行；共享 systemd 脚本由两个 glibc 2.28 架构
 分别实测。这些检查定义的是本项目测试过的包契约，不代表 Redis Ltd. 提供厂商支持。
+
+### Windows 服务配置
+
+使用新版包装器时，只需修改
+`C:\Program Files\Redis-Unofficial\conf\redis.conf`，再在管理员 PowerShell 中执行
+`Restart-Service -Name RedisUnofficial`。包装器直接读取 `bind`、`port`、`requirepass`，
+不再需要 `RedisService.json` 或独立密码文件。需要从新包运行 `Update-Redis.ps1`
+更新包装器；已经下载的旧包不会自动改变。自动服务认证不支持内联 ACL 用户、
+`aclfile` 或 TLS，已有 ACL 部署升级前请阅读
+[Windows 配置与迁移限制](docs/PLATFORM-DESIGN.zh-CN.md#windows)。工作流已加入
+仅修改配置后重启的回归项；加入测试不代表已发布的旧包通过了该项验收。
 
 ## Release 与包内容
 

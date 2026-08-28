@@ -132,7 +132,7 @@ MSYS2 DLL 清单/notices、生命周期脚本和服务包装器。
 生命周期验收覆盖全新和重复安装、就绪、更新、已保存数据重载、普通卸载恢复、彻底
 卸载及平台特定失败边界。OpenRC、launchd 和 Windows 执行故障注入更新回滚。Windows
 还测试含空格/非 ASCII 的暂存路径、端口冲突安装回滚、BGSAVE、有界
-`redis-benchmark`、Sentinel 二进制身份、子进程异常退出后的 SCM 恢复，以及密码文件
+`redis-benchmark`、Sentinel 二进制身份、子进程异常退出后的 SCM 恢复，以及基于 `redis.conf`
 认证的就绪与优雅关闭。TLS 未构建也不宣称支持。glibc 2.17 门禁在固定 legacy 用户态
 使用 `--no-service`；相同 systemd 生命周期文件由两个 glibc 2.28 架构独立测试。
 
@@ -319,10 +319,30 @@ Windows 方案明确参考 Apache-2.0 许可的
 
 MSYS2 x64 是已实现 Windows 后端。服务包装器以前台模式运行 Redis，校验配置路径，
 把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
-关闭和进程树兜底，避免凭据进入参数/日志，记录诊断输出，并在固定安装前缀保存受
-保护状态；备份位于 `C:\ProgramData\Redis-Unofficial\Backups`。可选认证使用固定
-前缀内的受管密码文件；包装器只通过 `REDISCLI_AUTH` 传递密码，执行认证就绪和关闭，
-更新器保留 `RedisService.json`，具名 ACL 用户为可选项。
+关闭和进程树兜底，不把密码放入 CLI 参数，并在捕获的 Redis 输出中遮盖其原文，
+记录诊断输出，在固定安装前缀保存受保护状态；备份位于
+`C:\ProgramData\Redis-Unofficial\Backups`。
+
+包装器直接从 `conf\redis.conf` 读取 `bind`、`port`、`requirepass`，不需要 JSON
+配置或独立密码文件。修改该文件，保存为无 BOM 的 UTF-8 后，在管理员 PowerShell
+执行 `Restart-Service -Name RedisUnofficial`。支持本机数字 IPv4/IPv6 地址（含非回环
+地址）和自定义端口；通配监听使用回环地址进行服务控制。按 Redis 规则处理引号、
+转义和后面的配置覆盖前面的配置。支持安装目录内的明确 `include` 文件，不支持
+符号链接、重解析点或通配符；相对路径跟随 Redis 当前工作目录和前面的 `dir`，
+不是相对于被包含文件所在目录。解析限制为 16 层文件、64 次读取、总计 4 MiB，
+每行最多 65,536 字符。其他 Redis 参数由 Redis 自身校验。
+
+包装器通过 `REDISCLI_AUTH` 使用 `requirepass` 完成就绪与关闭认证。配置只在启动时
+读取：运行期间修改文件，停止仍使用当前进程的旧配置，下次启动才读取新配置。
+不会跟踪运行时 `CONFIG SET`/ACL 修改。服务要求 `daemonize no`、`supervised no`、
+非零普通 TCP 端口及未重命名的 `PING`/`AUTH`/`SHUTDOWN`。内联 `user` ACL、
+`aclfile`、TLS、Sentinel 模式会在启动前明确报错。ACL 哈希不能反推出客户端密码，
+已有 ACL 部署必须单独评估权限迁移，不应简单删除 ACL 规则；此行为替代了旧版
+可选具名用户/密码文件约定。发送关闭命令后最多等待 60 秒，再终止受管进程树。
+
+即使 Redis 版本相同，也应从新包运行 `Update-Redis.ps1`：包装器哈希变化会阻止
+同版本更新直接跳过。更新保留 `conf`、`data`，备份旧 `RedisService.json` 供回滚，
+并在新包装器自检通过后删除活动目录中的旧 JSON。已发布旧包在替换前仍使用旧包装器。
 
 Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲突安装回滚、全新和
 重复安装、同版本更新、PING、BGSAVE、有界负载、SCM 重启及子进程异常后的恢复与
@@ -331,6 +351,10 @@ Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲�
 宣称 TLS 或 AOF 专项验收。发布构建使用优化而非 `-O0`，不承诺 POSIX 兼容层具有
 Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
+
+门禁新增通过 include 配置非回环 IP、自定义端口和带引号密码，以及运行时修改端口/
+密码后无 JSON 优雅重启的回归。这些新增用例必须在 Windows 通过后才能发布新版包；
+本地解析测试不能替代 Windows SCM 验收。
 
 ## 版本解析与构建编排
 

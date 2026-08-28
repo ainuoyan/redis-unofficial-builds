@@ -503,6 +503,15 @@ class PortablePackageTests(unittest.TestCase):
                 ),
                 baseline,
             )
+            configuration = packaging_root / "packaging/windows/service/RedisService/RedisConfiguration.cs"
+            configuration.write_text(
+                configuration.read_text(encoding="utf-8") + "\n// Configuration change\n",
+                encoding="utf-8",
+            )
+            self.assertNotEqual(
+                portable_contract.packaging_patchset_sha256(packaging_root, "windows-msys2"),
+                baseline,
+            )
 
     def test_windows_patchset_files_are_checked_out_with_lf_endings(self) -> None:
         paths = sorted(
@@ -598,8 +607,9 @@ class PortablePackageTests(unittest.TestCase):
         source = WINDOWS_SERVICE_SOURCE.read_text(encoding="utf-8")
         self.assertIn("RedirectStandardOutput = true", source)
         self.assertIn("RedirectStandardError = true", source)
-        self.assertIn('LogRedisOutput("stdout", eventArgs.Data)', source)
-        self.assertIn('LogRedisOutput("stderr", eventArgs.Data)', source)
+        self.assertIn('LogRedisOutput("stdout", eventArgs.Data, settings.Password)', source)
+        self.assertIn('LogRedisOutput("stderr", eventArgs.Data, settings.Password)', source)
+        self.assertIn('line.Replace(password, "[redacted]", StringComparison.Ordinal)', source)
         self.assertIn("exited before readiness with code", source)
 
     def test_windows_service_uses_prefix_relative_msys_paths(self) -> None:
@@ -777,8 +787,13 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("redis-benchmark.exe", windows_job)
         self.assertIn("redis-sentinel.exe", windows_job)
         self.assertIn("Stop-Process -Id", windows_job)
-        self.assertIn("PasswordFile", windows_job)
-        self.assertIn("Authenticated Windows service settings failed self-test", windows_job)
+        self.assertNotIn("Add-Member -NotePropertyName PasswordFile", windows_job)
+        self.assertIn("Authenticated Windows redis.conf failed self-test", windows_job)
+        self.assertIn("$testPort = 16379", windows_job)
+        self.assertIn("$testPort = 16380", windows_job)
+        self.assertIn("Get-NetIPAddress -AddressFamily IPv4", windows_job)
+        self.assertIn("include ../conf/service-test.conf", windows_job)
+        self.assertIn("Configuration-only changes must allow graceful Windows service restart", windows_job)
         self.assertIn("Fault-injected Windows update unexpectedly succeeded", windows_job)
         self.assertIn("[DateTime]::UtcNow.AddSeconds(90)", windows_job)
         self.assertNotIn("foreach ($attempt in 1..60)", windows_job)
@@ -792,8 +807,11 @@ class PortablePackageTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("string? PasswordFile = null", service)
+        self.assertIn("RedisConfiguration.Load(PrefixPath())", service)
+        self.assertNotIn("RedisService.json", service)
+        self.assertNotIn("PasswordFile", service)
         self.assertIn('Environment["REDISCLI_AUTH"] = password', service)
+        self.assertIn('Environment.Remove("REDISCLI_AUTH")', service)
         self.assertNotIn('ArgumentList.Add(password)', service)
         self.assertIn('RunRedisCli(settings, "shutdown", out _)', service)
         self.assertIn("Path.IsPathFullyQualified(candidate)", service)
@@ -824,7 +842,13 @@ class PortablePackageTests(unittest.TestCase):
             install.index("Start-RedisServiceAndWait"),
             install.index("Set-RedisServiceRecovery"),
         )
-        self.assertIn("if (-not [IO.File]::Exists($settingsPath))", update)
+        self.assertIn("$sameWrapper -and", update)
+        self.assertIn("Get-FileHash -LiteralPath $candidateWrapper", update)
+        self.assertIn("Remove-Item -LiteralPath $legacySettings", update)
+        self.assertNotIn("Write-RedisServiceSettings", common)
+        self.assertNotIn("Write-RedisServiceSettings", install)
+        validation = (ROOT / ".github/workflows/validate.yml").read_text(encoding="utf-8")
+        self.assertIn("dotnet run --project tests/windows/RedisService.Tests.csproj", validation)
         self.assertNotIn("Experimental MSYS2", common)
 
     def test_musl_readiness_requires_a_stable_service(self) -> None:

@@ -57,9 +57,17 @@ Chinese text and installs to the fixed path
 fresh and repeated install, same-version update, PING, BGSAVE, a bounded
 1,000-request benchmark, SCM restart and unexpected-child recovery with key
 reload, ordinary-uninstall retention, update-based recovery, authenticated
-readiness and graceful stop through a managed password file, fault-injected
-update rollback, and purge. The updater preserves `RedisService.json`, and the
-wrapper passes the password only through `REDISCLI_AUTH`.
+readiness and graceful stop, fault-injected update rollback, and purge. The
+wrapper now reads `bind`, `port` and `requirepass` from `conf\redis.conf` and
+passes the password through `REDISCLI_AUTH`. No `RedisService.json` is needed;
+the updater backs up the legacy file for rollback and removes its active copy
+after wrapper self-test. A changed wrapper is updated even at the same Redis
+version. The added Windows regressions cover a non-loopback local address,
+nondefault ports, quoted passwords, explicit includes, and graceful restart
+after editing only config files while running. These new regressions still
+require a Windows gate run; parser tests do not prove SCM behavior. Inline ACLs,
+`aclfile`, TLS and include globs are explicitly unsupported by automatic service
+authentication. See [configuration and migration limits](PLATFORM-DESIGN.md#windows).
 
 The gate does not claim TLS or AOF-specific behavior, a managed Sentinel
 service, arbitrary installation prefixes, Windows client releases, native PE

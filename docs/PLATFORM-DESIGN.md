@@ -165,7 +165,7 @@ saved-data reload, ordinary-uninstall recovery, purge, and platform-specific
 failure boundaries. OpenRC, launchd, and Windows execute fault-injected update
 rollback. Windows additionally tests a non-ASCII/space staging path, port
 conflict and install rollback, BGSAVE, bounded `redis-benchmark`, Sentinel
-binary identity, unexpected child exit with SCM recovery, and password-file
+binary identity, unexpected child exit with SCM recovery, and `redis.conf`-
 authenticated readiness and graceful shutdown. TLS is not built and is not
 claimed. The glibc 2.17 gate runs on the pinned legacy user space in
 `--no-service` mode; the identical systemd lifecycle assets are independently
@@ -409,14 +409,42 @@ in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 MSYS2 x64 is the implemented Windows backend. The service wrapper keeps Redis
 in foreground mode, validates configuration paths, propagates startup/child-exit
-failure to the Service Control Manager, perform real readiness checks, use
-bounded graceful shutdown and process-tree fallback, exclude credentials from
-arguments/logs, record diagnostic output, and maintain protected installation
+failure to the Service Control Manager, performs real readiness checks, uses
+bounded graceful shutdown and process-tree fallback, keeps the password out of
+CLI arguments, redacts its literal value in captured Redis output, records
+diagnostic output, and maintains protected installation
 state under the fixed prefix. Backups use
-`C:\ProgramData\Redis-Unofficial\Backups`. Optional authentication uses a
-managed password file inside the fixed prefix; the wrapper supplies it only
-through `REDISCLI_AUTH`, performs authenticated readiness/shutdown, and the
-updater preserves `RedisService.json`. A named ACL user is optional.
+`C:\ProgramData\Redis-Unofficial\Backups`.
+
+The wrapper reads `conf\redis.conf` directly for `bind`, `port` and `requirepass`;
+no JSON settings or separate password file is needed. Edit that file, save as
+UTF-8 without BOM, and run `Restart-Service -Name RedisUnofficial` in elevated
+PowerShell. Numeric local IPv4/IPv6 addresses, including non-loopback addresses,
+and custom ports are supported. Wildcard binds use loopback for service control.
+Redis quoting/escapes and last-directive-wins ordering are respected. Explicit
+`include` files must stay inside the installation directory without symbolic
+links/reparse points or globs; relative paths follow Redis's working directory
+and preceding `dir` directives, not the including file's parent. Parsing is
+bounded to 16 nested files, 64 file reads, 4 MiB total and 65,536 characters per
+line. Other Redis settings remain Redis's responsibility.
+
+The wrapper supplies `requirepass` through `REDISCLI_AUTH` for readiness and
+shutdown. It captures settings once at startup: editing the file while running
+does not redirect shutdown; the next start reads the new settings. Runtime
+`CONFIG SET`/ACL changes are not tracked. The service requires `daemonize no`,
+`supervised no`, a nonzero plain TCP port and unrenamed `PING`/`AUTH`/`SHUTDOWN`.
+Inline `user` ACLs, `aclfile`, TLS and Sentinel mode fail with an explicit error
+before launch. ACL hashes cannot be converted back into a client password;
+existing ACL deployments need a separate access-control migration, not deletion
+of their ACL rules. This replaces the old optional named-user/password-file
+contract. Graceful stop waits up to 60 seconds after the shutdown command before
+terminating the managed process tree.
+
+Use `Update-Redis.ps1` from the new package even for the same Redis version: a
+changed wrapper hash prevents a no-op update. The updater preserves `conf` and
+`data`, backs up legacy `RedisService.json` for rollback, and removes the active
+copy after the new wrapper passes self-test. Previously published packages
+still contain their original wrapper until replaced.
 
 The Windows Server 2022 gate covers an extraction path containing spaces and
 non-ASCII text, port-conflict install rollback, fresh and repeated install,
@@ -428,6 +456,12 @@ validated, but no managed Sentinel service is published. TLS and AOF-specific
 acceptance are not enabled or claimed. Release builds use optimization rather
 than `-O0` and do not promise Linux-equivalent behavior through a POSIX layer. See
 [Windows issue coverage](WINDOWS-ISSUE-COVERAGE.md).
+
+The gate now also checks non-loopback IPs, nondefault ports and quoted passwords
+through an included config, plus editing the port/password while running and
+restarting gracefully without JSON. These regressions must pass on Windows
+before publishing a package with the updated wrapper; local parser tests are
+not Windows SCM acceptance.
 
 ## Version resolution and build orchestration
 

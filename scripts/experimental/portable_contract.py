@@ -43,6 +43,7 @@ UPSTREAM_TEST_FIX_PATHS = (
 
 WINDOWS_SERVICE_SOURCE_PATHS = (
     "packaging/windows/service/RedisService/Program.cs",
+    "packaging/windows/service/RedisService/RedisConfiguration.cs",
     "packaging/windows/service/RedisService/RedisService.csproj",
 )
 

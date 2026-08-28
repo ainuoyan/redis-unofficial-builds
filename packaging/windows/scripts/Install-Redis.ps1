@@ -35,7 +35,6 @@ try {
         Copy-Item -LiteralPath (Join-Path $packageRoot 'conf\sentinel.conf') `
             -Destination (Join-Path $script:RedisPrefix 'conf\sentinel.conf')
         Copy-RedisProgramFiles -PackageRoot $packageRoot
-        Write-RedisServiceSettings
         Set-RedisAccessControl
         & (Join-Path $script:RedisPrefix 'bin\RedisService.exe') --self-test
         if ($LASTEXITCODE -ne 0) { throw 'RedisService self-test failed.' }

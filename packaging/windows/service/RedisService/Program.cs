@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Text.Json;
 
 namespace RedisUnofficial.Service;
 
@@ -29,13 +29,14 @@ internal static class Program
     private static IntPtr _statusHandle;
     private static uint _checkpoint;
 
-    private sealed record Settings(
+    internal sealed record Settings(
         string ConfigPath,
         string BindAddress,
         int Port,
-        int ShutdownTimeoutSeconds,
-        string? Username = null,
-        string? PasswordFile = null);
+        string? Password)
+    {
+        internal const int ShutdownTimeoutSeconds = 60;
+    }
 
     private static int Main(string[] args)
     {
@@ -43,8 +44,7 @@ internal static class Program
         {
             try
             {
-                Settings settings = LoadSettings();
-                ResolveManagedPath(settings.ConfigPath, "configuration");
+                _ = RedisConfiguration.Load(PrefixPath());
                 Console.WriteLine("RedisService self-test passed.");
                 return 0;
             }
@@ -103,7 +103,10 @@ internal static class Program
 
     private static void RunService()
     {
-        Settings settings = LoadSettings();
+        RedisConfiguration config = RedisConfiguration.Load(PrefixPath());
+        // Capture credentials once. Editing redis.conf while running must not
+        // redirect shutdown to the next configuration's endpoint or password.
+        Settings settings = new(config.ConfigPath, SelectEndpoint(config), config.Port, config.Password);
         string configPath = ResolveManagedPath(settings.ConfigPath, "configuration");
         string prefix = PrefixPath();
         string serverPath = ResolveManagedPath(Path.Combine(prefix, "bin", "redis-server.exe"), "server");
@@ -124,8 +127,8 @@ internal static class Program
             },
             EnableRaisingEvents = true,
         };
-        process.OutputDataReceived += (_, eventArgs) => LogRedisOutput("stdout", eventArgs.Data);
-        process.ErrorDataReceived += (_, eventArgs) => LogRedisOutput("stderr", eventArgs.Data);
+        process.OutputDataReceived += (_, eventArgs) => LogRedisOutput("stdout", eventArgs.Data, settings.Password);
+        process.ErrorDataReceived += (_, eventArgs) => LogRedisOutput("stderr", eventArgs.Data, settings.Password);
         process.StartInfo.ArgumentList.Add(
             Path.GetRelativePath(prefix, configPath).Replace('\\', '/'));
         if (!process.Start())
@@ -135,56 +138,73 @@ internal static class Program
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        if (!WaitForRedis(settings, process, TimeSpan.FromSeconds(60)))
+        try
         {
-            if (process.HasExited)
+            if (!WaitForRedis(settings, process, TimeSpan.FromSeconds(60)))
             {
-                process.WaitForExit();
+                if (process.HasExited)
+                {
+                    process.WaitForExit();
+                    throw new InvalidOperationException(
+                        $"redis-server.exe exited before readiness with code {process.ExitCode}.");
+                }
+                // Never send SHUTDOWN to an endpoint that did not pass readiness.
                 throw new InvalidOperationException(
-                    $"redis-server.exe exited before readiness with code {process.ExitCode}.");
+                    $"Redis did not pass readiness at {settings.BindAddress}:{settings.Port} within 60 seconds. Check bind, port, requirepass and the Redis startup log.");
             }
-            StopChild(process, settings);
-            throw new InvalidOperationException("Redis did not pass readiness within 60 seconds.");
-        }
-        ReportStatus(
-            ServiceRunning,
-            ServiceAcceptStop | ServiceAcceptShutdown | ServiceAcceptPreshutdown);
+            ReportStatus(
+                ServiceRunning,
+                ServiceAcceptStop | ServiceAcceptShutdown | ServiceAcceptPreshutdown);
 
-        while (!StopRequested.Wait(500))
-        {
-            if (process.HasExited)
+            while (!StopRequested.Wait(500))
             {
-                throw new InvalidOperationException($"redis-server.exe exited with code {process.ExitCode}.");
+                if (process.HasExited)
+                {
+                    throw new InvalidOperationException($"redis-server.exe exited with code {process.ExitCode}.");
+                }
+            }
+
+            ReportStatus(ServiceStopPending, acceptedControls: 0, waitHint: Settings.ShutdownTimeoutSeconds * 1000);
+            StopChild(process, settings);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                Log("Terminating the managed Redis process after service failure.");
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(10_000);
             }
         }
-
-        ReportStatus(ServiceStopPending, acceptedControls: 0, waitHint: (uint)(settings.ShutdownTimeoutSeconds * 1000));
-        StopChild(process, settings);
     }
 
-    private static Settings LoadSettings()
+    internal static string SelectEndpoint(RedisConfiguration config)
     {
-        string path = Path.Combine(PrefixPath(), "RedisService.json");
-        if (!File.Exists(path))
+        foreach (RedisConfiguration.Binding binding in config.Bindings)
         {
-            throw new InvalidOperationException("RedisService.json is missing.");
+            TcpListener? probe = null;
+            try
+            {
+                probe = new(binding.Address, config.Port);
+                probe.Server.ExclusiveAddressUse = true;
+                // Fail before launching if another instance owns the endpoint.
+                // A specific bind IP must be local, not an arbitrary remote host.
+                probe.Start();
+                return binding.Address.ToString();
+            }
+            catch (SocketException exception) when (binding.Optional &&
+                exception.SocketErrorCode is SocketError.AddressNotAvailable or SocketError.AddressFamilyNotSupported)
+            {
+                continue;
+            }
+            catch (SocketException exception)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot use configured Redis endpoint {binding.Address}:{config.Port}: {exception.SocketErrorCode}. No Redis process was started.");
+            }
+            finally { probe?.Stop(); }
         }
-        Settings? settings = JsonSerializer.Deserialize<Settings>(
-            File.ReadAllText(path),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = false });
-        if (settings is null
-            || settings.BindAddress != "127.0.0.1"
-            || settings.Port is < 1 or > 65535
-            || settings.ShutdownTimeoutSeconds is < 5 or > 300
-            || (settings.Username is not null
-                && (settings.PasswordFile is null
-                    || settings.Username.Length is < 1 or > 256
-                    || settings.Username.IndexOfAny(['\0', '\r', '\n']) >= 0)))
-        {
-            throw new InvalidOperationException("RedisService.json violates the managed service contract.");
-        }
-        _ = LoadPassword(settings);
-        return settings;
+        throw new InvalidOperationException("No configured Redis bind address is available on this machine.");
     }
 
     private static bool WaitForRedis(Settings settings, Process process, TimeSpan timeout)
@@ -201,26 +221,6 @@ internal static class Program
             Thread.Sleep(500);
         }
         return false;
-    }
-
-    private static string? LoadPassword(Settings settings)
-    {
-        if (settings.PasswordFile is null)
-        {
-            return null;
-        }
-        string passwordPath = ResolveManagedPath(settings.PasswordFile, "password file");
-        FileInfo passwordFile = new(passwordPath);
-        if (!passwordFile.Exists || passwordFile.Length is < 1 or > 4096)
-        {
-            throw new InvalidOperationException("The managed Redis password file is missing or invalid.");
-        }
-        string password = File.ReadAllText(passwordPath, new UTF8Encoding(false, true));
-        if (password.Length is < 1 or > 1024 || password.IndexOfAny(['\0', '\r', '\n']) >= 0)
-        {
-            throw new InvalidOperationException("The managed Redis password file has invalid content.");
-        }
-        return password;
     }
 
     private static bool RunRedisCli(Settings settings, string command, out string output)
@@ -242,12 +242,9 @@ internal static class Program
             client.StartInfo.ArgumentList.Add(settings.BindAddress);
             client.StartInfo.ArgumentList.Add("-p");
             client.StartInfo.ArgumentList.Add(settings.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            if (settings.Username is not null)
-            {
-                client.StartInfo.ArgumentList.Add("--user");
-                client.StartInfo.ArgumentList.Add(settings.Username);
-            }
-            string? password = LoadPassword(settings);
+            // Do not inherit unrelated authentication from the wrapper environment.
+            client.StartInfo.Environment.Remove("REDISCLI_AUTH");
+            string? password = settings.Password;
             if (password is not null)
             {
                 client.StartInfo.Environment["REDISCLI_AUTH"] = password;
@@ -258,8 +255,8 @@ internal static class Program
                 output = string.Empty;
                 return false;
             }
-            string stdout = client.StandardOutput.ReadToEnd();
-            _ = client.StandardError.ReadToEnd();
+            Task<string> stdout = client.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = client.StandardError.ReadToEndAsync();
             if (!client.WaitForExit(10_000))
             {
                 client.Kill(entireProcessTree: true);
@@ -267,7 +264,12 @@ internal static class Program
                 output = string.Empty;
                 return false;
             }
-            output = stdout;
+            if (!Task.WaitAll([stdout, stderr], 10_000))
+            {
+                output = string.Empty;
+                return false;
+            }
+            output = stdout.Result;
             return client.ExitCode == 0;
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.SecurityException)
@@ -289,7 +291,7 @@ internal static class Program
             Log("Graceful shutdown command failed.");
         }
 
-        if (process.WaitForExit(settings.ShutdownTimeoutSeconds * 1000))
+        if (process.WaitForExit(Settings.ShutdownTimeoutSeconds * 1000))
         {
             return;
         }
@@ -341,11 +343,11 @@ internal static class Program
         }
     }
 
-    private static void LogRedisOutput(string stream, string? line)
+    private static void LogRedisOutput(string stream, string? line, string? password)
     {
         if (!string.IsNullOrEmpty(line))
         {
-            Log($"redis {stream}: {line}");
+            Log($"redis {stream}: {(string.IsNullOrEmpty(password) ? line : line.Replace(password, "[redacted]", StringComparison.Ordinal))}");
         }
     }
 

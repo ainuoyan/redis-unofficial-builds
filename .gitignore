@@ -9,3 +9,9 @@ __pycache__/
 /redis-hashes.txt
 /github-releases.json
 /release-plan/
+
+# Windows wrapper builds and cross-platform configuration tests
+/packaging/windows/service/RedisService/bin/
+/packaging/windows/service/RedisService/obj/
+/tests/windows/bin/
+/tests/windows/obj/

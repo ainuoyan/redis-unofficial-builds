@@ -16,7 +16,13 @@ try {
         throw 'Downgrades require a separate data-compatibility migration and are not supported by this updater.'
     }
     $service = Get-RedisService
+    $installedWrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
+    $candidateWrapper = Join-Path $packageRoot 'bin\RedisService.exe'
+    $sameWrapper = [IO.File]::Exists($installedWrapper) -and
+        ((Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash -ceq
+            (Get-FileHash -LiteralPath $candidateWrapper -Algorithm SHA256).Hash)
     if ($state.RedisVersion -ceq $info['REDIS_VERSION'] -and $null -ne $service -and
+        $sameWrapper -and
         [IO.File]::Exists((Join-Path $script:RedisPrefix 'bin\redis-server.exe'))) {
         $service.Dispose()
         Write-RedisInfo "Redis $($info['REDIS_VERSION']) is already installed; no changes were made."
@@ -44,11 +50,13 @@ try {
         Stop-RedisServiceIfRunning
         if ($null -ne (Get-RedisService)) { Remove-RedisService }
         Copy-RedisProgramFiles -PackageRoot $packageRoot
-        $settingsPath = Join-Path $script:RedisPrefix 'RedisService.json'
-        if (-not [IO.File]::Exists($settingsPath)) { Write-RedisServiceSettings }
         Set-RedisAccessControl
         & (Join-Path $script:RedisPrefix 'bin\RedisService.exe') --self-test
         if ($LASTEXITCODE -ne 0) { throw 'RedisService self-test failed.' }
+        # Legacy settings are backed up above for rollback, but the new wrapper
+        # reads conf\redis.conf exclusively. Never modify the user's conf/data.
+        $legacySettings = Join-Path $script:RedisPrefix 'RedisService.json'
+        if ([IO.File]::Exists($legacySettings)) { Remove-Item -LiteralPath $legacySettings }
         Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
         New-RedisService
         if ($wasRunning -or -not $serviceWasPresent) { Start-RedisServiceAndWait }

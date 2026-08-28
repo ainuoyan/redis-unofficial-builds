@@ -729,9 +729,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          dotnet run --project tests/windows/RedisService.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Windows service configuration tests failed.' }
           dotnet publish packaging/windows/service/RedisService/RedisService.csproj `
             --configuration Release --runtime win-x64 `
             --output service-publish
+          if ($LASTEXITCODE -ne 0) { throw 'Windows service wrapper publish failed.' }
           if (-not (Test-Path -LiteralPath service-publish/RedisService.exe -PathType Leaf)) {
             throw 'RedisService.exe was not produced.'
           }
@@ -777,12 +780,12 @@ jobs:
           $cli = Join-Path $prefix 'bin\redis-cli.exe'
 
           function Wait-RedisReady {
-            param([string]$Password = '')
+            param([string]$Password = '', [string]$Address = '127.0.0.1', [int]$Port = 6379)
             $deadline = [DateTime]::UtcNow.AddSeconds(90)
             do {
               if ($Password) { $env:REDISCLI_AUTH = $Password }
               try {
-                $response = & $cli -h 127.0.0.1 -p 6379 ping 2>$null
+                $response = & $cli -h $Address -p $Port ping 2>$null
                 if ($LASTEXITCODE -eq 0 -and ([string]$response).Trim() -ceq 'PONG') { return }
               } finally {
                 Remove-Item Env:REDISCLI_AUTH -ErrorAction SilentlyContinue
@@ -835,6 +838,10 @@ jobs:
             & (Join-Path $scripts 'Install-Redis.ps1')
             & (Join-Path $scripts 'Update-Redis.ps1')
             Wait-RedisReady
+
+            if (Test-Path -LiteralPath (Join-Path $prefix 'RedisService.json')) {
+              throw 'A fresh Windows installation must not create RedisService.json.'
+            }
 
             $response = & $cli -h 127.0.0.1 -p 6379 set redis-unofficial-acceptance-persistence persisted
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
@@ -891,28 +898,40 @@ jobs:
             & (Join-Path $scripts 'Update-Redis.ps1')
             Wait-RedisReady
 
-            $secret = 'redis-unofficial-ci-secret'
+            $secret = 'redis-unofficial-ci secret#1'
             Stop-RedisServiceBounded
             $configPath = Join-Path $prefix 'conf\redis.conf'
-            [IO.File]::AppendAllText($configPath, "`nrequirepass $secret`n", (New-Object Text.UTF8Encoding($false)))
-            $passwordPath = Join-Path $prefix 'conf\service-password.txt'
-            [IO.File]::WriteAllText($passwordPath, $secret, (New-Object Text.UTF8Encoding($false)))
-            $settingsPath = Join-Path $prefix 'RedisService.json'
-            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-            $settings | Add-Member -NotePropertyName PasswordFile -NotePropertyValue 'conf\service-password.txt'
-            [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+            $testAddress = Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred |
+              Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+              Select-Object -First 1 -ExpandProperty IPAddress
+            if (-not $testAddress) { throw 'No local non-loopback IPv4 address for configuration acceptance.' }
+            $testPort = 16379
+            $runtimeConfig = Join-Path $prefix 'conf\service-test.conf'
+            [IO.File]::WriteAllText($runtimeConfig,
+              "bind $testAddress`nport $testPort`nrequirepass `"$secret`"`n", (New-Object Text.UTF8Encoding($false)))
+            # The installed config ends with dir data; Redis resolves includes from there.
+            [IO.File]::AppendAllText($configPath, "`ninclude ../conf/service-test.conf`n", (New-Object Text.UTF8Encoding($false)))
             & (Join-Path $prefix 'bin\RedisService.exe') --self-test
-            if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows service settings failed self-test.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows redis.conf failed self-test.' }
             Start-RedisServiceBounded
-            Wait-RedisReady -Password $secret
+            Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+
+            # Edit only redis.conf's include while running. Shutdown must still use
+            # the old in-memory endpoint/password; the next start reads the new ones.
+            $testPort = 16380
+            $secret = 'redis-unofficial-ci replacement#2'
+            [IO.File]::WriteAllText($runtimeConfig,
+              "bind $testAddress`nport $testPort`nrequirepass `"$secret`"`n", (New-Object Text.UTF8Encoding($false)))
             Stop-RedisServiceBounded
             Start-RedisServiceBounded
-            Wait-RedisReady -Password $secret
+            Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+            $wrapperLog = Join-Path $prefix 'log\service-wrapper.log'
+            if (Select-String -LiteralPath $wrapperLog -Pattern 'Graceful shutdown command failed|terminating its process tree' -Quiet) {
+              throw 'Configuration-only changes must allow graceful Windows service restart.'
+            }
 
             $statePath = Join-Path $prefix '.redis-package-state.json'
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-            $state.RedisVersion = '0.0.0'
-            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+            $stateBefore = [IO.File]::ReadAllText($statePath)
             $installedWrapper = Join-Path $prefix 'bin\RedisService.exe'
             $wrapperDigest = (Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash
             $candidateWrapper = Join-Path $stage 'redis\bin\RedisService.exe'
@@ -931,10 +950,10 @@ jobs:
             if ((Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash -cne $wrapperDigest) {
               throw 'Windows update rollback did not restore the service wrapper.'
             }
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-            $state.RedisVersion = $env:REDIS_VERSION
-            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
-            Wait-RedisReady -Password $secret
+            if ([IO.File]::ReadAllText($statePath) -cne $stateBefore) {
+              throw 'Same-version wrapper update rollback did not preserve installation state.'
+            }
+            Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
           } catch {
             Write-Host 'Windows lifecycle test failed; collecting diagnostics before cleanup.'
             & sc.exe queryex RedisUnofficial

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <StartupObject>WindowsServiceTests</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../packaging/windows/service/RedisService/Program.cs" Link="ServiceProgram.cs" />
+    <Compile Include="../../packaging/windows/service/RedisService/RedisConfiguration.cs" Link="RedisConfiguration.cs" />
+  </ItemGroup>
+</Project>

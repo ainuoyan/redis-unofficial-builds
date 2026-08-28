@@ -89,10 +89,24 @@ ceilings; Redis build tests and protocol smoke tests; install/update/uninstall
 idempotency; persisted-data recovery; injected update rollback on OpenRC,
 launchd, and Windows; native macOS 15 launchd; and Windows port-conflict,
 non-ASCII staging path, BGSAVE, bounded load, child-process recovery, and
-password-file-authenticated graceful shutdown. The glibc 2.17 lifecycle gate
+`redis.conf`-authenticated graceful shutdown. The glibc 2.17 lifecycle gate
 runs in the pinned legacy user space without systemd; the shared systemd
 scripts are separately exercised by both glibc 2.28 architectures. These
 checks define the tested package contract, not vendor support from Redis Ltd.
+
+### Windows service configuration
+
+With the updated wrapper, edit only
+`C:\Program Files\Redis-Unofficial\conf\redis.conf`, then run
+`Restart-Service -Name RedisUnofficial` in elevated PowerShell. The wrapper
+reads `bind`, `port` and `requirepass` directly; no `RedisService.json` or
+separate password file is needed. Install the updated wrapper using the new
+package's `Update-Redis.ps1`; previously downloaded packages do not change.
+Inline ACL users, `aclfile` and TLS are not supported by automatic service
+authentication. See [Windows configuration and migration limits](docs/PLATFORM-DESIGN.md#windows)
+before upgrading an existing ACL deployment. The new configuration-only restart
+regression is included in the Windows gate; adding the test does not establish
+that an already published package passes it.
 
 ## Release and package contents
 

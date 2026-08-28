@@ -236,17 +236,6 @@ function Copy-RedisProgramFiles {
     }
 }
 
-function Write-RedisServiceSettings {
-    $settings = [ordered]@{
-        ConfigPath = (Join-Path $script:RedisPrefix 'conf\redis.conf')
-        BindAddress = '127.0.0.1'
-        Port = 6379
-        ShutdownTimeoutSeconds = 60
-    }
-    $path = Join-Path $script:RedisPrefix 'RedisService.json'
-    [IO.File]::WriteAllText($path, ($settings | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
-}
-
 function Set-RedisAccessControl {
     & icacls.exe $script:RedisPrefix /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the Redis installation prefix.' }
