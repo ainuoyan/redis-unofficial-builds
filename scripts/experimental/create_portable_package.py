@@ -262,7 +262,7 @@ def write_metadata(
 def package_readme(args: argparse.Namespace, backend: dict[str, object]) -> str:
     lifecycle = {
         "linux-musl1.2": """Host prerequisites: bash, OpenRC, getent, util-linux (flock, findmnt,
-setpriv), tar, and standard POSIX account/file utilities. The default service
+setpriv), procps (pgrep), tar, and standard POSIX account/file utilities. The default service
 listens only on /usr/local/redis/data/redis.sock.
 
 Install:   sudo ./scripts/install.sh
@@ -270,7 +270,7 @@ Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
-主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、tar
+主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、procps（pgrep）、tar
 及标准 POSIX 账号/文件工具。默认服务只监听
 /usr/local/redis/data/redis.sock。""",
         "macos15": """Host prerequisites: macOS 15 or newer and an Administrator account. The
@@ -330,6 +330,34 @@ aclfile、TLS 或重命名 PING/AUTH/SHUTDOWN。已有 ACL 部署需单独评估
 供失败回滚，并在新包装器自检成功后移除活动目录中的 JSON。即使 Redis 版本相同，
 也应从新包运行 Update-Redis.ps1 更新包装器。""",
     }[args.variant]
+    if args.variant in {"linux-musl1.2", "macos15"}:
+        lifecycle += """
+
+Same-version updates refresh programs/scripts and preserve conf/data. Stop errors
+or remaining service-account processes block replacement/deletion. Readiness
+accepts PONG/NOAUTH/NOPERM over the private Unix socket with bounded CLI probes.
+Keep that socket enabled when adding TCP/authentication. For a changed socket path:
+sudo env REDIS_READY_SOCKET=/absolute/path/to/redis.sock ./scripts/update.sh
+
+同版本更新也刷新程序与脚本，保留配置和数据。停服失败或服务账户下仍有进程时，
+不会继续替换或删除。就绪检查通过私有 socket 接受 PONG/NOAUTH/NOPERM，CLI 探测
+有超时限制。开启 TCP/认证时保留控制 socket；更改其路径后按上述命令指定探测路径。
+"""
+    else:
+        lifecycle += """
+
+New services use LocalService. Update migrates legacy LocalSystem installations
+without deleting the service; rollback restores the old account. Custom accounts
+require a separate migration review. Recovery actions are applied on creation,
+update and rollback. All same-version managed files are refreshed; conf/data stay.
+Windows currently uses -O0 and does not run the complete upstream Redis test suite.
+Protocol smoke and native service tests cover the declared package contract.
+
+新服务使用 LocalService；更新旧 LocalSystem 安装时保留服务注册并迁移账户，
+回滚恢复原账户。自定义账户需单独评估迁移。创建、更新及回滚都设置故障恢复。
+同版本也刷新全部受管文件，保留配置和数据。Windows 当前使用 -O0，不运行完整
+上游 Redis 测试套件，已声明包契约由协议冒烟与原生服务测试覆盖。
+"""
     if args.package_status == "release":
         title = "unofficial release package"
         title_zh = "非官方正式发布安装包"

@@ -444,7 +444,7 @@ jobs:
             --env REDIS_VERSION \
             --volume "$archive:/tmp/redis-package.tar.gz:ro" \
             "$image" /bin/bash -euo pipefail -c '
-              apk add --no-cache bash coreutils findutils musl-utils openrc util-linux
+              apk add --no-cache bash coreutils findutils musl-utils openrc procps util-linux
               install -d -o root -g root -m 0755 /run/openrc
               touch /run/openrc/softlevel
               stage=/root/redis-unofficial-lifecycle
@@ -769,7 +769,9 @@ jobs:
           }
       - name: Test configuration generation with Windows PowerShell 5.1
         shell: powershell
-        run: ./tests/windows/Test-ManagedRedisConfig.ps1
+        run: |
+          ./tests/windows/Test-ManagedRedisConfig.ps1
+          ./tests/windows/Test-ServicePolicy.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
@@ -827,6 +829,27 @@ jobs:
             throw 'Windows Redis service did not pass readiness.'
           }
 
+          function Assert-RedisServicePolicy {
+            $serviceRecord = Get-CimInstance Win32_Service -Filter "Name='RedisUnofficial'"
+            if ($serviceRecord.StartName -ine 'NT AUTHORITY\LocalService') {
+              throw 'Redis service must run as LocalService, not LocalSystem.'
+            }
+            $processes = @(Get-CimInstance Win32_Process | Where-Object {
+              $_.ExecutablePath -and
+              [string]::Equals($_.ExecutablePath, (Join-Path $prefix 'bin\redis-server.exe'),
+                [StringComparison]::OrdinalIgnoreCase)
+            })
+            if ($processes.Count -ne 1) { throw 'Expected one managed Redis child.' }
+            $owner = Invoke-CimMethod -InputObject $processes[0] -MethodName GetOwnerSid
+            if ($owner.ReturnValue -ne 0 -or $owner.Sid -cne 'S-1-5-19') {
+              throw 'Redis child did not inherit the LocalService identity.'
+            }
+            $settings = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\RedisUnofficial'
+            if (-not $settings.FailureActions -or $settings.FailureActions.Length -eq 0) {
+              throw 'Redis service recovery actions were lost.'
+            }
+          }
+
           function Wait-RedisServiceStatus {
             param([ServiceProcess.ServiceControllerStatus]$Status)
             $service = Get-Service -Name RedisUnofficial -ErrorAction Stop
@@ -868,12 +891,31 @@ jobs:
           try {
             & (Join-Path $scripts 'Install-Redis.ps1')
             & (Join-Path $scripts 'Install-Redis.ps1')
+            $installedCommon = Join-Path $prefix 'scripts\Common-Redis.ps1'
+            [IO.File]::AppendAllText($installedCommon, "`n# previous packaging revision`n")
             & (Join-Path $scripts 'Update-Redis.ps1')
+            if ((Get-FileHash $installedCommon).Hash -cne
+                (Get-FileHash (Join-Path $scripts 'Common-Redis.ps1')).Hash) {
+              throw 'Same-version update did not refresh lifecycle scripts.'
+            }
             Wait-RedisReady
+            Assert-RedisServicePolicy
 
             if (Test-Path -LiteralPath (Join-Path $prefix 'RedisService.json')) {
               throw 'A fresh Windows installation must not create RedisService.json.'
             }
+
+            # Simulate the old service account, then verify an in-place migration.
+            Stop-RedisServiceBounded
+            $legacy = Get-CimInstance Win32_Service -Filter "Name='RedisUnofficial'"
+            $changed = Invoke-CimMethod -InputObject $legacy -MethodName Change -Arguments @{
+              StartName = 'LocalSystem'; StartPassword = ''
+            }
+            if ($changed.ReturnValue -ne 0) { throw 'Cannot prepare the legacy account fixture.' }
+            Start-RedisServiceBounded
+            & (Join-Path $scripts 'Update-Redis.ps1')
+            Wait-RedisReady
+            Assert-RedisServicePolicy
 
             $response = & $cli -h 127.0.0.1 -p 6379 set redis-unofficial-acceptance-persistence persisted
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'OK') {
@@ -900,6 +942,7 @@ jobs:
             Stop-RedisServiceBounded
             Start-RedisServiceBounded
             Wait-RedisReady
+            Assert-RedisServicePolicy
             $response = & $cli -h 127.0.0.1 -p 6379 get redis-unofficial-acceptance-persistence
             if ($LASTEXITCODE -ne 0 -or ([string]$response).Trim() -cne 'persisted') {
               throw 'Windows service did not preserve data across restart.'
@@ -913,6 +956,7 @@ jobs:
             if (@($server).Count -ne 1) { throw 'Unable to identify one managed redis-server process.' }
             Stop-Process -Id $server.ProcessId -Force
             Wait-RedisReady
+            Assert-RedisServicePolicy
 
             & (Join-Path $scripts 'Uninstall-Redis.ps1')
             if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {
@@ -929,6 +973,7 @@ jobs:
 
             & (Join-Path $scripts 'Update-Redis.ps1')
             Wait-RedisReady
+            Assert-RedisServicePolicy
 
             $configPath = Join-Path $prefix 'conf\redis.conf'
             foreach ($key in @('bind', 'protected-mode', 'port', 'daemonize', 'supervised', 'dir', 'logfile', 'pidfile')) {
@@ -953,6 +998,7 @@ jobs:
             Stop-RedisServiceBounded
             Start-RedisServiceBounded
             Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+            Assert-RedisServicePolicy
 
             $secret = 'redis-unofficial-ci secret#1'
             Stop-RedisServiceBounded
@@ -965,6 +1011,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows redis.conf failed self-test.' }
             Start-RedisServiceBounded
             Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+            Assert-RedisServicePolicy
 
             # Edit only redis.conf's include while running. Shutdown must still use
             # the old in-memory endpoint/password; the next start reads the new ones.
@@ -975,6 +1022,7 @@ jobs:
             Stop-RedisServiceBounded
             Start-RedisServiceBounded
             Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+            Assert-RedisServicePolicy
             $wrapperLog = Join-Path $prefix 'log\service-wrapper.log'
             if (Select-String -LiteralPath $wrapperLog -Pattern 'Graceful shutdown command failed|terminating its process tree' -Quiet) {
               throw 'Configuration-only changes must allow graceful Windows service restart.'
@@ -1004,6 +1052,7 @@ jobs:
               throw 'Same-version wrapper update rollback did not preserve installation state.'
             }
             Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+            Assert-RedisServicePolicy
           } catch {
             Write-Host 'Windows lifecycle test failed; collecting diagnostics before cleanup.'
             & sc.exe queryex RedisUnofficial

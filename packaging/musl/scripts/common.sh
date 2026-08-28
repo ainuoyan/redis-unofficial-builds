@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 export PATH
@@ -39,6 +39,41 @@ acquire_lock() {
   exec 9>"$REDIS_LOCK_FILE"
   chmod 0600 "$REDIS_LOCK_FILE"
   flock -n 9 || die "Another Redis lifecycle operation is running."
+}
+
+# flock is released by the shell when its descriptor closes on exit.
+release_lock() { :; }
+
+finish_lifecycle() {
+  local status="$1" callback="$2"
+  trap - EXIT INT TERM HUP
+  # Isolate rollback exits/errors so lock cleanup always runs in the parent.
+  set +e
+  (set -Ee; "$callback" "$status")
+  status=$?
+  release_lock || status=1
+  exit "$status"
+}
+
+assert_service_stopped() {
+  local status attempt
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    status=0
+    pgrep -u "$REDIS_USER" >/dev/null 2>&1 || status=$?
+    case "$status" in
+      1) return 0 ;;
+      0) sleep 1 ;;
+      *) die "Unable to inspect Redis account processes; no files were removed." ;;
+    esac
+  done
+  die "Redis account still has live processes; no files were removed."
+}
+
+stop_service() {
+  if [[ -e "$REDIS_INIT_SCRIPT" ]]; then
+    rc-service "$REDIS_SERVICE" stop || return 1
+  fi
+  assert_service_stopped
 }
 
 metadata_value() {
@@ -235,11 +270,31 @@ install_program_files() {
   fi
 }
 
+probe_ready() (
+  local root="$1" socket="${REDIS_READY_SOCKET:-$REDIS_SOCKET}" directory pid="" attempt
+  [[ "$socket" == /* && "$socket" != *$'\n'* && "$socket" != *$'\r'* ]] || return 1
+  directory="$(mktemp -d)" || return 1
+  trap 'if [[ -n "$pid" ]]; then kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi; rm -f -- "$directory/response"; rmdir -- "$directory"' EXIT
+  # Bound a stalled CLI independently of its connection/authentication behavior.
+  env -u REDISCLI_AUTH "$root/bin/redis-cli" -s "$socket" ping >"$directory/response" 2>/dev/null &
+  pid=$!
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" || true
+      pid=""
+      cat "$directory/response"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+)
+
 wait_ready() {
-  local root="$1" response consecutive_ready=0
-  for _ in $(seq 1 30); do
-    response="$("$root/bin/redis-cli" -s "$REDIS_SOCKET" ping 2>/dev/null || true)"
-    if [[ "$response" == PONG ]]; then
+  local root="$1" response consecutive_ready=0 attempt
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    response="$(probe_ready "$root" || true)"
+    if [[ "$response" == PONG || "$response" == 'NOAUTH '* || "$response" == 'NOPERM '* ]]; then
       consecutive_ready=$((consecutive_ready + 1))
       (( consecutive_ready >= 2 )) && return 0
     else

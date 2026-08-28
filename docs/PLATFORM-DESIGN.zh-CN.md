@@ -323,6 +323,11 @@ MSYS2 x64 是已实现 Windows 后端。服务包装器以前台模式运行 Red
 记录诊断输出，在固定安装前缀保存受保护状态；备份位于
 `C:\ProgramData\Redis-Unofficial\Backups`。
 
+新服务使用 LocalService，而非 LocalSystem。更新旧 LocalSystem 安装时保留服务注册，
+并迁移为 LocalService；回滚恢复原账户。遇到自定义服务账户会在替换前拒绝，
+不会默默覆盖。创建、更新和回滚都配置有界 SCM 故障恢复策略。原生验收必须检查
+服务账户和 Redis 子进程 SID；源码或模拟测试通过不代表该迁移已通过实机验收。
+
 包装器直接从 `conf\redis.conf` 读取 `bind`、`port`、`requirepass`，不需要 JSON
 配置或独立密码文件。修改该文件，保存为无 BOM 的 UTF-8 后，在管理员 PowerShell
 执行 `Restart-Service -Name RedisUnofficial`。支持本机数字 IPv4/IPv6 地址（含非回环
@@ -340,21 +345,34 @@ MSYS2 x64 是已实现 Windows 后端。服务包装器以前台模式运行 Red
 已有 ACL 部署必须单独评估权限迁移，不应简单删除 ACL 规则；此行为替代了旧版
 可选具名用户/密码文件约定。发送关闭命令后最多等待 60 秒，再终止受管进程树。
 
-即使 Redis 版本相同，也应从新包运行 `Update-Redis.ps1`：包装器哈希变化会阻止
-同版本更新直接跳过。更新保留 `conf`、`data`，备份旧 `RedisService.json` 供回滚，
+即使 Redis 版本相同，也应从新包运行 `Update-Redis.ps1`：每次刷新受管程序与脚本，
+不再仅凭版本或包装器哈希跳过。更新保留 `conf`、`data`，备份旧 `RedisService.json` 供回滚，
 并在新包装器自检通过后删除活动目录中的旧 JSON。已发布旧包在替换前仍使用旧包装器。
 
 Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲突安装回滚、全新和
 重复安装、同版本更新、PING、BGSAVE、有界负载、SCM 重启及子进程异常后的恢复与
 持久化键重载、普通卸载保留、基于更新的服务恢复、认证优雅停止/启动、故障注入更新
 回滚和彻底卸载。校验 Sentinel 二进制身份，但不发布受管 Sentinel 服务。未启用也不
-宣称 TLS 或 AOF 专项验收。发布构建使用优化而非 `-O0`，不承诺 POSIX 兼容层具有
-Linux 同等性能。详见
+宣称 TLS 或 AOF 专项验收。Windows 当前为兼容 MSYS2 使用 `-O0`，正式包也不例外；
+不运行完整上游 Redis 测试套件，改由协议冒烟和原生生命周期检查覆盖已声明功能。
+优化构建尚未验收，不承诺 POSIX 兼容层具有 Linux 同等性能。详见
 [Windows issue 覆盖表](WINDOWS-ISSUE-COVERAGE.md)。
 
 门禁新增通过 include 配置非回环 IP、自定义端口和带引号密码，以及运行时修改端口/
 密码后无 JSON 优雅重启的回归。这些新增用例必须在 Windows 通过后才能发布新版包；
 本地解析测试不能替代 Windows SCM 验收。
+
+### OpenRC 与 launchd 生命周期安全
+
+同版本更新也刷新程序文件，并保留 `conf`、`data`。异常或信号退出会进入回滚；
+替换或删除前必须停服成功，且专用服务账户下没有残留进程。回滚不完整时保留
+安装目录和备份并报错；排查期间不要强制删除目录。
+
+就绪检查使用私有 Unix socket，将 `PONG`、`NOAUTH` 或 `NOPERM` 识别为 Redis
+协议响应，但不代表凭据或 ACL 配置正确。每次 CLI 探测限制为约 3 秒。开启 TCP 或
+认证时应保留控制 socket；如更改其路径，从新包执行
+`sudo env REDIS_READY_SOCKET=/absolute/path/to/redis.sock ./scripts/update.sh`。
+该变量不会修改 Redis 配置。仅检查 socket 不能验证另一个 TCP/TLS 监听端点。
 
 ## 版本解析与构建编排
 
@@ -385,7 +403,8 @@ flowchart TD
 - 与不可变 `redis-hashes` 提交绑定的官方源码 SHA-256；
 - 适用上游许可证、贡献者文本、依赖 notices 和项目 notices；
 - 元数据中的编译器/运行库、打包提交及补丁集哈希；
-- 上游测试、架构/依赖/ABI 检查及冒烟测试；
+- 上游测试（仅 Linux/macOS；Windows 运行冒烟与原生生命周期检查）、
+  架构/依赖/ABI 检查及冒烟测试；
 - 全新安装、就绪、更新、回滚、持久化、接管、卸载、彻底卸载、账号复用、挂载及
   外部服务安全测试；
 - 英文和简体中文生命周期路径；

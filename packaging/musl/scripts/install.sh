@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=common.sh
@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 [[ "$#" -eq 0 ]] || die "Usage: install.sh"
 require_root
-require_commands addgroup adduser awk cat chmod chown env findmnt flock getent grep install ldd mktemp mv rc-service rc-update rm rmdir sed seq setpriv sleep stat uname
+require_commands pgrep addgroup adduser awk cat chmod chown env findmnt flock getent grep install ldd mktemp mv rc-service rc-update rm rmdir sed seq setpriv sleep stat uname
 acquire_lock
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
@@ -29,15 +29,18 @@ fi
 
 ensure_service_account
 rollback_install() {
-  local status="$?"
-  trap - ERR INT TERM HUP
-  rc-service "$REDIS_SERVICE" stop >/dev/null 2>&1 || true
+  local status="$1"
+  (( status != 0 )) || status=1
+  stop_service || die "Install rollback could not stop Redis; installation files were preserved."
   rc-update del "$REDIS_SERVICE" default >/dev/null 2>&1 || true
   rm -f -- "$REDIS_INIT_SCRIPT"
   [[ -d "$REDIS_PREFIX" && ! -L "$REDIS_PREFIX" ]] && rm -rf -- "$REDIS_PREFIX"
   exit "$status"
 }
-trap rollback_install ERR INT TERM HUP
+trap 'finish_lifecycle "$?" rollback_install' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 install -d -o root -g root -m 0755 "$REDIS_PREFIX"
 install -d -o root -g "$REDIS_GROUP" -m 0750 "$REDIS_PREFIX/conf"
 install -d -o "$REDIS_USER" -g "$REDIS_GROUP" -m 0750 "$REDIS_PREFIX/data" "$REDIS_PREFIX/log"
@@ -49,10 +52,8 @@ install_program_files "$package_root"
 install -o root -g root -m 0755 "$package_root/openrc/redis" "$REDIS_INIT_SCRIPT"
 write_state "$version" "$package_status"
 rc-update add "$REDIS_SERVICE" default
-if ! rc-service "$REDIS_SERVICE" start || ! wait_ready "$REDIS_PREFIX"; then
-  rc-service "$REDIS_SERVICE" stop >/dev/null 2>&1 || true
-  rc-update del "$REDIS_SERVICE" default >/dev/null 2>&1 || true
-  die "Redis did not pass its OpenRC readiness check; inspect $REDIS_PREFIX/log/redis.log."
-fi
-trap - ERR INT TERM HUP
+rc-service "$REDIS_SERVICE" start
+wait_ready "$REDIS_PREFIX" || die "Redis did not pass its OpenRC readiness check."
+trap release_lock EXIT
+trap - INT TERM HUP
 info "Installed Redis $version as the OpenRC service $REDIS_SERVICE."
