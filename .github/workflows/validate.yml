@@ -32,6 +32,10 @@ jobs:
       - name: Test Windows wrapper configuration and endpoint safety
         run: dotnet run --project tests/windows/RedisService.Tests.csproj --configuration Release
 
+      - name: Test Windows installation configuration generation
+        shell: pwsh
+        run: ./tests/windows/Test-ManagedRedisConfig.ps1
+
       - name: Validate JSON, Python, shell, and controller behavior
         shell: bash
         run: |

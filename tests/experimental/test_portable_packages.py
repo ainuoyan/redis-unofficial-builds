@@ -792,6 +792,12 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("$testPort = 16379", windows_job)
         self.assertIn("$testPort = 16380", windows_job)
         self.assertIn("Get-NetIPAddress -AddressFamily IPv4", windows_job)
+        self.assertIn("Installed config must have exactly one active $key directive", windows_job)
+        self.assertIn('$configLines[$portRecord.LineNumber - 1] = "port $testPort"', windows_job)
+        self.assertIn('$configLines[$bindRecord.LineNumber - 1] = "bind $testAddress"', windows_job)
+        self.assertIn("Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort", windows_job)
+        self.assertIn("Test configuration generation with Windows PowerShell 5.1", windows_job)
+        self.assertIn("./tests/windows/Test-ManagedRedisConfig.ps1", windows_job)
         self.assertIn("include ../conf/service-test.conf", windows_job)
         self.assertIn("Configuration-only changes must allow graceful Windows service restart", windows_job)
         self.assertIn("Fault-injected Windows update unexpectedly succeeded", windows_job)
@@ -849,6 +855,7 @@ class PortablePackageTests(unittest.TestCase):
         self.assertNotIn("Write-RedisServiceSettings", install)
         validation = (ROOT / ".github/workflows/validate.yml").read_text(encoding="utf-8")
         self.assertIn("dotnet run --project tests/windows/RedisService.Tests.csproj", validation)
+        self.assertIn("./tests/windows/Test-ManagedRedisConfig.ps1", validation)
         self.assertNotIn("Experimental MSYS2", common)
 
     def test_musl_readiness_requires_a_stable_service(self) -> None:
