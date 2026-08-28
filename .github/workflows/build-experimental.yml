@@ -499,6 +499,21 @@ jobs:
 
               "$package/scripts/install.sh"
               "$package/scripts/install.sh"
+              # Edit the original directives, never append test overrides.
+              for key in bind protected-mode port daemonize supervised dir logfile unixsocket unixsocketperm pidfile; do
+                assert_equal 1 "$(grep -Ec "^[[:space:]]*$key[[:space:]]" "$prefix/conf/redis.conf")" \
+                  "Installed config must have exactly one active $key directive"
+              done
+              sed -i -e "s/^port 0$/port 16379/" \
+                -e "s/^bind .*/bind 127.0.0.1/" "$prefix/conf/redis.conf"
+              rc-service "$service" restart
+              wait_ready
+              assert_equal PONG "$("$prefix/bin/redis-cli" -h 127.0.0.1 -p 16379 ping)" \
+                "Edited OpenRC TCP endpoint did not answer"
+              assert_equal 16379 "$("$prefix/bin/redis-cli" --raw -s "$socket" config get port | tail -n 1)" \
+                "Original port edit was overridden"
+              assert_equal 127.0.0.1 "$("$prefix/bin/redis-cli" --raw -s "$socket" config get bind | tail -n 1)" \
+                "Original bind edit was overridden"
               "$prefix/bin/redis-cli" -s "$socket" set redis-unofficial-acceptance-persistence persisted >/dev/null
               "$prefix/bin/redis-cli" -s "$socket" save >/dev/null
               rc-service "$service" restart
@@ -642,6 +657,20 @@ jobs:
 
           sudo "$package/scripts/install.sh"
           sudo "$package/scripts/install.sh"
+          # Edit the original directives, never append test overrides.
+          for key in bind protected-mode port daemonize supervised dir logfile unixsocket unixsocketperm pidfile; do
+            [[ "$(sudo grep -Ec "^[[:space:]]*$key[[:space:]]" "$prefix/conf/redis.conf")" == 1 ]] || {
+              echo "Installed config must have exactly one active $key directive." >&2
+              exit 1
+            }
+          done
+          sudo sed -i '' -e 's/^port 0$/port 16379/' \
+            -e 's/^bind .*/bind 127.0.0.1/' "$prefix/conf/redis.conf"
+          sudo launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial
+          wait_ready
+          [[ "$(sudo "$prefix/bin/redis-cli" -h 127.0.0.1 -p 16379 ping)" == PONG ]]
+          [[ "$(sudo "$prefix/bin/redis-cli" --raw -s "$socket" config get port | tail -n 1)" == 16379 ]]
+          [[ "$(sudo "$prefix/bin/redis-cli" --raw -s "$socket" config get bind | tail -n 1)" == 127.0.0.1 ]]
           sudo "$prefix/bin/redis-cli" -s "$socket" set redis-unofficial-acceptance-persistence persisted >/dev/null
           sudo "$prefix/bin/redis-cli" -s "$socket" save >/dev/null
           sudo launchctl kickstart -k system/io.github.ainuoyan.redis-unofficial
