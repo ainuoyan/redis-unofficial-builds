@@ -738,6 +738,9 @@ jobs:
           if (-not (Test-Path -LiteralPath service-publish/RedisService.exe -PathType Leaf)) {
             throw 'RedisService.exe was not produced.'
           }
+      - name: Test configuration generation with Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/windows/Test-ManagedRedisConfig.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
@@ -898,18 +901,36 @@ jobs:
             & (Join-Path $scripts 'Update-Redis.ps1')
             Wait-RedisReady
 
-            $secret = 'redis-unofficial-ci secret#1'
-            Stop-RedisServiceBounded
             $configPath = Join-Path $prefix 'conf\redis.conf'
+            foreach ($key in @('bind', 'protected-mode', 'port', 'daemonize', 'supervised', 'dir', 'logfile', 'pidfile')) {
+              $records = @(Select-String -LiteralPath $configPath -Pattern "^$key(?:\s|$)")
+              if ($records.Count -ne 1) { throw "Installed config must have exactly one active $key directive." }
+            }
             $testAddress = Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred |
               Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
               Select-Object -First 1 -ExpandProperty IPAddress
             if (-not $testAddress) { throw 'No local non-loopback IPv4 address for configuration acceptance.' }
             $testPort = 16379
+            # Reproduce editing the original settings, without appending overrides.
+            $configLines = [IO.File]::ReadAllLines($configPath)
+            $portRecord = Select-String -LiteralPath $configPath -Pattern '^port\s'
+            $bindRecord = Select-String -LiteralPath $configPath -Pattern '^bind\s'
+            $configLines[$portRecord.LineNumber - 1] = "port $testPort"
+            $configLines[$bindRecord.LineNumber - 1] = "bind $testAddress"
+            # Keep authentication enabled when testing a non-loopback endpoint.
+            $secret = 'redis-unofficial-ci direct-edit#0'
+            $configLines += "requirepass `"$secret`""
+            [IO.File]::WriteAllLines($configPath, $configLines, (New-Object Text.UTF8Encoding($false)))
+            Stop-RedisServiceBounded
+            Start-RedisServiceBounded
+            Wait-RedisReady -Password $secret -Address $testAddress -Port $testPort
+
+            $secret = 'redis-unofficial-ci secret#1'
+            Stop-RedisServiceBounded
             $runtimeConfig = Join-Path $prefix 'conf\service-test.conf'
             [IO.File]::WriteAllText($runtimeConfig,
               "bind $testAddress`nport $testPort`nrequirepass `"$secret`"`n", (New-Object Text.UTF8Encoding($false)))
-            # The installed config ends with dir data; Redis resolves includes from there.
+            # The installed config sets dir data; Redis resolves includes from there.
             [IO.File]::AppendAllText($configPath, "`ninclude ../conf/service-test.conf`n", (New-Object Text.UTF8Encoding($false)))
             & (Join-Path $prefix 'bin\RedisService.exe') --self-test
             if ($LASTEXITCODE -ne 0) { throw 'Authenticated Windows redis.conf failed self-test.' }

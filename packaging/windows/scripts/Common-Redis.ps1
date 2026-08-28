@@ -199,20 +199,57 @@ function Write-ManagedRedisConfig {
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][string]$Destination
     )
-    [IO.File]::Copy($Source, $Destination, $false)
-    $managed = @'
+    $defaults = [ordered]@{
+        bind = 'bind 127.0.0.1'
+        'protected-mode' = 'protected-mode yes'
+        port = 'port 6379'
+        daemonize = 'daemonize no'
+        supervised = 'supervised no'
+        dir = 'dir "data"'
+        logfile = 'logfile "../log/redis.log"'
+        pidfile = 'pidfile "../run/redis.pid"'
+    }
+    $seen = @{}
+    $output = New-Object 'Collections.Generic.List[string]'
+    $encoding = New-Object Text.UTF8Encoding($false, $true)
+    $options = [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+        [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    foreach ($line in [IO.File]::ReadAllLines($Source, $encoding)) {
+        # Match active directive names, including Redis's quoted-name syntax.
+        # Keep the first position so later edits cannot be silently overridden.
+        $match = [regex]::Match($line,
+            '^[ \t]*(?<quote>["'']?)(?<key>[a-z-]+)\k<quote>(?:[ \t]|$)', $options)
+        $key = $match.Groups['key'].Value.ToLowerInvariant()
+        if ($match.Success -and $defaults.Contains($key)) {
+            if (-not $seen.ContainsKey($key)) {
+                # Redis 6.2 opens logfile while parsing, before later dir records.
+                # Resolve ../log against data even when upstream lists logfile first.
+                if ($key -ceq 'logfile' -and -not $seen.ContainsKey('dir')) {
+                    $output.Add($defaults['dir'])
+                    $seen['dir'] = $true
+                }
+                $output.Add($defaults[$key])
+                $seen[$key] = $true
+            }
+        } else {
+            $output.Add($line)
+        }
+    }
+    foreach ($key in $defaults.Keys) {
+        if (-not $seen.ContainsKey($key)) { $output.Add($defaults[$key]) }
+    }
 
-# Managed Windows defaults. Later records override upstream defaults.
-bind 127.0.0.1
-protected-mode yes
-port 6379
-daemonize no
-supervised no
-dir "data"
-logfile "../log/redis.log"
-pidfile "../run/redis.pid"
-'@
-    [IO.File]::AppendAllText($Destination, $managed, (New-Object Text.UTF8Encoding($false)))
+    # This is only for a fresh install; never overwrite an existing config.
+    $stream = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew,
+        [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $writer = $null
+    try {
+        $writer = [IO.StreamWriter]::new($stream, $encoding)
+        foreach ($line in $output) { $writer.WriteLine($line) }
+    } finally {
+        if ($null -ne $writer) { $writer.Dispose() }
+        $stream.Dispose()
+    }
 }
 
 function Copy-RedisProgramFiles {
