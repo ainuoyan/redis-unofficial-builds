@@ -39,6 +39,12 @@ reported issues:
 These are code-reading conclusions, not assertions made by the referenced
 project.
 
+The current packages in this repository also use `-O0` for MSYS2 compatibility,
+including stable releases. An optimized build has not passed acceptance, so
+the performance investigation below remains open. Windows CI does not run the
+complete upstream Redis test suite; its protocol and native lifecycle checks
+must not be described as full upstream-suite coverage.
+
 ## Current release-gated coverage
 
 This repository contains an independently implemented, self-contained .NET

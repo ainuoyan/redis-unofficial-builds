@@ -41,11 +41,10 @@ try {
         Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
         New-RedisService
         Start-RedisServiceAndWait
-        Set-RedisServiceRecovery
         $installed = $true
     } finally {
         if (-not $installed) {
-            try { Remove-RedisService } catch { }
+            Remove-RedisService
             if ([IO.Directory]::Exists($script:RedisPrefix)) {
                 Assert-NoReparsePoint -Path $script:RedisPrefix
                 Remove-Item -LiteralPath $script:RedisPrefix -Recurse -Force

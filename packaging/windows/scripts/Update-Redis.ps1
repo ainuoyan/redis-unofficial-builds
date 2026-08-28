@@ -16,18 +16,9 @@ try {
         throw 'Downgrades require a separate data-compatibility migration and are not supported by this updater.'
     }
     $service = Get-RedisService
-    $installedWrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
-    $candidateWrapper = Join-Path $packageRoot 'bin\RedisService.exe'
-    $sameWrapper = [IO.File]::Exists($installedWrapper) -and
-        ((Get-FileHash -LiteralPath $installedWrapper -Algorithm SHA256).Hash -ceq
-            (Get-FileHash -LiteralPath $candidateWrapper -Algorithm SHA256).Hash)
-    if ($state.RedisVersion -ceq $info['REDIS_VERSION'] -and $null -ne $service -and
-        $sameWrapper -and
-        [IO.File]::Exists((Join-Path $script:RedisPrefix 'bin\redis-server.exe'))) {
-        $service.Dispose()
-        Write-RedisInfo "Redis $($info['REDIS_VERSION']) is already installed; no changes were made."
-        return
-    }
+    # Refresh all managed files even when the Redis version/wrapper are unchanged.
+    $oldAccount = $null
+    if ($null -ne $service) { $oldAccount = Get-RedisServiceAccount }
 
     $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
     $backup = Join-Path $script:RedisBackupRoot "$($state.RedisVersion)-$timestamp-$PID"
@@ -48,7 +39,6 @@ try {
     $updated = $false
     try {
         Stop-RedisServiceIfRunning
-        if ($null -ne (Get-RedisService)) { Remove-RedisService }
         Copy-RedisProgramFiles -PackageRoot $packageRoot
         Set-RedisAccessControl
         & (Join-Path $script:RedisPrefix 'bin\RedisService.exe') --self-test
@@ -58,13 +48,19 @@ try {
         $legacySettings = Join-Path $script:RedisPrefix 'RedisService.json'
         if ([IO.File]::Exists($legacySettings)) { Remove-Item -LiteralPath $legacySettings }
         Write-RedisState -Version $info['REDIS_VERSION'] -PackageStatus $info['PACKAGE_STATUS']
-        New-RedisService
+        if ($serviceWasPresent) {
+            Set-RedisServiceAccount -Account 'NT AUTHORITY\LocalService'
+            Set-RedisServiceRecovery
+        } else {
+            New-RedisService
+        }
         if ($wasRunning -or -not $serviceWasPresent) { Start-RedisServiceAndWait }
         $updated = $true
     } finally {
         if (-not $updated) {
-            try { Stop-RedisServiceIfRunning } catch { }
-            try { Remove-RedisService } catch { }
+            # Never replace files beneath a child that could not be stopped.
+            Stop-RedisServiceIfRunning
+            if (-not $serviceWasPresent) { Remove-RedisService }
             foreach ($name in @('bin', 'scripts', 'PACKAGE-INFO', 'BUILD-INFO', 'LICENSE.txt', 'README.txt',
                     'THIRD_PARTY_NOTICES.md', 'UPSTREAM-CONTRIBUTOR-LICENSE.txt',
                     'UPSTREAM-DEPENDENCY-NOTICES.txt', 'MSYS2-RUNTIME-NOTICES.txt',
@@ -76,8 +72,9 @@ try {
             }
             Set-RedisAccessControl
             if ($serviceWasPresent) {
-                New-RedisService
-                if ($wasRunning) { try { Start-RedisServiceAndWait } catch { } }
+                Set-RedisServiceAccount -Account $oldAccount
+                Set-RedisServiceRecovery
+                if ($wasRunning) { Start-RedisServiceAndWait }
             }
         }
     }

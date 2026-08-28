@@ -416,6 +416,13 @@ diagnostic output, and maintains protected installation
 state under the fixed prefix. Backups use
 `C:\ProgramData\Redis-Unofficial\Backups`.
 
+New services use LocalService, not LocalSystem. Updating a legacy LocalSystem
+installation migrates it to LocalService while retaining its service registration;
+rollback restores the previous account. Unexpected custom accounts are rejected
+before replacement, not silently overwritten. Service creation, update and rollback
+apply the bounded SCM recovery policy. Native acceptance must check both the service
+account and Redis child SID; source/mock tests alone do not certify this migration.
+
 The wrapper reads `conf\redis.conf` directly for `bind`, `port` and `requirepass`;
 no JSON settings or separate password file is needed. Edit that file, save as
 UTF-8 without BOM, and run `Restart-Service -Name RedisUnofficial` in elevated
@@ -440,8 +447,9 @@ of their ACL rules. This replaces the old optional named-user/password-file
 contract. Graceful stop waits up to 60 seconds after the shutdown command before
 terminating the managed process tree.
 
-Use `Update-Redis.ps1` from the new package even for the same Redis version: a
-changed wrapper hash prevents a no-op update. The updater preserves `conf` and
+Use `Update-Redis.ps1` from the new package even for the same Redis version:
+managed programs and scripts are refreshed, not skipped by version or wrapper hash.
+The updater preserves `conf` and
 `data`, backs up legacy `RedisService.json` for rollback, and removes the active
 copy after the new wrapper passes self-test. Previously published packages
 still contain their original wrapper until replaced.
@@ -453,8 +461,11 @@ unexpected-child recovery with persisted key reload, ordinary-uninstall
 retention, update-based service recovery, authenticated graceful stop/start,
 fault-injected update rollback, and purge. The Sentinel executable identity is
 validated, but no managed Sentinel service is published. TLS and AOF-specific
-acceptance are not enabled or claimed. Release builds use optimization rather
-than `-O0` and do not promise Linux-equivalent behavior through a POSIX layer. See
+acceptance are not enabled or claimed. Windows builds currently use `-O0` for
+MSYS2 compatibility, including release packages. The complete upstream Redis
+test suite is disabled on Windows; protocol smoke tests and native lifecycle
+checks run instead. Optimized Windows builds remain unvalidated, and no
+Linux-equivalent performance is promised. See
 [Windows issue coverage](WINDOWS-ISSUE-COVERAGE.md).
 
 The gate now also checks non-loopback IPs, nondefault ports and quoted passwords
@@ -462,6 +473,22 @@ through an included config, plus editing the port/password while running and
 restarting gracefully without JSON. These regressions must pass on Windows
 before publishing a package with the updated wrapper; local parser tests are
 not Windows SCM acceptance.
+
+### OpenRC and launchd lifecycle safety
+
+Updates refresh program files even for the same Redis version and preserve `conf`
+and `data`. Failure and signal exits trigger rollback; stopping must succeed and
+the dedicated service account must have no remaining processes before replacement
+or deletion. An incomplete rollback retains the installation/backup and reports an
+error. Do not force-delete the directory while investigating that error.
+
+Readiness uses the private Unix socket and accepts `PONG`, `NOAUTH` or `NOPERM` as
+Redis protocol responses; it is not a credential/ACL correctness test. Each CLI
+probe is bounded to approximately three seconds. Keep the control socket enabled
+when enabling TCP or authentication. If its path changes, use
+`sudo env REDIS_READY_SOCKET=/absolute/path/to/redis.sock ./scripts/update.sh` from
+the new package. This does not edit Redis configuration. A socket-only check cannot
+validate a different TCP/TLS listener.
 
 ## Version resolution and build orchestration
 
@@ -496,7 +523,8 @@ An implemented stable row requires:
 - applicable upstream license, contributor text, dependency notices, and
   project notices;
 - compiler/runtime, packaging revision, and patch-set hashes in metadata;
-- upstream tests plus architecture, dependency, ABI, and smoke checks;
+- upstream tests (Linux/macOS only; Windows runs smoke and native lifecycle
+  checks), plus architecture, dependency, ABI, and smoke checks;
 - fresh install, readiness, update, rollback, persistence, adoption,
   uninstall, purge, account reuse, mount, and foreign-service safety tests;
 - English and Simplified Chinese lifecycle paths;

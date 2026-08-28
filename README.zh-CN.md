@@ -68,6 +68,9 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 元数据、证明、受保护默认分支身份、`release` Environment、草稿回读和发布后回读，
 才会创建 Release。手工 artifact 始终是实验性产物，纯数字发布器不会接受它们。
 
+Windows 包当前为兼容 MSYS2 使用 `-O0`，不运行完整上游 Redis 测试套件，
+而是运行协议冒烟与原生生命周期验收；优化构建仍未完成验收。
+
 验收覆盖真实二进制架构与运行时、glibc 符号上限、Redis 构建测试与协议冒烟、
 安装/更新/卸载幂等性、持久化数据恢复、OpenRC/launchd/Windows 故障注入更新回滚、
 原生 macOS 15 launchd，以及 Windows 端口冲突、非 ASCII 暂存路径、BGSAVE、

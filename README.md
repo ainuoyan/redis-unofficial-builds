@@ -84,6 +84,10 @@ protected-default-branch identity, the `release` Environment, draft readback,
 and post-publication readback before creating a Release. Manual artifacts
 remain experimental and are never accepted by the numeric publisher.
 
+Windows packages currently use `-O0` for MSYS2 compatibility. Windows does not
+run the complete upstream Redis test suite; it runs protocol smoke tests and
+native lifecycle acceptance. Optimized Windows builds remain unvalidated.
+
 Acceptance covers real binary architecture/runtime checks; glibc symbol
 ceilings; Redis build tests and protocol smoke tests; install/update/uninstall
 idempotency; persisted-data recovery; injected update rollback on OpenRC,

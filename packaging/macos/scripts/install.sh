@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=common.sh
@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 [[ "$#" -eq 0 ]] || die "Usage: install.sh"
 require_root
-require_commands awk cat chmod chown dscl find install jot launchctl mktemp mv plutil rm rmdir sed sleep stat sudo uname
+require_commands pgrep awk cat chmod chown dscl find install jot launchctl mktemp mv plutil rm rmdir sed sleep stat sudo uname
 acquire_lock
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
@@ -27,14 +27,17 @@ if [[ -e "$REDIS_PREFIX" || -L "$REDIS_PREFIX" || -e "$REDIS_PLIST" || -L "$REDI
 fi
 
 rollback_install() {
-  local status="$?"
-  trap - ERR INT TERM HUP
-  stop_service >/dev/null 2>&1 || true
+  local status="$1"
+  (( status != 0 )) || status=1
+  stop_service || die "Install rollback could not stop Redis; installation files were preserved."
   rm -f -- "$REDIS_PLIST"
   [[ -d "$REDIS_PREFIX" && ! -L "$REDIS_PREFIX" ]] && rm -rf -- "$REDIS_PREFIX"
   exit "$status"
 }
-trap rollback_install ERR INT TERM HUP
+trap 'finish_lifecycle "$?" rollback_install' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 ensure_service_account
 install -d -o root -g wheel -m 0755 "$REDIS_PREFIX"
 install -d -o root -g "$REDIS_GROUP" -m 0750 "$REDIS_PREFIX/conf"
@@ -48,5 +51,6 @@ install -o root -g wheel -m 0644 "$package_root/launchd/io.github.ainuoyan.redis
 write_state "$version" "$package_status"
 start_service
 wait_ready "$REDIS_PREFIX" || false
-trap - ERR INT TERM HUP
+trap release_lock EXIT
+trap - INT TERM HUP
 info "Installed Redis $version as the LaunchDaemon $REDIS_LABEL."

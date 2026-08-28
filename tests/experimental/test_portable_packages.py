@@ -852,12 +852,11 @@ class PortablePackageTests(unittest.TestCase):
             install.index("Assert-RedisPortAvailable"),
             install.index("New-Item -ItemType Directory -Path $script:RedisPrefix"),
         )
-        self.assertLess(
-            install.index("Start-RedisServiceAndWait"),
-            install.index("Set-RedisServiceRecovery"),
-        )
-        self.assertIn("$sameWrapper -and", update)
-        self.assertIn("Get-FileHash -LiteralPath $candidateWrapper", update)
+        creation = common.split("function New-RedisService {", 1)[1].split("function Get-RedisServiceAccount", 1)[0]
+        self.assertIn("Set-RedisServiceRecovery", creation)
+        self.assertIn("-Credential $credential", creation)
+        self.assertIn("Set-RedisServiceAccount -Account $oldAccount", update)
+        self.assertNotIn("$sameWrapper", update)
         self.assertIn("Remove-Item -LiteralPath $legacySettings", update)
         self.assertNotIn("Write-RedisServiceSettings", common)
         self.assertNotIn("Write-RedisServiceSettings", install)

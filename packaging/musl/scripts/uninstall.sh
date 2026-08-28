@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/common.sh"
 purge=false
 case "$#:$*" in 0:) ;; 1:--purge) purge=true ;; *) die "Usage: uninstall.sh [--purge]" ;; esac
 require_root
-require_commands awk findmnt flock rc-service rc-update rm stat
+require_commands pgrep sleep awk findmnt flock rc-service rc-update rm stat
 acquire_lock
 if [[ ! -e "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" ]]; then
   if [[ ! -e "$REDIS_PREFIX" && ! -L "$REDIS_PREFIX" \
@@ -20,7 +20,7 @@ if [[ ! -e "$REDIS_STATE_FILE" && ! -L "$REDIS_STATE_FILE" ]]; then
 fi
 validate_state
 
-rc-service "$REDIS_SERVICE" stop >/dev/null 2>&1 || true
+stop_service || die "Unable to stop Redis; no files were removed."
 rc-update del "$REDIS_SERVICE" default >/dev/null 2>&1 || true
 rm -f -- "$REDIS_INIT_SCRIPT"
 if [[ "$purge" == true ]]; then

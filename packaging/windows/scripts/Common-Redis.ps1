@@ -303,10 +303,32 @@ function New-RedisService {
     if ($null -ne (Get-RedisService)) { throw 'RedisUnofficial service already exists.' }
     $wrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
     $binaryPath = '"' + $wrapper + '" --service'
+    $credential = [Management.Automation.PSCredential]::new(
+        'NT AUTHORITY\LocalService', [Security.SecureString]::new())
     New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis unofficial' `
-        -Description 'Redis package from redis-unofficial-builds' -StartupType Automatic | Out-Null
+        -Description 'Redis package from redis-unofficial-builds' -StartupType Automatic -Credential $credential | Out-Null
     & sc.exe config $script:RedisServiceName start= delayed-auto | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure delayed service start.' }
+    Set-RedisServiceRecovery
+}
+
+function Get-RedisServiceAccount {
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$script:RedisServiceName'"
+    if ($null -eq $service -or $service.StartName -notin @('LocalSystem', 'NT AUTHORITY\LocalService')) {
+        throw 'Unexpected Redis service account; review the account migration before updating.'
+    }
+    return $service.StartName
+}
+
+function Set-RedisServiceAccount {
+    param([ValidateSet('LocalSystem', 'NT AUTHORITY\LocalService')][string]$Account)
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$script:RedisServiceName'"
+    $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{
+        StartName = $Account
+        StartPassword = ''
+    }
+    if ($result.ReturnValue -ne 0) { throw 'Unable to set the Redis service account.' }
+    if ((Get-RedisServiceAccount) -ine $Account) { throw 'Redis service account verification failed.' }
 }
 
 function Set-RedisServiceRecovery {

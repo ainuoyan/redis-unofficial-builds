@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -37,7 +37,34 @@ acquire_lock() {
   if ! mkdir -m 0700 "$REDIS_LOCK_DIR" 2>/dev/null; then
     die "Another Redis lifecycle operation is running, or the lock path is unsafe."
   fi
-  trap 'rmdir "$REDIS_LOCK_DIR" 2>/dev/null || true' EXIT
+  trap release_lock EXIT
+}
+
+release_lock() { rmdir "$REDIS_LOCK_DIR"; }
+
+finish_lifecycle() {
+  local status="$1" callback="$2"
+  trap - EXIT INT TERM HUP
+  # Isolate rollback exits/errors so lock cleanup always runs in the parent.
+  set +e
+  (set -Ee; "$callback" "$status")
+  status=$?
+  release_lock || status=1
+  exit "$status"
+}
+
+assert_service_stopped() {
+  local status attempt
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    status=0
+    pgrep -u "$REDIS_USER" >/dev/null 2>&1 || status=$?
+    case "$status" in
+      1) return 0 ;;
+      0) sleep 1 ;;
+      *) die "Unable to inspect Redis account processes; no files were removed." ;;
+    esac
+  done
+  die "Redis account still has live processes; no files were removed."
 }
 
 metadata_value() {
@@ -258,17 +285,48 @@ install_program_files() {
 }
 
 launchd_loaded() { launchctl print "$REDIS_DOMAIN_LABEL" >/dev/null 2>&1; }
-stop_service() { launchd_loaded && launchctl bootout system "$REDIS_PLIST"; }
+stop_service() {
+  if launchd_loaded; then
+    launchctl bootout system "$REDIS_PLIST" || return 1
+  fi
+  assert_service_stopped
+}
 start_service() {
-  launchctl enable "$REDIS_DOMAIN_LABEL"
-  launchctl bootstrap system "$REDIS_PLIST"
+  launchctl enable "$REDIS_DOMAIN_LABEL" || return 1
+  launchctl bootstrap system "$REDIS_PLIST" || return 1
   launchctl kickstart "$REDIS_DOMAIN_LABEL"
 }
 
+probe_ready() (
+  local root="$1" socket="${REDIS_READY_SOCKET:-$REDIS_SOCKET}" directory pid="" attempt
+  [[ "$socket" == /* && "$socket" != *$'\n'* && "$socket" != *$'\r'* ]] || return 1
+  directory="$(mktemp -d)" || return 1
+  trap 'if [[ -n "$pid" ]]; then kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi; rm -f -- "$directory/response"; rmdir -- "$directory"' EXIT
+  # Bound a stalled CLI independently of its connection/authentication behavior.
+  env -u REDISCLI_AUTH "$root/bin/redis-cli" -s "$socket" ping >"$directory/response" 2>/dev/null &
+  pid=$!
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" || true
+      pid=""
+      cat "$directory/response"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+)
+
 wait_ready() {
-  local root="$1"
-  for _ in $(jot 30); do
-    [[ "$("$root/bin/redis-cli" -s "$REDIS_SOCKET" ping 2>/dev/null || true)" == PONG ]] && return 0
+  local root="$1" response consecutive_ready=0 attempt
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    response="$(probe_ready "$root" || true)"
+    if [[ "$response" == PONG || "$response" == 'NOAUTH '* || "$response" == 'NOPERM '* ]]; then
+      consecutive_ready=$((consecutive_ready + 1))
+      (( consecutive_ready >= 2 )) && return 0
+    else
+      consecutive_ready=0
+    fi
     sleep 1
   done
   return 1
