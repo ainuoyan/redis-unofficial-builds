@@ -775,6 +775,14 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn('uninstall.sh" --purge', macos_job)
         self.assertIn("Fault-injected launchd update unexpectedly succeeded", macos_job)
 
+        for job in (musl_job, macos_job):
+            self.assertIn("Installed config must have exactly one active $key directive", job)
+            self.assertIn("s/^port 0$/port 16379/", job)
+            self.assertIn("s/^bind .*/bind 127.0.0.1/", job)
+            self.assertIn("-h 127.0.0.1 -p 16379 ping", job)
+            self.assertIn('config get port | tail -n 1', job)
+            self.assertIn('config get bind | tail -n 1', job)
+
         self.assertIn("Start-RedisServiceBounded", windows_job)
         self.assertIn("Stop-RedisServiceBounded", windows_job)
         self.assertIn("Wait-RedisServiceStatus", windows_job)

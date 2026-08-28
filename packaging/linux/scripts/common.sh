@@ -1028,6 +1028,8 @@ install_default_configs() {
       /^[[:space:]]*#/ { print; next }
       {
         key = tolower($1)
+        if (key ~ /^"[^"]*"$/ || key ~ /^\047[^\047]*\047$/)
+          key = substr(key, 2, length(key) - 2)
         if (key == "port") {
           if (!port_seen++) print "port 0"
           next

@@ -160,22 +160,50 @@ ensure_service_account() {
 }
 
 write_default_config() {
-  local source="$1" destination="$2"
-  install -m 0644 "$source" "$destination"
-  cat >>"$destination" <<'EOF'
-
-# Managed package defaults. Later records override upstream defaults.
-bind 127.0.0.1 -::1
-protected-mode yes
-port 0
-daemonize no
-supervised no
-dir /usr/local/redis/data
-logfile /usr/local/redis/log/redis.log
-unixsocket /usr/local/redis/data/redis.sock
-unixsocketperm 770
-pidfile /var/run/redis-unofficial.pid
-EOF
+  local source="$1" destination="$2" temporary
+  [[ ! -e "$destination" && ! -L "$destination" ]] \
+    || die "Refusing to overwrite an existing Redis configuration: $destination"
+  temporary="$(mktemp "${destination}.tmp.XXXXXX")"
+  # Replace each managed directive at its first position and remove duplicates.
+  # Missing defaults are added once; comments and unrelated settings stay intact.
+  if ! LC_ALL=C awk '
+    BEGIN {
+      count = split("bind protected-mode port daemonize supervised dir logfile unixsocket unixsocketperm pidfile", keys, " ")
+      defaults["bind"] = "127.0.0.1 -::1"
+      defaults["protected-mode"] = "yes"
+      defaults["port"] = "0"
+      defaults["daemonize"] = "no"
+      defaults["supervised"] = "no"
+      defaults["dir"] = "/usr/local/redis/data"
+      defaults["logfile"] = "/usr/local/redis/log/redis.log"
+      defaults["unixsocket"] = "/usr/local/redis/data/redis.sock"
+      defaults["unixsocketperm"] = "770"
+      defaults["pidfile"] = "/var/run/redis-unofficial.pid"
+    }
+    /^[[:space:]]*#/ { print; next }
+    {
+      key = tolower($1)
+      if (key ~ /^"[^"]*"$/ || key ~ /^\047[^\047]*\047$/)
+        key = substr(key, 2, length(key) - 2)
+      if (key in defaults) {
+        if (!seen[key]++) print key " " defaults[key]
+        next
+      }
+      print
+    }
+    END {
+      for (i = 1; i <= count; i++)
+        if (!seen[keys[i]]) print keys[i] " " defaults[keys[i]]
+    }
+  ' "$source" >"$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if ! install -m 0644 "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  rm -f -- "$temporary"
 }
 
 write_state() {
