@@ -155,7 +155,6 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_is_a_verified_resumable_draft_published_once(self) -> None:
         self.assertIn("before-create.json", self.workflow)
-        self.assertIn("pre-tag-state.json", self.workflow)
         self.assertIn("pre-publish-state.json", self.workflow)
         self.assertIn("Draft Release changed during verification", self.workflow)
         self.assertIn("expected-asset-content.json", self.workflow)
@@ -175,10 +174,8 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.workflow,
         )
         self.assertIn(".data.repository.ref == null or", self.workflow)
-        self.assertIn('"repos/${GITHUB_REPOSITORY}/git/refs"', self.workflow)
-        self.assertIn('-f ref="$qualified_tag"', self.workflow)
-        self.assertIn('-f sha="$GITHUB_SHA"', self.workflow)
-        self.assertIn("create-tag-response.json", self.workflow)
+        self.assertNotIn('"repos/${GITHUB_REPOSITORY}/git/refs"', self.workflow)
+        self.assertNotIn("create-tag-response.json", self.workflow)
         self.assertIn("pre-publish-release.json", self.workflow)
         self.assertIn(".target_commitish == $revision", self.workflow)
         self.assertIn("gh release download", self.workflow)
