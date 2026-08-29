@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-本仓库提供按版本发布的 Redis 非官方二进制包。每个纯数字稳定 Release 都是原子化的
+本仓库提供按版本发布的 Redis 非官方二进制包。每个稳定 Redis 版本 Release 都是原子化的
 全平台集合：glibc 2.28 Linux、glibc 2.17 legacy Linux、musl 1.2 Linux、
 macOS 15+ 和 Windows x64。同一 Redis 版本、同一打包提交的全部原生构建、包校验
 与生命周期验收 Job 通过之前，不允许开始发布。
@@ -12,7 +12,7 @@ macOS 15+ 和 Windows x64。同一 Redis 版本、同一打包提交的全部原
 
 ## 可用包
 
-下表所有平台都是同一个纯数字稳定 GitHub Release 中已实现且已启用控制器的成员。
+下表所有平台都是同一个稳定 GitHub Release 中已实现且已启用控制器的成员。
 任一平台缺失或失败都会阻止整个 Release，发布器不会发布部分集合。
 
 | 包变体 | 架构 | 运行要求 | 状态 |
@@ -417,7 +417,9 @@ Rocky 软件源依赖在构建时解析，因此会记录编译器/运行库信�
 手工控制器默认只生成计划，只有设置 `run_builds=true` 才执行；直接手工运行全平台
 工作流仍默认关闭发布。
 
-当前发布器只创建全新的纯数字 `X.Y.Z` Release 和 Tag：
+当前发布器只创建全新的 Release Tag。新的上游版本使用 `Redis-X.Y.Z`；如果不可变
+历史 Tag 名称已无法复用，则由 `release-lines.json` 为该确切版本指定
+`Redis-X.Y.Z-rN`。可见 Release 标题仍严格保持 `Redis X.Y.Z`：
 
 1. 要求 9 个平台压缩包和完整、精确的 21 个产物；
 2. 只允许从受保护默认分支经名为 `release` 的 GitHub Environment 运行；

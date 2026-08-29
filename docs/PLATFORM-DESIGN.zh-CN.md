@@ -115,7 +115,8 @@ CI 构建器以无特权账号在受控容器中运行，通过 HTTPS 下载官�
 已校验源码传给各构建 Job。仓库权限只有 `contents: read`，没有 Tag、Release、下游
 工作流分发 API 或发布步骤。手工触发时设置 `PACKAGE_STATUS=experimental` 并记录
 `build-experimental.yml`；这些保留 7 天的 Actions artifact 不能进入
-`Redis-X.Y.Z` Release。
+`Redis-X.Y.Z` Release；若不可变历史 Tag 无法复用，则使用配置的
+`Redis-X.Y.Z-rN` 打包修订 Tag，Release 标题仍为 `Redis X.Y.Z`。
 
 由 `build-all-platforms.yml` 调用时，相同 Job 接收调用方的精确版本、源码 SHA-256 和不可变
 哈希提交，设置 `PACKAGE_STATUS=release` 并记录 `build-all-platforms.yml`。glibc 2.17 使用

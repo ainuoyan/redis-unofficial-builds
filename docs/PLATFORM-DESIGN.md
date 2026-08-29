@@ -173,7 +173,9 @@ tested by both glibc 2.28 architecture jobs.
 
 ## Current GitHub Release contract
 
-One numeric Redis `X.Y.Z` tag identifies one Release. The full-platform
+One Redis `X.Y.Z` identity uses `Redis-X.Y.Z` by default or a configured
+`Redis-X.Y.Z-rN` packaging revision when an immutable historical tag cannot be
+reused. The full-platform
 publisher accepts exactly these 21 asset names:
 
 ```text

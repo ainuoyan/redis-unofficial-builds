@@ -110,12 +110,14 @@ downloads an exact existing Release, validates archives and aggregate
 metadata, checks the tag's packaging revision, and verifies all required
 attestations before it skips a build.
 
-Canonical stable Release tags are `Redis-X.Y.Z`, and the visible Release title
-is exactly `Redis X.Y.Z`. Historical bare numeric tags and experimental tags
-are ignored. Names beginning with `Redis-` but not matching the canonical
-stable form fail closed instead of being merged. Draft and prerelease states
-on a canonical stable version are blocking conditions; other unrelated
-Release tags are ignored.
+Canonical stable Release tags are `Redis-X.Y.Z` or `Redis-X.Y.Z-rN`, where
+`N >= 2` is an exact-version packaging revision configured only when an
+immutable historical tag name cannot be reused. The visible Release title is
+always exactly `Redis X.Y.Z`. Historical bare numeric tags and experimental
+tags are ignored. Names beginning with `Redis-` but not matching either stable
+form fail closed instead of being merged. Draft and prerelease states on a
+canonical stable version are blocking conditions; other unrelated Release
+tags are ignored.
 
 ### Local execution
 
@@ -160,7 +162,7 @@ Direct publication still requires all nine platform packages, the exact 21
 assets, a protected default-branch ref, and the protected GitHub Environment
 named `release`.
 
-The publisher starts only when neither the `Redis-X.Y.Z` Release nor tag
+The publisher starts only when neither the configured `Redis-X.Y.Z[-rN]` Release nor tag
 exists. It creates a new draft targeted at the packaging commit, uploads all 21 files
 together, validates attestations, reads back the draft's REST
 `target_commitish` and exact inventory, binds remote asset IDs, sizes, and
@@ -286,10 +288,11 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 发布能力的全平台工作流会下载已有精确 Release，校验包和聚合元数据、检查 Tag
 打包提交并验证全部证明后，才跳过构建。
 
-正式 Release Tag 为 `Redis-X.Y.Z`，可见 Release 标题严格为 `Redis X.Y.Z`。
-历史纯数字 Tag 和 experimental Tag 会被忽略；以 `Redis-` 开头但不符合上述规范
-稳定格式的名称会直接失败，不会合并身份。规范稳定版上的草稿或预发布状态属于
-阻塞项；其他无关 Release Tag 会忽略。
+正式 Release Tag 为 `Redis-X.Y.Z` 或 `Redis-X.Y.Z-rN`，其中 `N >= 2` 只用于
+不可变历史 Tag 无法复用时，由配置为确切版本指定打包修订号。可见 Release 标题始终
+严格为 `Redis X.Y.Z`。历史纯数字 Tag 和 experimental Tag 会被忽略；以 `Redis-`
+开头但不符合上述两种规范稳定格式的名称会直接失败，不会合并身份。规范稳定版上的
+草稿或预发布状态属于阻塞项；其他无关 Release Tag 会忽略。
 
 ### 本地执行
 
@@ -329,7 +332,7 @@ python3 scripts/release/resolve_versions.py \
 排除，不会抑制其他系列的可发布行。直接发布仍要求 9 个平台包、精确 21 个产物、
 受保护默认分支 ref 和名为 `release` 的受保护 GitHub Environment。
 
-发布器只在对应 `Redis-X.Y.Z` Release 和 Tag 均不存在时开始。它创建目标为打包提交的
+发布器只在配置的 `Redis-X.Y.Z[-rN]` Release 和 Tag 均不存在时开始。它创建目标为打包提交的
 新草稿，
 一次上传 21 个文件、校验证明、通过 REST 回读草稿的 `target_commitish` 和精确清单，
 把远端产物 ID、字节数和 GitHub SHA-256 摘要绑定到已校验本地文件，再下载并按语义

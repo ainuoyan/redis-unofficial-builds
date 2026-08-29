@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "upstream": {
     "project": "redis/redis",
     "hashes_repository": "redis/redis-hashes",
@@ -16,6 +16,17 @@
     "stop_after_eol": true,
     "retain_existing_releases": true,
     "controller_mode": "auto_release"
+  },
+  "release_tag_revisions": {
+    "6.2.24": 2,
+    "7.2.16": 2,
+    "7.4.11": 2,
+    "8.0.6": 2,
+    "8.2.9": 2,
+    "8.4.6": 2,
+    "8.6.6": 2,
+    "8.8.2": 2,
+    "8.10.1": 2
   },
   "series": [
     {

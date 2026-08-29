@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Unofficial, versioned binary distributions of Redis. One numeric stable
+Unofficial, versioned binary distributions of Redis. One stable Redis-version
 Release is an atomic full-platform set: glibc 2.28 Linux, glibc 2.17 legacy
 Linux, musl 1.2 Linux, macOS 15+, and Windows x64. Publication cannot begin
 until every native build, package validator, and lifecycle acceptance job for
@@ -14,7 +14,7 @@ the exact Redis version and packaging revision has passed.
 
 ## Available packages
 
-All rows below are implemented, controller-enabled members of the same numeric
+All rows below are implemented, controller-enabled members of the same
 stable GitHub Release. A missing or failed platform blocks the entire Release;
 the publisher never publishes a partial set.
 
@@ -499,8 +499,10 @@ version. Manual controller runs remain plan-only unless `run_builds=true` is
 selected, and direct manual full-platform runs keep publication disabled by
 default.
 
-The current publisher creates only a brand-new numeric `X.Y.Z` Release and
-tag. It:
+The current publisher creates only a brand-new Release tag. New upstream
+versions use `Redis-X.Y.Z`; an exact-version revision configured in
+`release-lines.json` uses `Redis-X.Y.Z-rN` when an immutable historical tag
+name cannot be reused. The visible title remains exactly `Redis X.Y.Z`. It:
 
 1. requires all nine platform archives and the exact 21-asset contract;
 2. runs only from the protected default branch through the GitHub Environment

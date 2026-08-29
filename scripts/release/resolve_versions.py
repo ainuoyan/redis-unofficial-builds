@@ -13,6 +13,10 @@ from typing import Any
 
 
 VERSION_RE = re.compile(r"^([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})$")
+RELEASE_TAG_RE = re.compile(
+    r"^Redis-([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})"
+    r"(?:-r([2-9]|[1-9][0-9]+))?$"
+)
 SERIES_RE = re.compile(r"^([0-9]{1,6})\.([0-9]{1,6})$")
 STABLE_HASH_LINE_RE = re.compile(
     r"^hash redis-([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})\.tar\.gz "
@@ -154,6 +158,17 @@ def series_text(version: tuple[int, int, int]) -> str:
     return f"{version[0]}.{version[1]}"
 
 
+def release_revision(config: dict[str, Any], version: str) -> int:
+    return config["release_tag_revisions"].get(version, 1)
+
+
+def release_tag(version: str, revision: int) -> str:
+    parse_version(version)
+    if type(revision) is not int or revision < 1:
+        raise PlanError("Release tag revision must be a positive integer")
+    return f"{RELEASE_TAG_PREFIX}{version}" + (f"-r{revision}" if revision > 1 else "")
+
+
 def parse_git_oid(value: str) -> str:
     if not isinstance(value, str) or not GIT_OID_RE.fullmatch(value):
         raise PlanError("Redis hashes snapshot must be a lowercase 40-character Git OID")
@@ -163,9 +178,11 @@ def parse_git_oid(value: str) -> str:
 def validate_release_config(config: Any) -> None:
     if not isinstance(config, dict):
         raise PlanError("release-lines.json must contain a JSON object")
-    if type(config.get("schema")) is not int or config.get("schema") != 1:
-        raise PlanError("release-lines.json must use schema 1")
-    if set(config) != {"schema", "upstream", "policy", "series"}:
+    if type(config.get("schema")) is not int or config.get("schema") != 2:
+        raise PlanError("release-lines.json must use schema 2")
+    if set(config) != {
+        "schema", "upstream", "policy", "release_tag_revisions", "series"
+    }:
         raise PlanError("release-lines.json contains unknown or missing top-level keys")
     upstream = config.get("upstream")
     policy = config.get("policy")
@@ -174,6 +191,9 @@ def validate_release_config(config: Any) -> None:
         raise PlanError("Release configuration requires upstream and policy objects")
     if not isinstance(entries, list) or not entries:
         raise PlanError("Release configuration requires at least one series")
+    revisions = config.get("release_tag_revisions")
+    if not isinstance(revisions, dict):
+        raise PlanError("release_tag_revisions must be an object")
     if set(upstream) != set(EXPECTED_UPSTREAM):
         raise PlanError("Release configuration contains unknown or missing upstream keys")
     if set(policy) != set(EXPECTED_POLICY) | {"new_series_floor"}:
@@ -226,6 +246,16 @@ def validate_release_config(config: Any) -> None:
     floor = policy.get("new_series_floor")
     if not isinstance(floor, str) or parse_series(floor) != previous:
         raise PlanError("new_series_floor must name the highest configured series")
+    for version, revision in revisions.items():
+        parsed_version = parse_version(version)
+        if series_text(parsed_version) not in seen:
+            raise PlanError(
+                f"Release tag revision names an untracked Redis version: {version}"
+            )
+        if type(revision) is not int or revision < 2 or revision > 999999:
+            raise PlanError(
+                f"Invalid Release tag revision for Redis {version}: {revision!r}"
+            )
 
 
 def validate_platform_config(config: Any, workflows_dir: Path | None = None) -> None:
@@ -470,16 +500,16 @@ def index_releases(data: Any) -> dict[str, dict[str, Any]]:
             raise PlanError(f"GitHub release {tag} has invalid publication state")
         if not tag.startswith(RELEASE_TAG_PREFIX):
             continue
-        normalized = tag.removeprefix(RELEASE_TAG_PREFIX)
-        match = VERSION_RE.fullmatch(normalized)
+        match = RELEASE_TAG_RE.fullmatch(tag)
         if match is None:
             raise PlanError(
                 f"Noncanonical stable Redis release tag {tag}; "
-                f"expected {RELEASE_TAG_PREFIX}X.Y.Z"
+                f"expected {RELEASE_TAG_PREFIX}X.Y.Z or {RELEASE_TAG_PREFIX}X.Y.Z-rN"
             )
-        parsed_tag = tuple(int(part) for part in match.groups())
+        parsed_tag = tuple(int(part) for part in match.group(1, 2, 3))
         canonical_version = version_text(parsed_tag)
-        canonical_tag = f"{RELEASE_TAG_PREFIX}{canonical_version}"
+        tag_revision = int(match.group(4)) if match.group(4) else 1
+        canonical_tag = release_tag(canonical_version, tag_revision)
         if tag != canonical_tag:
             raise PlanError(
                 f"Noncanonical stable Redis release tag {tag}; expected {canonical_tag}"
@@ -500,6 +530,7 @@ def index_releases(data: Any) -> dict[str, dict[str, Any]]:
             names.add(name)
         indexed[normalized] = {
             "tag_name": tag,
+            "tag_revision": tag_revision,
             "draft": release.get("draft", False),
             "prerelease": release.get("prerelease", False),
             "assets": names,
@@ -619,6 +650,8 @@ def resolve(
         assert version_tuple is not None
         record = hashes[version_tuple]
         version = record["version"]
+        tag_revision = release_revision(release_config, version)
+        expected_release_tag = release_tag(version, tag_revision)
         source_url = source_template.format(version=version)
         if not source_url.startswith("https://"):
             raise PlanError("The configured Redis source URL must use HTTPS")
@@ -642,6 +675,9 @@ def resolve(
             action = "skip_eol"
         elif not enabled_platforms:
             action = "skip_no_enabled_platforms"
+        elif release_exists and current_release["tag_name"] != expected_release_tag:
+            action = "blocked_unexpected_release_tag"
+            blocked = True
         elif release_exists and (
             current_release["draft"] or current_release["prerelease"]
         ):
@@ -665,6 +701,8 @@ def resolve(
             "eol": eol_text,
             "source_url": source_url,
             "source_sha256": record["sha256"],
+            "release_tag": expected_release_tag,
+            "release_revision": tag_revision,
             "release_exists": release_exists,
             "release_draft": current_release["draft"] if current_release else False,
             "release_prerelease": (
@@ -685,6 +723,8 @@ def resolve(
                     "version": version,
                     "source_url": source_url,
                     "source_sha256": record["sha256"],
+                    "release_tag": expected_release_tag,
+                    "release_revision": tag_revision,
                     "action": action,
                 }
             )

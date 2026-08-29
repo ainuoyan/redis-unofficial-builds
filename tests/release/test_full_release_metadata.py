@@ -27,6 +27,7 @@ class FullReleaseMetadataTests(unittest.TestCase):
             "command": command,
             "asset_dir": directory,
             "redis_version": VERSION,
+            "release_tag": f"Redis-{VERSION}-r2",
             "source_sha256": SOURCE_SHA256,
             "hashes_commit": HASHES_COMMIT,
             "repository": "example/redis-unofficial-builds",
@@ -81,6 +82,7 @@ class FullReleaseMetadataTests(unittest.TestCase):
             )
         manifest = metadata.build_manifest(
             version=VERSION,
+            release_tag=f"Redis-{VERSION}-r2",
             source_sha256=SOURCE_SHA256,
             repository="example/redis-unofficial-builds",
             revision=REVISION,
@@ -88,7 +90,7 @@ class FullReleaseMetadataTests(unittest.TestCase):
             artifacts=artifacts,
         )
         self.assertEqual(manifest["schema"], 2)
-        self.assertEqual(manifest["release_tag"], f"Redis-{VERSION}")
+        self.assertEqual(manifest["release_tag"], f"Redis-{VERSION}-r2")
         self.assertEqual(len(manifest["artifacts"]), 9)
         spdx = release_metadata.build_spdx(
             manifest=manifest,
@@ -99,14 +101,14 @@ class FullReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(len(package_ids), len(set(package_ids)))
         self.assertEqual(len(spdx["packages"]), 10)
         self.assertIn(
-            f"/releases/tag/Redis-{VERSION}/spdx/",
+            f"/releases/tag/Redis-{VERSION}-r2/spdx/",
             spdx["documentNamespace"],
         )
         for package in spdx["packages"]:
             if package["SPDXID"] == "SPDXRef-Package-Redis-Upstream":
                 continue
             self.assertIn(
-                f"/releases/download/Redis-{VERSION}/",
+                f"/releases/download/Redis-{VERSION}-r2/",
                 package["downloadLocation"],
             )
 
@@ -167,6 +169,7 @@ class FullReleaseMetadataTests(unittest.TestCase):
             )
         manifest = metadata.build_manifest(
             version=VERSION,
+            release_tag=f"Redis-{VERSION}",
             source_sha256=SOURCE_SHA256,
             repository="example/redis-unofficial-builds",
             revision=REVISION,

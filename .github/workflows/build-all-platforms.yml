@@ -7,6 +7,11 @@ on:
         description: Exact official Redis version
         required: true
         type: string
+      release_revision:
+        description: Packaging tag revision (1 uses Redis-X.Y.Z; 2+ uses Redis-X.Y.Z-rN)
+        required: false
+        default: 1
+        type: number
       source_sha256:
         description: Expected official Redis source SHA-256
         required: true
@@ -35,6 +40,11 @@ on:
         description: Exact official Redis version (X.Y.Z)
         required: true
         type: string
+      release_revision:
+        description: Packaging tag revision (1 uses Redis-X.Y.Z; 2+ uses Redis-X.Y.Z-rN)
+        required: true
+        default: 1
+        type: number
       source_sha256:
         description: Optional official source SHA-256 cross-check
         required: false
@@ -86,6 +96,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       source_sha256: ${{ steps.resolve.outputs.source_sha256 }}
       hashes_commit: ${{ steps.resolve.outputs.hashes_commit }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
       should_build: ${{ steps.resolve.outputs.should_build }}
       release_exists: ${{ steps.resolve.outputs.release_exists }}
       arch_matrix: ${{ steps.resolve.outputs.arch_matrix }}
@@ -101,6 +112,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.redis_version }}
+          REQUESTED_RELEASE_REVISION: ${{ inputs.release_revision }}
           PROVIDED_SOURCE_SHA256: ${{ inputs.source_sha256 }}
           REQUESTED_PACKAGE_ARCH: ${{ inputs.package_arch }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
@@ -121,6 +133,12 @@ jobs:
           version="$REQUESTED_VERSION"
           if [[ ! "$version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
             echo "Invalid canonical Redis version: $version" >&2
+            exit 1
+          fi
+          release_revision="${REQUESTED_RELEASE_REVISION:-1}"
+          if [[ ! "$release_revision" =~ ^(1|[2-9]|[1-9][0-9]+)$ \
+            || "$release_revision" -gt 999999 ]]; then
+            echo "Invalid Release tag revision: $release_revision" >&2
             exit 1
           fi
 
@@ -239,6 +257,9 @@ jobs:
           owner="${GITHUB_REPOSITORY%%/*}"
           repository_name="${GITHUB_REPOSITORY#*/}"
           release_tag="Redis-${version}"
+          if ((release_revision > 1)); then
+            release_tag="${release_tag}-r${release_revision}"
+          fi
           qualified_tag="refs/tags/${release_tag}"
           gh api graphql \
             -f owner="$owner" \
@@ -370,6 +391,7 @@ jobs:
               python3 scripts/release/full_release_metadata.py validate \
                 --asset-dir existing-release-assets \
                 --redis-version "$version" \
+                --release-tag "$release_tag" \
                 --source-sha256 "$source_sha256" \
                 --hashes-commit "$release_hashes_commit" \
                 --repository "$GITHUB_REPOSITORY" \
@@ -429,6 +451,7 @@ jobs:
             echo "version=$version"
             echo "source_sha256=$source_sha256"
             echo "hashes_commit=$hashes_commit"
+            echo "release_tag=$release_tag"
             echo "should_build=$should_build"
             echo "release_exists=$release_exists"
             echo "arch_matrix=$arch_matrix"
@@ -437,6 +460,7 @@ jobs:
           echo "Redis version: $version"
           echo "Official SHA256: $source_sha256"
           echo "Redis hashes snapshot: $hashes_commit"
+          echo "Release tag: $release_tag"
           echo "Existing release: $release_exists"
           echo "Selected assets complete: $release_complete"
           echo "Build required: $should_build"
@@ -905,6 +929,7 @@ jobs:
       - name: Create and validate exact 21-asset candidate
         env:
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
           REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
         shell: bash
@@ -914,6 +939,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py create \
             --asset-dir release-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$RELEASE_TAG" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
@@ -923,6 +949,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py validate \
             --asset-dir release-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$RELEASE_TAG" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
@@ -970,6 +997,7 @@ jobs:
       - name: Revalidate immutable release candidate
         env:
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
           REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
         shell: bash
@@ -978,6 +1006,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py validate \
             --asset-dir release-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$RELEASE_TAG" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
@@ -1002,6 +1031,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
           REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
         shell: bash
@@ -1011,6 +1041,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py validate \
             --asset-dir release-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$RELEASE_TAG" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
@@ -1123,6 +1154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REDIS_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           REDIS_SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
           REDIS_HASHES_COMMIT: ${{ needs.prepare.outputs.hashes_commit }}
         shell: bash
@@ -1131,7 +1163,7 @@ jobs:
 
           owner="${GITHUB_REPOSITORY%%/*}"
           repository_name="${GITHUB_REPOSITORY#*/}"
-          release_tag="Redis-${REDIS_VERSION}"
+          release_tag="$RELEASE_TAG"
           qualified_tag="refs/tags/${release_tag}"
           query='query($owner:String!,$name:String!,$tag:String!,$qualifiedTag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){id databaseId tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}} ref(qualifiedName:$qualifiedTag){name target{oid}}}}'
 
@@ -1294,6 +1326,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py validate \
             --asset-dir published-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$release_tag" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
@@ -1422,6 +1455,7 @@ jobs:
           python3 scripts/release/full_release_metadata.py validate \
             --asset-dir published-readback-assets \
             --redis-version "$REDIS_VERSION" \
+            --release-tag "$release_tag" \
             --source-sha256 "$REDIS_SOURCE_SHA256" \
             --hashes-commit "$REDIS_HASHES_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
