@@ -27,15 +27,36 @@ CREATED_RE = re.compile(
 )
 MAX_JSON_BYTES = 1024 * 1024
 RELEASE_TAG_PREFIX = "Redis-"
+RELEASE_TAG_RE = re.compile(
+    r"^Redis-([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})"
+    r"(?:-r([2-9]|[1-9][0-9]+))?$"
+)
 
 
 class MetadataError(RuntimeError):
     """Raised when release metadata is missing, ambiguous, or inconsistent."""
 
 
-def release_tag(version: str) -> str:
+def release_tag(version: str, revision: int = 1) -> str:
     asset_validator.parse_version(version)
-    return f"{RELEASE_TAG_PREFIX}{version}"
+    if type(revision) is not int or revision < 1 or revision > 999999:
+        raise MetadataError("invalid Release tag revision")
+    return f"{RELEASE_TAG_PREFIX}{version}" + (
+        f"-r{revision}" if revision > 1 else ""
+    )
+
+
+def validate_release_tag(version: str, tag: str) -> None:
+    asset_validator.parse_version(version)
+    if not isinstance(tag, str):
+        raise MetadataError("invalid Release tag")
+    match = RELEASE_TAG_RE.fullmatch(tag)
+    if match is None:
+        raise MetadataError("invalid Release tag")
+    tag_version = ".".join(match.group(1, 2, 3))
+    tag_revision = int(match.group(4)) if match.group(4) else 1
+    if tag != release_tag(tag_version, tag_revision) or tag_version != version:
+        raise MetadataError("Release tag does not match the Redis version")
 
 
 def sbom_name(version: str) -> str:

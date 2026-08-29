@@ -23,7 +23,7 @@ SPEC.loader.exec_module(resolver)
 class ResolveVersionsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.release_config = {
-            "schema": 1,
+            "schema": 2,
             "upstream": {
                 "project": "redis/redis",
                 "hashes_repository": "redis/redis-hashes",
@@ -45,6 +45,7 @@ class ResolveVersionsTests(unittest.TestCase):
                 "stop_after_eol": True,
                 "retain_existing_releases": True,
             },
+            "release_tag_revisions": {},
             "series": [
                 {
                     "series": "7.4",
@@ -221,6 +222,45 @@ class ResolveVersionsTests(unittest.TestCase):
         self.assertEqual(len(plan["release_plans"]), 1)
         self.assertEqual(plan["release_plans"][0]["version"], "7.4.10")
         self.assertEqual(plan["release_plans"][0]["source_sha256"], "1" * 64)
+
+    def test_configured_release_revision_is_planned_and_recognized(self) -> None:
+        self.release_config["release_tag_revisions"] = {"7.4.11": 2}
+        plan = resolver.resolve(
+            self.release_config,
+            self.platform_config,
+            self.parse_hashes(),
+            {},
+            dt.date(2026, 8, 20),
+            requested_series={"7.4"},
+        )
+        row = plan["version_matrix"]["include"][0]
+        self.assertEqual(row["release_tag"], "Redis-7.4.11-r2")
+        self.assertEqual(row["release_revision"], 2)
+
+        releases = resolver.index_releases(
+            [{
+                "tag_name": "Redis-7.4.11-r2",
+                "assets": self.complete_assets("7.4.11"),
+            }]
+        )
+        complete = resolver.resolve(
+            self.release_config,
+            self.platform_config,
+            self.parse_hashes(),
+            releases,
+            dt.date(2026, 8, 20),
+            requested_series={"7.4"},
+        )
+        self.assertEqual(complete["release_plans"][0]["action"], "skip_complete")
+
+    def test_release_revision_must_be_bounded_and_tracked(self) -> None:
+        for version, revision in (("7.4.11", 1), ("7.4.11", True), ("9.9.1", 2)):
+            config = copy.deepcopy(self.release_config)
+            config["release_tag_revisions"] = {version: revision}
+            with self.subTest(version=version, revision=revision), self.assertRaises(
+                resolver.PlanError
+            ):
+                resolver.validate_release_config(config)
 
     def test_rejects_untracked_version(self) -> None:
         with self.assertRaisesRegex(resolver.PlanError, "not in a tracked series"):
@@ -444,6 +484,8 @@ class ResolveVersionsTests(unittest.TestCase):
             "Redis-v7.4.11",
             "Redis-07.4.11",
             "Redis-7.4.11-extra",
+            "Redis-7.4.11-r1",
+            "Redis-7.4.11-r02",
         ):
             with self.subTest(tag=tag), self.assertRaisesRegex(
                 resolver.PlanError, "Noncanonical"
@@ -497,7 +539,7 @@ class ResolveVersionsTests(unittest.TestCase):
     def test_boolean_schema_and_policy_integer_are_rejected(self) -> None:
         config = copy.deepcopy(self.release_config)
         config["schema"] = True
-        with self.assertRaisesRegex(resolver.PlanError, "schema 1"):
+        with self.assertRaisesRegex(resolver.PlanError, "schema 2"):
             resolver.validate_release_config(config)
 
         config = copy.deepcopy(self.release_config)

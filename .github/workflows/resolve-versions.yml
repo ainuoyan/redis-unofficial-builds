@@ -178,6 +178,7 @@ jobs:
     uses: ./.github/workflows/build-all-platforms.yml
     with:
       redis_version: ${{ matrix.version }}
+      release_revision: ${{ matrix.release_revision }}
       source_sha256: ${{ matrix.source_sha256 }}
       hashes_commit: ${{ needs.plan.outputs.hashes_commit }}
       package_arch: all

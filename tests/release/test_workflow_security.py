@@ -196,7 +196,10 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_identity_contains_only_redis_and_version(self) -> None:
         self.assertIn('release_tag="Redis-${version}"', self.workflow)
-        self.assertIn('release_tag="Redis-${REDIS_VERSION}"', self.workflow)
+        self.assertIn('release_tag="${release_tag}-r${release_revision}"', self.workflow)
+        self.assertIn('release_tag="$RELEASE_TAG"', self.workflow)
+        self.assertIn("REQUESTED_RELEASE_REVISION", self.workflow)
+        self.assertIn("release_tag: ${{ steps.resolve.outputs.release_tag }}", self.workflow)
         self.assertIn('gh release create "$release_tag"', self.workflow)
         self.assertIn('--title "Redis ${REDIS_VERSION}"', self.workflow)
         self.assertNotIn(

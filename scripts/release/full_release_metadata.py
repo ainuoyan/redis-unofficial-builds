@@ -235,6 +235,7 @@ def inspect_archives(
 def build_manifest(
     *,
     version: str,
+    release_tag: str,
     source_sha256: str,
     repository: str,
     revision: str,
@@ -242,10 +243,11 @@ def build_manifest(
     artifacts: list[dict[str, Any]],
 ) -> dict[str, Any]:
     parsed = linux_validator.parse_version(version)
+    release_metadata.validate_release_tag(version, release_tag)
     return {
         "schema": 2,
         "package_id": "redis-unofficial-builds",
-        "release_tag": release_metadata.release_tag(version),
+        "release_tag": release_tag,
         "redis_version": version,
         "redis_series": f"{parsed[0]}.{parsed[1]}",
         "source": {
@@ -290,6 +292,7 @@ def create_metadata(args: argparse.Namespace) -> None:
     )
     manifest = build_manifest(
         version=args.redis_version,
+        release_tag=args.release_tag,
         source_sha256=args.source_sha256,
         repository=args.repository,
         revision=revision,
@@ -356,6 +359,7 @@ def validate_metadata_set(args: argparse.Namespace) -> None:
     )
     expected_manifest = build_manifest(
         version=args.redis_version,
+        release_tag=args.release_tag,
         source_sha256=args.source_sha256,
         repository=args.repository,
         revision=observed_revision,
@@ -393,6 +397,7 @@ def parse_args() -> argparse.Namespace:
         command = subparsers.add_parser(name)
         command.add_argument("--asset-dir", type=Path, required=True)
         command.add_argument("--redis-version", required=True)
+        command.add_argument("--release-tag", required=True)
         command.add_argument("--source-sha256", required=True)
         command.add_argument("--hashes-commit", required=True)
         command.add_argument("--repository", required=True)
@@ -414,6 +419,7 @@ def main() -> int:
             args.repository,
             args.packaging_revision,
         )
+        release_metadata.validate_release_tag(args.redis_version, args.release_tag)
         if not release_metadata.REVISION_RE.fullmatch(args.hashes_commit):
             raise FullMetadataError("invalid Redis hashes commit")
         if args.command == "create":
