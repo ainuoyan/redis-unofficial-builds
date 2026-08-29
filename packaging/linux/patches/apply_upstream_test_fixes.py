@@ -9,10 +9,10 @@ test-only patch to Redis 8.0.x.
 Redis 8.10.1 also uses a 70-100 ms expiration window in a hash-field active
 expiration test. That window repeatedly expired before its immediate HEXISTS
 assertion on GitHub-hosted macOS runners. The second reviewed patch widens only
-that test window and its wait bound. Redis 8.2.9 latency-monitor tests likewise
-need bounded scheduling headroom on hosted macOS runners; their lower bounds and
-cross-command consistency checks remain unchanged. Every applicable patch fails
-closed for unknown source states.
+that test window and its wait bound. Redis 8.2.9 and 8.8.2 latency-monitor
+tests likewise need bounded scheduling headroom on hosted macOS runners; their
+lower bounds and cross-command consistency checks remain unchanged. Every
+applicable patch fails closed for unknown source states.
 """
 
 from __future__ import annotations
@@ -37,6 +37,11 @@ REDIS_829_PATCH_FILE = Path(__file__).with_name(
     "redis-8.2.9-latency-test-timeout.patch"
 )
 REDIS_829_PATCH_TARGETS = (Path("tests/unit/latency-monitor.tcl"),)
+REDIS_882_FIX_ID = "redis-8.8.2-latency-test-timeout-stability"
+REDIS_882_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.8.2-latency-test-timeout.patch"
+)
+REDIS_882_PATCH_TARGETS = (Path("tests/unit/latency-monitor.tcl"),)
 REDIS_810_FIX_ID = "redis-8.10.1-hfe-test-timeout-stability"
 REDIS_810_PATCH_FILE = Path(__file__).with_name(
     "redis-8.10.1-hfe-test-timeout.patch"
@@ -177,6 +182,13 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
             REDIS_829_PATCH_FILE,
             REDIS_829_PATCH_TARGETS,
             REDIS_829_FIX_ID,
+        )
+    if (major, minor, patch) == (8, 8, 2):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_882_PATCH_FILE,
+            REDIS_882_PATCH_TARGETS,
+            REDIS_882_FIX_ID,
         )
     if (major, minor, patch) == (8, 10, 1):
         return _apply_reviewed_patch(
