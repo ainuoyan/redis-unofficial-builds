@@ -648,6 +648,7 @@ Service mode: systemd by default; install supports --no-service, update supports
 No-service mode installs the complete package layout without registering or requiring systemd; stop every Redis process from /usr/local/redis manually before updating or uninstalling it
 Compatibility scope: validate the target distribution and kernel before production use
 Fresh-install default endpoint: Unix socket /usr/local/redis/data/redis.sock (TCP disabled)
+User script language: English by default; --lang zh for Chinese, --lang en for English
 
 安装包类型：${PACKAGE_VARIANT}
 CPU 架构：${PACKAGE_ARCH}
@@ -658,6 +659,7 @@ CPU 架构：${PACKAGE_ARCH}
 无服务模式会安装完整包布局，但不注册或要求 systemd；更新或卸载前必须手工停止所有来自 /usr/local/redis 的 Redis 进程
 兼容范围：生产使用前仍须在目标发行版和内核上验证
 全新安装默认端点：Unix 套接字 /usr/local/redis/data/redis.sock（TCP 已禁用）
+用户脚本默认英文；--lang zh 切换中文，--lang en 切换英文。中文需要 UTF-8 终端。
 
 New installation (extract into a root-owned, non-writable staging directory):
 新安装（解压到 root 所有且不可写的暂存目录）：

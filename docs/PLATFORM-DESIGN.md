@@ -34,6 +34,37 @@ license and notice material from its verified source version. Redis names and
 marks remain subject to the official
 [trademark policy](https://redis.io/legal/trademark-policy/).
 
+## User script language and direct Windows startup
+
+User-facing install/update/uninstall scripts default to English, independently
+of the system locale. Shell and BAT entry points accept `--lang zh` (Chinese)
+or `--lang en`; PowerShell entry points use `-Lang zh` / `-Lang en`. Shell
+scripts retain the explicit `REDIS_INSTALL_LANG=zh_CN` override. Help, prompts,
+and script-owned errors are localized; Redis and operating-system diagnostics
+remain in their original language. Machine-readable state/configuration is
+never translated. Chinese shell output requires a UTF-8 terminal.
+
+Windows BAT files contain ASCII only. Packaged PowerShell scripts have a UTF-8
+BOM for Windows PowerShell 5.1 and Windows scripts use CRLF line endings.
+Script output temporarily uses UTF-8 console encoding (including paths in English
+messages) and restores it on exit;
+if encoding setup fails, the script falls back to English. This cannot supply
+missing terminal fonts or fix a log viewer using the wrong decoding. Use a
+UTF-8-capable terminal with CJK glyphs, or switch back to English. Do not resave
+PowerShell scripts as ANSI or remove their BOM. Redirected Chinese output
+should be decoded as UTF-8.
+
+`scripts/Start-Redis.bat [--lang en|zh]` starts `bin/redis-server.exe` with the
+existing `conf/redis.conf` and the package root as its working directory. It
+does not install a service, elevate privileges, write configuration, create a
+`portable` directory, or override Redis settings. Relative paths such as
+`dir ./` resolve from the package root. Use a writable extracted directory;
+do not share a data directory with another running Redis instance. The supplied
+default configuration runs in the foreground; use Ctrl+C to stop. Missing
+program/configuration files are errors, not a reason to generate replacements.
+BAT windows pause on completion only when input is interactive; Purge still
+requires an explicit Y confirmation before any lifecycle mutation.
+
 ## Platform matrix
 
 Linux ARM64 glibc and musl builds explicitly pass `--with-lg-page=16` (64 KiB)

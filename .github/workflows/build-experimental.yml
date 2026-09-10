@@ -774,6 +774,7 @@ jobs:
           ./tests/windows/Test-ServicePolicy.ps1
           ./tests/windows/Test-PathTrust.ps1
           ./tests/windows/Test-BatchEntrypoints.ps1
+          ./tests/windows/Test-UserInterface.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:

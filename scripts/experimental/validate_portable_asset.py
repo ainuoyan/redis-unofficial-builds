@@ -19,6 +19,7 @@ from portable_contract import (
     archive_name,
     backend_for,
     backend_assets,
+    packaged_asset_bytes,
     packaging_patchset_sha256,
     require_regular_file,
     validate_identity,
@@ -563,7 +564,7 @@ def validate_assets(
     for relative in backend_assets(variant):
         repository_path = require_regular_file(packaging_root, asset_root / relative)
         archive_name_value = f"redis/{relative}"
-        if files.get(archive_name_value) != repository_path.read_bytes():
+        if files.get(archive_name_value) != packaged_asset_bytes(repository_path, variant, relative):
             raise ContractError(f"archive asset differs from reviewed source: {archive_name_value}")
     notice = require_regular_file(packaging_root, Path("THIRD_PARTY_NOTICES.md"))
     if files.get("redis/THIRD_PARTY_NOTICES.md") != notice.read_bytes():

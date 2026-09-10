@@ -19,23 +19,35 @@ readonly REDIS_STATE_FILE="$REDIS_PREFIX/.redis-package-state"
 readonly REDIS_SOCKET="$REDIS_PREFIX/data/redis.sock"
 readonly REDIS_LOCK_DIR="/var/run/redis-unofficial.lifecycle.lock"
 
-info() { printf '[redis-package] %s\n' "$*"; }
-die() { printf '[redis-package] ERROR: %s\n' "$*" >&2; exit 1; }
+REDIS_UI_LANGUAGE="${REDIS_UI_LANGUAGE:-${REDIS_INSTALL_LANG:-en}}"
+case "$REDIS_UI_LANGUAGE" in zh|zh_CN) REDIS_UI_LANGUAGE=zh ;; *) REDIS_UI_LANGUAGE=en ;; esac
+
+# Keep text separate from printf formats: paths may contain percent signs.
+ui_text() {
+  if [[ "${REDIS_UI_LANGUAGE:-en}" == zh && $# -ge 2 ]]; then
+    printf '%s' "$2"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+info() { printf '[redis-package] %s\n' "$(ui_text "$@")"; }
+die() { printf '[redis-package] %s: %s\n' "$(ui_text ERROR 错误)" "$(ui_text "$@")" >&2; exit 1; }
 
 require_root() {
-  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "This operation requires root."
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "This operation requires root." "此操作需要 root 权限。"
 }
 
 require_commands() {
   local name
   for name in "$@"; do
-    command -v "$name" >/dev/null 2>&1 || die "Required command not found: $name"
+    command -v "$name" >/dev/null 2>&1 || die "Required command not found: $name" "缺少必需命令：$name"
   done
 }
 
 acquire_lock() {
   if ! mkdir -m 0700 "$REDIS_LOCK_DIR" 2>/dev/null; then
-    die "Another Redis lifecycle operation is running, or the lock path is unsafe."
+    die "Another Redis lifecycle operation is running, or the lock path is unsafe." "另一个 Redis 生命周期操作正在运行，或锁路径不安全。"
   fi
   trap release_lock EXIT
 }
@@ -61,10 +73,10 @@ assert_service_stopped() {
     case "$status" in
       1) return 0 ;;
       0) sleep 1 ;;
-      *) die "Unable to inspect Redis account processes; no files were removed." ;;
+      *) die "Unable to inspect Redis account processes; no files were removed." "无法检查 Redis 账号的进程；未删除任何文件。" ;;
     esac
   done
-  die "Redis account still has live processes; no files were removed."
+  die "Redis account still has live processes; no files were removed." "Redis 账号仍有进程在运行；未删除任何文件。"
 }
 
 metadata_value() {
@@ -86,37 +98,37 @@ package_root_from_script() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd -P)"
   root="$(cd "$script_dir/.." && pwd -P)"
   [[ "$root" != "$REDIS_PREFIX" && -d "$root" && ! -L "$root" ]] \
-    || die "Package root is missing or points at the live installation."
+    || die "Package root is missing or points at the live installation." "安装包根目录不存在，或指向正在使用的安装目录。"
   printf '%s\n' "$root"
 }
 
 validate_package_tree_security() {
   local root="$1" path owner mode links mode_value metadata permissions
   while IFS= read -r -d '' path; do
-    [[ ! -L "$path" ]] || die "Package tree contains a symbolic link: $path"
+    [[ ! -L "$path" ]] || die "Package tree contains a symbolic link: $path" "安装包目录中包含符号链接：$path"
     if [[ -d "$path" ]]; then
       metadata="$(stat -f '%u %p' "$path")" \
-        || die "Unable to inspect package directory: $path"
+        || die "Unable to inspect package directory: $path" "无法检查安装包目录：$path"
       read -r owner mode <<<"$metadata"
       links=1
     elif [[ -f "$path" ]]; then
       metadata="$(stat -f '%u %p %l' "$path")" \
-        || die "Unable to inspect package file: $path"
+        || die "Unable to inspect package file: $path" "无法检查安装包文件：$path"
       read -r owner mode links <<<"$metadata"
     else
-      die "Package tree contains an unsupported file type: $path"
+      die "Package tree contains an unsupported file type: $path" "安装包中包含不支持的文件类型：$path"
     fi
     [[ "$owner" == 0 && "$links" == 1 && "$mode" =~ ^[0-7]{5,6}$ ]] \
-      || die "Package tree is not exclusively root controlled: $path"
+      || die "Package tree is not exclusively root controlled: $path" "安装包路径并非仅由 root 控制：$path"
     mode_value=$((8#$mode))
     (( (mode_value & 07022) == 0 )) \
-      || die "Package tree contains a writable or special-mode path: $path"
+      || die "Package tree contains a writable or special-mode path: $path" "安装包中包含可被其他用户写入或具有特殊权限的路径：$path"
     permissions="$(LC_ALL=C /bin/ls -lde "$path")" \
-      || die "Unable to inspect package ACLs: $path"
+      || die "Unable to inspect package ACLs: $path" "无法检查安装包的 ACL 权限：$path"
     permissions="${permissions%% *}"
     [[ "${#permissions}" == 10 \
       || ( "${#permissions}" == 11 && "${permissions: -1}" == @ ) ]] \
-      || die "Package tree contains an extended ACL: $path"
+      || die "Package tree contains an extended ACL: $path" "安装包路径包含扩展 ACL 权限：$path"
   done < <(find "$root" -xdev -print0)
 }
 
@@ -124,31 +136,31 @@ validate_package() {
   local root="$1" machine package_arch package_status version binary_version validation_dir validation_binary
   validate_package_tree_security "$root"
   [[ -f "$root/PACKAGE-INFO" && ! -L "$root/PACKAGE-INFO" ]] \
-    || die "PACKAGE-INFO is missing or unsafe."
+    || die "PACKAGE-INFO is missing or unsafe." "PACKAGE-INFO 不存在或不安全。"
   package_status="$(metadata_value "$root/PACKAGE-INFO" PACKAGE_STATUS)"
   [[ "$package_status" == experimental || "$package_status" == release ]] \
-    || die "The package has an unsupported publication status."
+    || die "The package has an unsupported publication status." "安装包的发布状态不受支持。"
   [[ "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_FORMAT)" == 3 \
     && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_ID)" == redis-unofficial-builds \
     && "$(metadata_value "$root/PACKAGE-INFO" PACKAGE_VARIANT)" == macos15 \
     && "$(metadata_value "$root/PACKAGE-INFO" SERVICE_BACKEND)" == launchd \
     && "$(metadata_value "$root/PACKAGE-INFO" INSTALL_PREFIX)" == "$REDIS_PREFIX" ]] \
-    || die "The package metadata does not match the macOS/launchd contract."
+    || die "The package metadata does not match the macOS/launchd contract." "安装包元数据不符合 macOS/launchd 约定。"
   package_arch="$(metadata_value "$root/PACKAGE-INFO" PACKAGE_ARCH)"
   machine="$(uname -m)"
-  case "$machine:$package_arch" in x86_64:x64|arm64:arm64) ;; *) die "Package architecture does not match $machine." ;; esac
+  case "$machine:$package_arch" in x86_64:x64|arm64:arm64) ;; *) die "Package architecture does not match $machine." "安装包架构与 $machine 不匹配。" ;; esac
   [[ -x "$root/bin/redis-server" && ! -L "$root/bin/redis-server" \
     && -x "$root/bin/redis-cli" && ! -L "$root/bin/redis-cli" \
     && -f "$root/conf/redis.conf" && ! -L "$root/conf/redis.conf" \
     && -f "$root/launchd/io.github.ainuoyan.redis-unofficial.plist" && ! -L "$root/launchd/io.github.ainuoyan.redis-unofficial.plist" ]] \
-    || die "The package is incomplete or contains unsafe lifecycle inputs."
+    || die "The package is incomplete or contains unsafe lifecycle inputs." "安装包不完整，或包含不安全的生命周期操作输入。"
   version="$(metadata_value "$root/PACKAGE-INFO" REDIS_VERSION)"
   [[ "$version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] \
-    || die "The package declares an invalid Redis version."
-  [[ -d /var/tmp && ! -L /var/tmp ]] || die "/var/tmp is missing or unsafe."
+    || die "The package declares an invalid Redis version." "安装包声明的 Redis 版本无效。"
+  [[ -d /var/tmp && ! -L /var/tmp ]] || die "/var/tmp is missing or unsafe." "/var/tmp 不存在或不安全。"
   validation_dir="$(mktemp -d /var/tmp/redis-unofficial-validate.XXXXXX)"
   [[ -d "$validation_dir" && ! -L "$validation_dir" ]] \
-    || die "Unable to create a safe binary-validation directory."
+    || die "Unable to create a safe binary-validation directory." "无法创建安全的二进制验证目录。"
   chmod 0755 "$validation_dir"
   validation_binary="$validation_dir/redis-server"
   install -o root -g wheel -m 0755 "$root/bin/redis-server" "$validation_binary"
@@ -156,13 +168,13 @@ validate_package() {
     | sed -n 's/.* v=\([^ ]*\).*/\1/p')"; then
     rm -f -- "$validation_binary"
     rmdir -- "$validation_dir"
-    die "The Redis binary could not be executed as an unprivileged account."
+    die "The Redis binary could not be executed as an unprivileged account." "无法以低权限账号运行 Redis 二进制。"
   fi
   rm -f -- "$validation_binary"
   rmdir -- "$validation_dir"
-  [[ "$binary_version" == "$version" ]] || die "The package binary version does not match PACKAGE-INFO."
+  [[ "$binary_version" == "$version" ]] || die "The package binary version does not match PACKAGE-INFO." "安装包二进制版本与 PACKAGE-INFO 不一致。"
   /usr/bin/plutil -lint "$root/launchd/io.github.ainuoyan.redis-unofficial.plist" >/dev/null \
-    || die "The package launchd property list is invalid."
+    || die "The package launchd property list is invalid." "安装包的 launchd 属性列表无效。"
 }
 
 directory_service_value() {
@@ -191,9 +203,9 @@ ensure_service_account() {
   local gid uid
   if dscl . -read "/Groups/$REDIS_GROUP" >/dev/null 2>&1; then
     gid="$(directory_service_value "/Groups/$REDIS_GROUP" PrimaryGroupID)"
-    [[ "$gid" =~ ^[1-9][0-9]*$ ]] || die "Existing Redis group is invalid."
+    [[ "$gid" =~ ^[1-9][0-9]*$ ]] || die "Existing Redis group is invalid." "现有 Redis 用户组无效。"
   else
-    gid="$(unused_directory_id group)" || die "No unused system GID is available."
+    gid="$(unused_directory_id group)" || die "No unused system GID is available." "没有可用的未占用系统 GID。"
     dscl . -create "/Groups/$REDIS_GROUP"
     dscl . -create "/Groups/$REDIS_GROUP" PrimaryGroupID "$gid"
     dscl . -create "/Groups/$REDIS_GROUP" RealName "Redis unofficial service"
@@ -204,9 +216,9 @@ ensure_service_account() {
     [[ "$uid" =~ ^[1-9][0-9]*$ \
       && "$(directory_service_value "/Users/$REDIS_USER" PrimaryGroupID)" == "$gid" \
       && "$(directory_service_value "/Users/$REDIS_USER" UserShell)" == /usr/bin/false ]] \
-      || die "Existing Redis account is not compatible."
+      || die "Existing Redis account is not compatible." "现有 Redis 账号不兼容。"
   else
-    uid="$(unused_directory_id user)" || die "No unused system UID is available."
+    uid="$(unused_directory_id user)" || die "No unused system UID is available." "没有可用的未占用系统 UID。"
     dscl . -create "/Users/$REDIS_USER"
     dscl . -create "/Users/$REDIS_USER" UniqueID "$uid"
     dscl . -create "/Users/$REDIS_USER" PrimaryGroupID "$gid"
@@ -220,7 +232,7 @@ ensure_service_account() {
 write_default_config() {
   local source="$1" destination="$2" temporary
   [[ ! -e "$destination" && ! -L "$destination" ]] \
-    || die "Refusing to overwrite an existing Redis configuration: $destination"
+    || die "Refusing to overwrite an existing Redis configuration: $destination" "拒绝覆盖现有 Redis 配置：$destination"
   temporary="$(mktemp "${destination}.tmp.XXXXXX")"
   # Replace each managed directive at its first position and remove duplicates.
   # Missing defaults are added once; comments and unrelated settings stay intact.
@@ -292,7 +304,7 @@ validate_state() {
     && "$(metadata_value "$REDIS_STATE_FILE" PACKAGE_VARIANT)" == macos15 \
     && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_MANAGER)" == launchd \
     && "$(metadata_value "$REDIS_STATE_FILE" SERVICE_ID)" == "$REDIS_LABEL" ]] \
-    || die "The existing installation state is missing or invalid."
+    || die "The existing installation state is missing or invalid." "现有安装状态不存在或无效。"
 }
 
 install_program_files() {
@@ -367,14 +379,14 @@ refuse_nested_mounts() {
   local path device parent_device unexpected
   for path in "$@"; do
     [[ -e "$path" || -L "$path" ]] || continue
-    [[ -d "$path" && ! -L "$path" ]] || die "Recursive removal target is unsafe: $path"
+    [[ -d "$path" && ! -L "$path" ]] || die "Recursive removal target is unsafe: $path" "递归删除的目标不安全：$path"
     device="$(stat -f %d "$path")"
     parent_device="$(stat -f %d "$(dirname "$path")")"
     [[ "$device" == "$parent_device" ]] \
-      || die "Refusing to remove a mounted directory: $path"
+      || die "Refusing to remove a mounted directory: $path" "拒绝删除已挂载的目录：$path"
     unexpected="$(find -x "$path" -type d -exec stat -f '%d %N' {} \; \
       | awk -v expected="$device" '$1 != expected { print; exit }')"
     [[ -z "$unexpected" ]] \
-      || die "Refusing to remove a directory containing another filesystem: $unexpected"
+      || die "Refusing to remove a directory containing another filesystem: $unexpected" "拒绝删除包含其他文件系统的目录：$unexpected"
   done
 }

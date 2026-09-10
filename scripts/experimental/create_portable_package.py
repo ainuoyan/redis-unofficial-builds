@@ -21,6 +21,7 @@ from portable_contract import (
     EXPERIMENTAL_WORKFLOW,
     archive_name,
     backend_assets,
+    packaged_asset_bytes,
     packaging_patchset_sha256,
     require_regular_file,
     validate_identity,
@@ -274,6 +275,9 @@ Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted packag
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
+English is the default. Add --lang zh for Chinese, --lang en for English.
+默认英文；添加 --lang zh 切换中文。中文需要 UTF-8 终端，显示异常时切回 --lang en。
+
 主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、procps（pgrep）、tar
 及标准 POSIX 账号/文件工具。默认服务只监听
 /usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
@@ -287,6 +291,9 @@ Install:   sudo "$stage/redis/scripts/install.sh"
 Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
+
+English is the default. Add --lang zh for Chinese, --lang en for English.
+默认英文；添加 --lang zh 切换中文。中文需要 UTF-8 终端，显示异常时切回 --lang en。
 
 主机前提：macOS 15 或更高版本及管理员账号。默认服务只监听
 /usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
@@ -312,6 +319,23 @@ The window stays open to show the result. Purge asks for confirmation before
 removing configuration, data and logs. The same protected staging rules apply.
 资源管理器或 cmd.exe 可使用 scripts 中同名 .bat 入口（以管理员身份运行）。
 Purge-Redis.bat 会先确认，再彻底删除配置、数据和日志。
+
+English is the default. BAT: --lang zh / --lang en; PowerShell: -Lang zh / -Lang en.
+默认英文。BAT 使用 --lang zh 切换中文，PowerShell 使用 -Lang zh；en 切回英文。
+BAT stays ASCII; PowerShell scripts use UTF-8 with BOM. Do not save them as ANSI.
+中文需要支持 UTF-8 和中文字形的终端。请保留 PowerShell 脚本的 UTF-8 BOM；不要另存为 ANSI。
+Script output temporarily uses UTF-8 (also for paths in English messages), then restores the previous encoding.
+Redirected Chinese output must be read as UTF-8; if display is unreadable, select English.
+
+Direct start (no installation): scripts\Start-Redis.bat [--lang en|zh]
+Run from a writable extracted package as a normal user. Uses the existing
+conf\redis.conf with the package root as working directory. No configuration
+is generated or overridden; data paths follow that file (dir ./ means package root).
+Do not share data with another running Redis instance. Press Ctrl+C to stop.
+免安装启动：运行 scripts\Start-Redis.bat，中文可加 --lang zh，无需管理员权限。
+使用当前用户可写的解压目录，直接加载现有 conf\redis.conf；不生成或覆盖配置。
+工作目录为包根目录，数据路径按配置执行；不创建 portable 目录。不要与其他运行中的
+Redis 共用数据目录。前台运行时按 Ctrl+C 停止。
 
 Edit only C:\Program Files\Redis-Unofficial\conf\redis.conf, then run:
 Restart-Service -Name RedisUnofficial
@@ -569,6 +593,12 @@ def main() -> int:
             for relative, mode in backend_assets(args.variant).items():
                 source = require_regular_file(packaging_root, asset_root / relative)
                 copy_regular(source, package_root / relative, mode)
+                if args.variant == "windows-msys2" and relative.endswith((".bat", ".ps1")):
+                    # cmd.exe stays ASCII; Windows PowerShell 5.1 needs a BOM
+                    # to distinguish UTF-8 Chinese source from the system ANSI page.
+                    (package_root / relative).write_bytes(
+                        packaged_asset_bytes(source, args.variant, relative)
+                    )
             package_root.joinpath("README.txt").write_text(
                 package_readme(args, backend), encoding="utf-8"
             )

@@ -1,9 +1,33 @@
 @echo off
-setlocal
-rem Run as Administrator. The PowerShell entry point validates package trust.
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Update-Redis.ps1"
-set "redis_exit_code=%errorlevel%"
-echo.
-if not "%redis_exit_code%"=="0" echo Operation failed with exit code %redis_exit_code%.
-pause
-exit /b %redis_exit_code%
+setlocal DisableDelayedExpansion
+rem ASCII only: PowerShell owns localized output and temporary UTF-8 encoding.
+set "redis_lang=en"
+set "redis_help="
+
+:parse
+if "%~1"=="" goto run
+if /i "%~1"=="--help" goto help
+if /i not "%~1"=="--lang" goto usage
+if /i "%~2"=="en" (
+    set "redis_lang=en"
+) else if /i "%~2"=="zh" (
+    set "redis_lang=zh"
+) else (
+    goto usage
+)
+shift
+shift
+goto parse
+
+:help
+set "redis_help=-Help"
+shift
+goto parse
+
+:run
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Update-Redis.ps1" -Lang %redis_lang% -FromBatch %redis_help%
+exit /b %errorlevel%
+
+:usage
+echo Usage: Update-Redis.bat [--lang en^|zh] [--help]
+exit /b 2

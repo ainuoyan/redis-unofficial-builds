@@ -27,6 +27,29 @@ RSALv2、SSPLv1 或 AGPLv3。包必须保留已校验版本的准确许可证和
 Redis 名称与标识仍受官方
 [商标政策](https://redis.io/legal/trademark-policy/)约束。
 
+## 用户脚本语言与 Windows 直接启动
+
+安装、更新、卸载等用户脚本默认英文，不跟随系统语言。Shell 和 BAT 入口使用
+`--lang zh` 切换中文、`--lang en` 切换英文；PowerShell 使用 `-Lang zh` / `-Lang en`。
+Shell 仍兼容显式设置 `REDIS_INSTALL_LANG=zh_CN`。帮助、确认提示和脚本自身的错误
+支持双语；Redis 和系统命令的原始诊断保留原文，机器读取的状态、配置不翻译。
+Shell 中文输出需要终端按 UTF-8 解码。
+
+Windows BAT 仅包含 ASCII 字符；包内 PowerShell 脚本使用 UTF-8 BOM，以便
+Windows PowerShell 5.1 正确读取中文，Windows 脚本统一使用 CRLF 换行。
+脚本输出临时使用 UTF-8 控制台编码（也保留英文提示中的中文路径），退出时恢复；
+编码初始化失败时回退英文。
+这无法补齐终端缺少的中文字形，也无法修复日志查看器的错误解码。请使用支持 UTF-8
+和中文字形的终端，或切回英文。不要把 PowerShell 脚本另存为 ANSI 或移除 BOM。
+重定向的中文输出应按 UTF-8 读取。
+
+`scripts/Start-Redis.bat [--lang en|zh]` 以包根目录为工作目录，调用
+`bin/redis-server.exe` 并加载现有 `conf/redis.conf`。不安装服务、不提权、不生成
+配置、不创建 `portable` 目录，也不覆盖任何 Redis 设置。`dir ./` 等相对路径从
+包根目录解析。请使用当前用户可写的解压目录，不要与其他运行中的 Redis 共用数据
+目录。包内默认配置以前台方式运行，按 Ctrl+C 停止；程序或配置缺失时直接报错。
+BAT 仅在交互输入时暂停显示结果；Purge 仍须明确输入 Y 才执行生命周期变更。
+
 ## 平台矩阵
 
 Linux ARM64 的 glibc 和 musl 构建均向 jemalloc 显式传入

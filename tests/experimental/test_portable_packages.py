@@ -937,7 +937,7 @@ class PortablePackageTests(unittest.TestCase):
                 self.assertLess(
                     script.index("Assert-RedisBootstrapAcl -Path $bootstrapPath"),
                     script.index(
-                        "\n. ([IO.Path]::Combine($PSScriptRoot, 'Common-Redis.ps1'))"
+                        ". ([IO.Path]::Combine($PSScriptRoot, 'Common-Redis.ps1'))"
                     ),
                 )
 
@@ -1037,8 +1037,41 @@ refuse_nested_mounts "$2"
         for script in sorted((ROOT / "packaging/windows/scripts").glob("*.ps1")):
             data = script.read_bytes()
             self.assertTrue(data)
-            self.assertNotIn(b"\xef\xbb\xbf", data)
-            data.decode("ascii")
+            self.assertTrue(data.startswith(b"\xef\xbb\xbf"), script.name)
+            self.assertNotIn(b"\xef\xbb\xbf", data[3:])
+            data.decode("utf-8-sig")
+        for script in sorted((ROOT / "packaging/windows/scripts").glob("*.bat")):
+            script.read_bytes().decode("ascii")
+
+    def test_windows_archive_scripts_have_canonical_encoding_and_direct_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = self.create_and_validate(Path(directory), "windows-msys2", "x64")
+            with zipfile.ZipFile(archive) as package:
+                self.assertIn("redis/scripts/Start-Redis.bat", package.namelist())
+                self.assertIn("redis/scripts/Start-Redis.ps1", package.namelist())
+                for name in package.namelist():
+                    if not name.endswith((".bat", ".ps1")):
+                        continue
+                    with self.subTest(name=name):
+                        data = package.read(name)
+                        self.assertIn(b"\r\n", data)
+                        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+                        if name.endswith(".ps1"):
+                            self.assertTrue(data.startswith(b"\xef\xbb\xbf"))
+                            self.assertNotIn(b"\xef\xbb\xbf", data[3:])
+                            data.decode("utf-8-sig")
+                        else:
+                            data.decode("ascii")
+
+    def test_windows_script_normalization_is_checkout_independent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "message.ps1"
+            for ending in ("\n", "\r\n"):
+                source.write_bytes(("\ufeffWrite-Host '中文'" + ending).encode("utf-8"))
+                self.assertEqual(
+                    portable_contract.packaged_asset_bytes(source, "windows-msys2", "scripts/message.ps1"),
+                    "\ufeffWrite-Host '中文'\r\n".encode("utf-8"),
+                )
 
     def test_windows_source_adjustment_accepts_old_and_new_makefile_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

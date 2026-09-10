@@ -25,9 +25,9 @@ shift
 goto parse
 
 :run
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Uninstall-Redis.ps1" -Lang %redis_lang% -FromBatch -Purge -ConfirmPurge %redis_help%
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-Redis.ps1" -Lang %redis_lang% -FromBatch %redis_help%
 exit /b %errorlevel%
 
 :usage
-echo Usage: Purge-Redis.bat [--lang en^|zh] [--help]
+echo Usage: Start-Redis.bat [--lang en^|zh] [--help]
 exit /b 2
