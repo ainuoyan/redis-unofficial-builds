@@ -36,6 +36,16 @@ marks remain subject to the official
 
 ## Platform matrix
 
+Linux ARM64 glibc and musl builds explicitly pass `--with-lg-page=16` (64 KiB)
+to jemalloc so a 4 KiB build host does not constrain the runtime host. Builds
+retain their pinned userland baseline and freshly extracted source tree; both
+Redis and jemalloc must be rebuilt, not just the service scripts. This option
+does not change the kernel page size or THP settings. Before publishing new
+artifacts, verify reads/writes, RDB/AOF persistence, restarts, the full service
+lifecycle and memory usage on both ARM64 4 KiB and 64 KiB kernels. Build-argument
+tests alone do not establish native acceptance. Publish a new revision without
+overwriting existing assets. x64, macOS and Windows settings are unchanged.
+
 | Variant | Architectures | Build baseline | Service backend | Status |
 | --- | --- | --- | --- | --- |
 | `linux-glibc2.28` | x64, ARM64 | Digest-pinned Rocky Linux 8 user space | systemd | **Implemented** |

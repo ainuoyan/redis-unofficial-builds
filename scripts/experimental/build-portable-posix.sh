@@ -133,6 +133,10 @@ fi
 cd "$source_root"
 
 make_args=(BUILD_TLS=no)
+if [[ "$PACKAGE_VARIANT:$PACKAGE_ARCH" == linux-musl1.2:arm64 ]]; then
+  # Build-host page size must not limit the supported ARM64 runtime page size.
+  make_args+=(JEMALLOC_CONFIGURE_OPTS=--with-lg-page=16)
+fi
 if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
   python3 "$PROJECT_ROOT/scripts/experimental/prepare_windows_source.py" \
     --source-root "$source_root"
@@ -314,6 +318,10 @@ if [[ "$PACKAGE_VARIANT" == windows-msys2 ]]; then
 fi
 
 compiler="$(cc --version | sed -n '1p')"
+build_environment_description="$BUILD_ENVIRONMENT"
+if [[ "$PACKAGE_VARIANT:$PACKAGE_ARCH" == linux-musl1.2:arm64 ]]; then
+  build_environment_description+='; jemalloc configure options: --with-lg-page=16 (65536 bytes)'
+fi
 mkdir -p "$OUTPUT_DIR"
 package_args=(
   --source-root "$source_root"
@@ -326,7 +334,7 @@ package_args=(
   --packaging-revision "$PACKAGING_REVISION"
   --variant "$PACKAGE_VARIANT"
   --arch "$PACKAGE_ARCH"
-  --build-environment "$BUILD_ENVIRONMENT"
+  --build-environment "$build_environment_description"
   --compiler "$compiler"
   --package-status "$PACKAGE_STATUS"
   --build-workflow "$BUILD_WORKFLOW_PATH"
