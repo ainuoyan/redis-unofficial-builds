@@ -13,7 +13,7 @@ class JemallocPageSizeTests(unittest.TestCase):
         for path, start, end, variants in (
             (
                 "scripts/linux/build-redis.sh",
-                "make_args=()",
+                "make_args=(BUILD_TLS=no)",
                 "if [[ -x scripts/build.sh ]]; then",
                 ("linux-glibc2.28", "linux-glibc2.17-legacy"),
             ),
@@ -39,7 +39,7 @@ class JemallocPageSizeTests(unittest.TestCase):
                             ],
                             check=True, capture_output=True, text=True,
                         )
-                        expected = ["BUILD_TLS=no"] if "experimental" in path else []
+                        expected = ["BUILD_TLS=no"]
                         if variant.startswith("linux-") and arch == "arm64":
                             expected.append("JEMALLOC_CONFIGURE_OPTS=--with-lg-page=16")
                         self.assertEqual(result.stdout.split(), expected)

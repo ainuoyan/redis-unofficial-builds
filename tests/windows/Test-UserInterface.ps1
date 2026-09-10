@@ -70,6 +70,10 @@ try {
 $fixture = Join-Path $env:TEMP ('Redis UI 中文 % ' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
+    # TEMP can contain an 8.3 alias on hosted runners. PowerShell expands the
+    # entry's PSScriptRoot, so compare output and working directory to that same
+    # long-path spelling without weakening the Unicode assertions.
+    $fixture = (Get-Item -LiteralPath $fixture).FullName
     foreach ($name in @('bin', 'conf', 'scripts')) {
         New-Item -ItemType Directory -Path (Join-Path $fixture $name) | Out-Null
     }
@@ -98,7 +102,7 @@ public class RedisUiLaunchProbe {
     }
     $englishStart = Invoke-Entry $entry ''
     if ($englishStart.Code -ne 7 -or -not $englishStart.Output.Contains($config)) {
-        throw 'Default English output lost the Chinese configuration path.'
+        throw "Default English output lost the Chinese configuration path. Expected=$config; Code=$($englishStart.Code); stdout=$($englishStart.Output); stderr=$($englishStart.Error)"
     }
     $actual = [IO.File]::ReadAllLines((Join-Path $fixture 'invocation.txt'))
     if ($actual.Count -ne 3 -or $actual[0] -cne $fixture -or $actual[1] -cne '1' -or $actual[2] -cne 'conf/redis.conf') {

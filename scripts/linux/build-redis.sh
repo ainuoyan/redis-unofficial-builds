@@ -317,7 +317,7 @@ cd "redis-${REDIS_VERSION}"
 
 # A build host may use 4 KiB pages while the ARM64 runtime uses 64 KiB.
 # Pin the allocator page size in the fresh source tree, including recursive make.
-make_args=()
+make_args=(BUILD_TLS=no)
 if [[ "$PACKAGE_ARCH" == arm64 ]]; then
   make_args+=(JEMALLOC_CONFIGURE_OPTS=--with-lg-page=16)
 fi
@@ -326,9 +326,9 @@ if [[ -x scripts/build.sh ]]; then
   # Redis 8.10+ builds bundled modules by default. This backend intentionally
   # publishes the stable core profile; a full profile needs a separate variant
   # and pinned Rust/LLVM/CMake dependency chain.
-  make -j"$(nproc)" build redis BUILD_TLS=no "${make_args[@]}"
+  make -j"$(nproc)" build redis "${make_args[@]}"
 else
-  make -j"$(nproc)" BUILD_TLS=no "${make_args[@]}"
+  make -j"$(nproc)" "${make_args[@]}"
 fi
 [[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
   echo "Redis test runner must be a regular executable file." >&2
@@ -412,7 +412,7 @@ smoke_pid=""
 # execute source-controlled programs, so packaging belongs in a disposable build
 # environment without a live /usr/local/redis installation or unrelated secrets.
 install -d -m 0755 "$package_root"
-make PREFIX="$package_root" BUILD_TLS=no install "${make_args[@]}"
+make PREFIX="$package_root" install "${make_args[@]}"
 
 install -d -m 0755 "$package_root/conf"
 awk '
