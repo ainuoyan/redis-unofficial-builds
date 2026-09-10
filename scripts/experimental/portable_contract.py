@@ -97,6 +97,10 @@ BACKENDS = {
             "scripts/Install-Redis.ps1": 0o644,
             "scripts/Update-Redis.ps1": 0o644,
             "scripts/Uninstall-Redis.ps1": 0o644,
+            "scripts/Install-Redis.bat": 0o644,
+            "scripts/Update-Redis.bat": 0o644,
+            "scripts/Uninstall-Redis.bat": 0o644,
+            "scripts/Purge-Redis.bat": 0o644,
         },
     },
 }

@@ -333,6 +333,11 @@ Windows 生命周期入口在加载 `Common-Redis.ps1` 前校验所有权、ACL 
 由提升权限的管理员把包解压到 `Program Files` 等可信系统目录后运行；普通用户所有的
 Downloads 或临时目录会被拒绝。
 
+`scripts` 同时提供 `Install-Redis.bat`、`Update-Redis.bat`、
+`Uninstall-Redis.bat` 和 `Purge-Redis.bat`，供资源管理器/cmd.exe 使用。准备好受保护
+暂存目录后，以管理员身份运行；入口调用同一套 PowerShell 生命周期脚本，保留退出码，
+并暂停窗口以便查看结果。`Purge-Redis.bat` 删除数据前会要求确认。
+
 新服务使用 LocalService，而非 LocalSystem。更新旧 LocalSystem 安装时保留服务注册，
 并迁移为 LocalService；回滚恢复原账户。遇到自定义服务账户会在替换前拒绝，
 不会默默覆盖。创建、更新和回滚都配置有界 SCM 故障恢复策略。原生验收必须检查

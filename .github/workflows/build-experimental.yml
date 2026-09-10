@@ -773,6 +773,7 @@ jobs:
           ./tests/windows/Test-ManagedRedisConfig.ps1
           ./tests/windows/Test-ServicePolicy.ps1
           ./tests/windows/Test-PathTrust.ps1
+          ./tests/windows/Test-BatchEntrypoints.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
@@ -819,7 +820,7 @@ jobs:
           & icacls.exe $stage /setowner '*S-1-5-32-544' /T /C | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Unable to set staging tree ownership.' }
           & icacls.exe $stage /inheritance:r /grant:r `
-            '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+            '*S-1-5-18:F' '*S-1-5-32-544:F' /T /C | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the staging tree.' }
           $scripts = Join-Path $stage 'redis\scripts'
           $prefix = 'C:\Program Files\Redis-Unofficial'

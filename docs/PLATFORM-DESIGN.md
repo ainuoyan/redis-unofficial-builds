@@ -432,6 +432,12 @@ before loading `Common-Redis.ps1`. Run them only from a package tree extracted
 by an elevated administrator beneath a trusted system directory such as
 `Program Files`; user-owned Downloads or temporary directories are rejected.
 
+The `scripts` directory also includes `Install-Redis.bat`, `Update-Redis.bat`,
+`Uninstall-Redis.bat`, and `Purge-Redis.bat` for Explorer/cmd.exe users. Run as
+administrator after preparing the protected staging tree. These call the same
+PowerShell lifecycle scripts, preserve their exit codes, and keep the window open
+to show the result. `Purge-Redis.bat` asks for confirmation before deleting data.
+
 New services use LocalService, not LocalSystem. Updating a legacy LocalSystem
 installation migrates it to LocalService while retaining its service registration;
 rollback restores the previous account. Unexpected custom accounts are rejected

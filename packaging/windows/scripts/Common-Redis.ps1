@@ -89,8 +89,7 @@ function Assert-RedisTrustedAcl {
         throw "Path owner is not trusted for an elevated lifecycle operation: $Path"
     }
     $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor
-        [Security.AccessControl.FileSystemRights]::Modify -bor
-        [Security.AccessControl.FileSystemRights]::FullControl -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
         [Security.AccessControl.FileSystemRights]::Delete -bor
         [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
         [Security.AccessControl.FileSystemRights]::TakeOwnership
@@ -139,8 +138,9 @@ function Set-RedisAdministrativeTreeAcl {
     param([Parameter(Mandatory = $true)][string]$Path)
     & icacls.exe $Path /setowner '*S-1-5-32-544' /T /C | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to set administrative tree ownership: $Path" }
+    # /T includes ordinary files: directory-only (OI)(CI) grants leave them unreadable.
     & icacls.exe $Path /inheritance:r /grant:r `
-        '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+        '*S-1-5-18:F' '*S-1-5-32-544:F' /T /C | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to secure administrative tree: $Path" }
 }
 
@@ -223,6 +223,8 @@ function Test-RequiredPackageFiles {
         'bin\RedisService.exe', 'bin\msys-2.0.dll', 'conf\redis.conf',
         'conf\sentinel.conf', 'scripts\Common-Redis.ps1', 'scripts\Install-Redis.ps1',
         'scripts\Update-Redis.ps1', 'scripts\Uninstall-Redis.ps1',
+        'scripts\Install-Redis.bat', 'scripts\Update-Redis.bat',
+        'scripts\Uninstall-Redis.bat', 'scripts\Purge-Redis.bat',
         'MSYS2-RUNTIME-NOTICES.txt'
     )
     foreach ($relative in $required) {
@@ -241,6 +243,8 @@ function Assert-RedisPackageInventory {
         'bin\RedisService.exe', 'conf\redis.conf', 'conf\sentinel.conf',
         'scripts\Common-Redis.ps1', 'scripts\Install-Redis.ps1',
         'scripts\Update-Redis.ps1', 'scripts\Uninstall-Redis.ps1',
+        'scripts\Install-Redis.bat', 'scripts\Update-Redis.bat',
+        'scripts\Uninstall-Redis.bat', 'scripts\Purge-Redis.bat',
         'PACKAGE-INFO', 'BUILD-INFO', 'LICENSE.txt', 'README.txt',
         'THIRD_PARTY_NOTICES.md', 'UPSTREAM-CONTRIBUTOR-LICENSE.txt',
         'UPSTREAM-DEPENDENCY-NOTICES.txt', 'MSYS2-RUNTIME-NOTICES.txt'

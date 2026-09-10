@@ -300,11 +300,18 @@ Prepare:   $stage = Join-Path $env:ProgramFiles ('Redis-Unofficial-Staging-' + [
            icacls $stage /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
            Expand-Archive -LiteralPath .\{package_archive} -DestinationPath $stage
            icacls $stage /setowner '*S-1-5-32-544' /T /C
-           icacls $stage /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C
+           icacls $stage /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' /T /C
 Install:   & "$stage\redis\scripts\Install-Redis.ps1"
 Update:    & "$stage\redis\scripts\Update-Redis.ps1"   (use a newly extracted package)
 Uninstall: & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1'
 Purge:     & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1' -Purge
+
+For Explorer or cmd.exe, use Install-Redis.bat, Update-Redis.bat,
+Uninstall-Redis.bat or Purge-Redis.bat in scripts (Run as administrator).
+The window stays open to show the result. Purge asks for confirmation before
+removing configuration, data and logs. The same protected staging rules apply.
+资源管理器或 cmd.exe 可使用 scripts 中同名 .bat 入口（以管理员身份运行）。
+Purge-Redis.bat 会先确认，再彻底删除配置、数据和日志。
 
 Edit only C:\Program Files\Redis-Unofficial\conf\redis.conf, then run:
 Restart-Service -Name RedisUnofficial

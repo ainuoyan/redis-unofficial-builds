@@ -1,3 +1,5 @@
+param([string]$CommonPath = (Join-Path $PSScriptRoot '../../packaging/windows/scripts/Common-Redis.ps1'))
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -6,8 +8,7 @@ if ($env:OS -cne 'Windows_NT') {
     return
 }
 
-$commonPath = Join-Path $PSScriptRoot '../../packaging/windows/scripts/Common-Redis.ps1'
-. $commonPath
+. $CommonPath
 
 function Assert-Throws {
     param(
@@ -30,6 +31,16 @@ try {
     [IO.File]::WriteAllText($file, 'trusted', [Text.Encoding]::UTF8)
     & icacls.exe $stage /setowner '*S-1-5-32-544' /T /C | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to prepare the trusted owner fixture.' }
+    Assert-RedisTrustedTree -Path $stage
+
+    Set-RedisAdministrativeTreeAcl -Path $stage
+    Assert-RedisTrustedTree -Path $stage
+    if ([IO.File]::ReadAllText($file, [Text.Encoding]::UTF8) -cne 'trusted') {
+        throw 'Administrative tree protection made the backup unreadable.'
+    }
+
+    & icacls.exe $file /grant '*S-1-5-19:RX' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to prepare the read-only service fixture.' }
     Assert-RedisTrustedTree -Path $stage
 
     & icacls.exe $file /grant '*S-1-5-32-545:M' | Out-Null
