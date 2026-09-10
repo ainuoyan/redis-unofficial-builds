@@ -775,6 +775,7 @@ jobs:
           ./tests/windows/Test-PathTrust.ps1
           ./tests/windows/Test-BatchEntrypoints.ps1
           ./tests/windows/Test-UserInterface.ps1
+          ./tests/windows/Test-LifecycleInvocation.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
@@ -826,6 +827,16 @@ jobs:
           $scripts = Join-Path $stage 'redis\scripts'
           $prefix = 'C:\Program Files\Redis-Unofficial'
           $cli = Join-Path $prefix 'bin\redis-cli.exe'
+
+          function Invoke-RedisLifecycleScript {
+            param([string]$Name, [switch]$Purge)
+            $scriptArguments = @{}
+            if ($Purge) { $scriptArguments['Purge'] = $true }
+            & (Join-Path $scripts "$Name-Redis.ps1") @scriptArguments
+            if ($LASTEXITCODE -ne 0) {
+              throw "$Name-Redis.ps1 failed with exit code $LASTEXITCODE."
+            }
+          }
 
           function Wait-RedisReady {
             param([string]$Password = '', [string]$Address = '127.0.0.1', [int]$Port = 6379)
@@ -888,9 +899,9 @@ jobs:
 
           $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 6379)
           $conflictRejected = $false
+          $listener.Start()
           try {
-            $listener.Start()
-            & (Join-Path $scripts 'Install-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Install
           } catch {
             $conflictRejected = $true
           } finally {
@@ -903,11 +914,11 @@ jobs:
           }
 
           try {
-            & (Join-Path $scripts 'Install-Redis.ps1')
-            & (Join-Path $scripts 'Install-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Install
+            Invoke-RedisLifecycleScript -Name Install
             $installedCommon = Join-Path $prefix 'scripts\Common-Redis.ps1'
             [IO.File]::AppendAllText($installedCommon, "`n# previous packaging revision`n")
-            & (Join-Path $scripts 'Update-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Update
             if ((Get-FileHash $installedCommon).Hash -cne
                 (Get-FileHash (Join-Path $scripts 'Common-Redis.ps1')).Hash) {
               throw 'Same-version update did not refresh lifecycle scripts.'
@@ -927,7 +938,7 @@ jobs:
             }
             if ($changed.ReturnValue -ne 0) { throw 'Cannot prepare the legacy account fixture.' }
             Start-RedisServiceBounded
-            & (Join-Path $scripts 'Update-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Update
             Wait-RedisReady
             Assert-RedisServicePolicy
 
@@ -972,7 +983,7 @@ jobs:
             Wait-RedisReady
             Assert-RedisServicePolicy
 
-            & (Join-Path $scripts 'Uninstall-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Uninstall
             if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {
               throw 'RedisUnofficial service remained after ordinary uninstall.'
             }
@@ -985,7 +996,7 @@ jobs:
               }
             }
 
-            & (Join-Path $scripts 'Update-Redis.ps1')
+            Invoke-RedisLifecycleScript -Name Update
             Wait-RedisReady
             Assert-RedisServicePolicy
 
@@ -1052,7 +1063,7 @@ jobs:
             Copy-Item -LiteralPath (Join-Path $stage 'redis\bin\redis-cli.exe') -Destination $candidateWrapper -Force
             $updateFailed = $false
             try {
-              & (Join-Path $scripts 'Update-Redis.ps1')
+              Invoke-RedisLifecycleScript -Name Update
             } catch {
               $updateFailed = $true
             } finally {
@@ -1082,7 +1093,7 @@ jobs:
           } finally {
             Remove-Item Env:REDISCLI_AUTH -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath (Join-Path $prefix '.redis-package-state.json')) {
-              & (Join-Path $scripts 'Uninstall-Redis.ps1') -Purge
+              Invoke-RedisLifecycleScript -Name Uninstall -Purge
             }
           }
           if (Get-Service -Name RedisUnofficial -ErrorAction SilentlyContinue) {

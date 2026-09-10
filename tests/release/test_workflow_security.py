@@ -130,6 +130,14 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("REDIS_HASHES_COMMIT", self.workflow)
         self.assertIn("[0-9]{0,5}", self.workflow)
 
+    def test_windows_lifecycle_calls_check_exit_codes(self) -> None:
+        self.assertIn('Test-LifecycleInvocation.ps1', self.experimental_workflow)
+        self.assertIn('function Invoke-RedisLifecycleScript', self.experimental_workflow)
+        self.assertIn('throw "$Name-Redis.ps1 failed with exit code $LASTEXITCODE."',
+                      self.experimental_workflow)
+        self.assertNotRegex(self.experimental_workflow,
+                            r"& \(Join-Path \$scripts '(?:Install|Update|Uninstall)-Redis.ps1'\)")
+
     def test_only_explicit_build_only_force_rebuild_bypasses_old_assets(self) -> None:
         prepare = self.workflow.split("          release_exists=false\n", 1)[1]
         bypass, existing = prepare.split("          elif jq -e", 1)
