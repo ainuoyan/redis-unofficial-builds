@@ -88,6 +88,11 @@ Windows packages currently use `-O0` for MSYS2 compatibility. Windows does not
 run the complete upstream Redis test suite; it runs protocol smoke tests and
 native lifecycle acceptance. Optimized Windows builds remain unvalidated.
 
+Redis 8.8.2's reviewed test-only patch scales the replica-flush defrag test's
+fragmentation allowance with jemalloc's page size (2 MiB at 4 KiB, 32 MiB at
+64 KiB). It retains the defrag-start, sync, stop, and empty-database assertions;
+it does not skip the test or change Redis runtime defaults.
+
 Acceptance covers real binary architecture/runtime checks; glibc symbol
 ceilings; Redis build tests and protocol smoke tests; install/update/uninstall
 idempotency; persisted-data recovery; injected update rollback on OpenRC,

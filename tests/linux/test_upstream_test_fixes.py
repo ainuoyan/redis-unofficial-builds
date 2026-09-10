@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -372,7 +373,7 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set max 950", patch_text)
         self.assertIn("$max >= 450 & $max <= 1150", patch_text)
 
-    def test_redis_882_patch_only_widens_latency_upper_bounds(self) -> None:
+    def test_redis_882_patch_only_changes_reviewed_tests(self) -> None:
         patch_text = PATCHER.REDIS_882_PATCH_FILE.read_text(encoding="utf-8")
         headers = [
             line
@@ -383,7 +384,9 @@ class UpstreamTestFixTests(unittest.TestCase):
             headers,
             [
                 "diff --git a/tests/unit/latency-monitor.tcl "
-                "b/tests/unit/latency-monitor.tcl"
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
             ],
         )
         self.assertNotIn("../", patch_text)
@@ -392,6 +395,105 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set min 250", patch_text)
         self.assertIn("set max 950", patch_text)
         self.assertIn("$max >= 450 & $max <= 1150", patch_text)
+
+    def _redis_882_source(self, root: Path) -> tuple[Path, Path]:
+        targets = self._source_tree(root, PATCHER.REDIS_882_PATCH_TARGETS)
+        targets[0].write_text(
+            "        set min 250\n"
+            "        set max 450\n"
+            "        foreach event $res {\n"
+            "\n"
+            "            if {!$::no_latency} {\n"
+            "                assert {$max >= 450 & $max <= 650}\n"
+            "                assert {$time == $last_time}\n",
+            encoding="utf-8",
+        )
+        targets[1].write_text(
+            "                $replica config set active-defrag-cycle-max 75\n"
+            "                $replica config set active-defrag-ignore-bytes 2mb\n"
+            "\n"
+            "                # add a mass of string keys\n"
+            "                set count 0\n"
+            "                for {set j 0} {$j < 500000} {incr j} {\n"
+            "\n        }\n"
+            "    } {} {defrag external:skip tsan:skip debug_defrag:skip cluster}\n"
+            "\n"
+            '    start_cluster 1 0 {tags {"defrag external:skip tsan:skip '
+            'debug_defrag:skip cluster needs:debug"} overrides {appendonly yes '
+            'auto-aof-rewrite-percentage 0 save "" loglevel notice}} {\n',
+            encoding="utf-8",
+        )
+        return targets
+
+    def test_redis_882_real_patch_is_applied_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_882_source(root)
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.8.2", root),
+                f"applied:{PATCHER.REDIS_882_FIX_ID}",
+            )
+            patched = tuple(target.read_bytes() for target in targets)
+            self.assertIn(b"set max 950", patched[0])
+            self.assertIn(b"512 * [$replica debug mallctl arenas.page]", patched[1])
+            self.assertIn(b"debug_defrag:skip cluster needs:debug}", patched[1])
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.8.2", root),
+                f"present:{PATCHER.REDIS_882_FIX_ID}",
+            )
+            self.assertEqual(tuple(target.read_bytes() for target in targets), patched)
+
+    def test_redis_882_unknown_defrag_source_leaves_both_files_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_882_source(root)
+            targets[1].write_text("unreviewed defrag test\n", encoding="utf-8")
+            original = tuple(target.read_bytes() for target in targets)
+            with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                PATCHER.apply_upstream_test_fixes("8.8.2", root)
+            self.assertEqual(tuple(target.read_bytes() for target in targets), original)
+
+    @unittest.skipUnless(shutil.which("tclsh"), "Tcl is required for page-size checks")
+    def test_redis_882_defrag_threshold_uses_allocator_pages(self) -> None:
+        patch_text = PATCHER.REDIS_882_PATCH_FILE.read_text(encoding="utf-8")
+        defrag_patch = patch_text.split("diff --git a/tests/unit/memefficiency.tcl", 1)[1]
+        threshold_hunk = defrag_patch.split("@@", 2)[2].split("\n@@", 1)[0]
+        added_lines = [
+            line[1:] for line in threshold_hunk.splitlines()
+            if line.startswith("+") and not line.startswith("+++")
+        ]
+        for allocator, page_size, expected in (
+            ("jemalloc-5.3.0", 4096, 2097152),
+            ("jemalloc-5.3.0", 8192, 4194304),
+            ("jemalloc-5.3.0", 16384, 8388608),
+            ("jemalloc-5.3.0", 65536, 33554432),
+            ("libc", 65536, 2097152),
+        ):
+            with self.subTest(allocator=allocator, page_size=page_size):
+                harness = f"set allocator {allocator}\nset page_size {page_size}\n" + """
+set replica replica
+set threshold 2097152
+proc s {name} { return $::allocator }
+proc replica {args} {
+    if {$args eq "debug mallctl arenas.page"} {
+        if {![string match {*jemalloc*} $::allocator]} { error "unexpected mallctl" }
+        return $::page_size
+    }
+    if {[lrange $args 0 2] ne "config set active-defrag-ignore-bytes"} {
+        error "unexpected replica command"
+    }
+    set ::threshold [lindex $args 3]
+}
+if {[catch {
+""" + "\n".join(added_lines) + """
+} failure]} { puts stderr $failure; exit 1 }
+puts $threshold
+"""
+                result = subprocess.run(
+                    [shutil.which("tclsh")], input=harness, text=True,
+                    capture_output=True, check=True, timeout=10,
+                )
+                self.assertEqual(result.stdout.strip(), str(expected))
 
 
 if __name__ == "__main__":

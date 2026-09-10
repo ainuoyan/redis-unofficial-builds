@@ -707,7 +707,7 @@ class PortablePackageTests(unittest.TestCase):
             portable_contract.patchset_paths("macos15"),
         )
         self.assertIn(
-            Path("packaging/linux/patches/redis-8.8.2-latency-test-timeout.patch"),
+            Path("packaging/linux/patches/redis-8.8.2-test-stability.patch"),
             portable_contract.patchset_paths("macos15"),
         )
         self.assertNotIn(
@@ -723,7 +723,7 @@ class PortablePackageTests(unittest.TestCase):
             portable_contract.patchset_paths("windows-msys2"),
         )
         self.assertNotIn(
-            Path("packaging/linux/patches/redis-8.8.2-latency-test-timeout.patch"),
+            Path("packaging/linux/patches/redis-8.8.2-test-stability.patch"),
             portable_contract.patchset_paths("windows-msys2"),
         )
         self.assertNotIn('${TMPDIR:-/tmp}/redis-portable', script)

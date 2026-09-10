@@ -97,10 +97,10 @@ class BuildScriptTests(unittest.TestCase):
             "present:redis-8.2.9-latency-test-timeout-stability", script
         )
         self.assertIn(
-            "applied:redis-8.8.2-latency-test-timeout-stability", script
+            "applied:redis-8.8.2-latency-and-defrag-test-stability", script
         )
         self.assertIn(
-            "present:redis-8.8.2-latency-test-timeout-stability", script
+            "present:redis-8.8.2-latency-and-defrag-test-stability", script
         )
         self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
         self.assertNotIn("--daemonize yes", script)
