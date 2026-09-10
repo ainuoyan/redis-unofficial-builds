@@ -43,3 +43,6 @@ try {
     Remove-Item -LiteralPath $root.FullName
 }
 Write-Host 'Lifecycle invocation tests passed: zero/nonzero exit, exception, purge forwarding.'
+# GitHub's PowerShell wrapper returns LASTEXITCODE. Expected failure probes (or
+# an earlier test) must not leave a stale failure after all assertions passed.
+exit 0
