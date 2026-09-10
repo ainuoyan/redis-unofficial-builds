@@ -101,7 +101,7 @@ public class RedisUiLaunchProbe {
         throw 'Default English output lost the Chinese configuration path.'
     }
     $actual = [IO.File]::ReadAllLines((Join-Path $fixture 'invocation.txt'))
-    if ($actual.Count -ne 3 -or $actual[0] -cne $fixture -or $actual[1] -cne '1' -or $actual[2] -cne $config) {
+    if ($actual.Count -ne 3 -or $actual[0] -cne $fixture -or $actual[1] -cne '1' -or $actual[2] -cne 'conf/redis.conf') {
         throw 'Direct start changed the working directory contract or configuration arguments.'
     }
     if ([IO.File]::ReadAllText($config) -cne $before -or (Test-Path -LiteralPath (Join-Path $fixture 'portable'))) {

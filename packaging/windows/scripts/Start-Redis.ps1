@@ -47,7 +47,9 @@ try {
     Write-Host (Get-RedisText 'No service is installed. Data paths follow the configuration. Press Ctrl+C to stop.' '不安装服务。数据路径按配置执行。按 Ctrl+C 停止。')
     Push-Location -LiteralPath $packageRoot
     try {
-        & $server $config
+        # MSYS2 Redis does not accept a native Windows absolute config path.
+        # Resolve it from the package working directory using POSIX separators.
+        & $server 'conf/redis.conf'
         $redisExitCode = $LASTEXITCODE
     } finally {
         Pop-Location
