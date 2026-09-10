@@ -94,6 +94,7 @@ The resulting actions are:
 | `plan_new_release` | No Release exists; all enabled platform and release metadata assets are missing | Add version and platform rows |
 | `skip_complete` | The published Release name inventory exactly matches all 21 names | Add no rows |
 | `blocked_nonfinal_release_state` | A canonical stable Release is a draft or prerelease | Report a blocking item; add no rows |
+| `blocked_unexpected_release_tag` | A Release exists for the version under a tag other than the configured `Redis-X.Y.Z[-rN]` tag | Report a blocking item; add no rows |
 | `blocked_incomplete_immutable_release` | An existing Release lacks any required package or release-level metadata file | Report a blocking item; add no rows |
 | `blocked_unexpected_immutable_release_assets` | All required names exist, but the Release also has an extra asset | Report a blocking item; add no rows |
 | `blocked_no_official_stable_release` | A full run found no stable official SHA-256 record for an enrolled series | Report a blocking item; add no rows |
@@ -275,6 +276,7 @@ Release 级元数据属于强制约定，不是可选附件。动作含义如下
 | `plan_new_release` | Release 不存在，全部启用平台与元数据产物均待创建 | 加入版本和平台行 |
 | `skip_complete` | 正式 Release 的名称清单精确匹配 21 个名称 | 不加入 |
 | `blocked_nonfinal_release_state` | 规范稳定 Release 是草稿或预发布 | 报告阻塞项，不加入 |
+| `blocked_unexpected_release_tag` | 该版本已存在 Release，但 Tag 不是配置的 `Redis-X.Y.Z[-rN]` | 报告阻塞项，不加入 |
 | `blocked_incomplete_immutable_release` | 已有 Release 缺少任一包或 Release 级元数据 | 报告阻塞项，不加入 |
 | `blocked_unexpected_immutable_release_assets` | 必需名称均存在，但 Release 还含额外产物 | 报告阻塞项，不加入 |
 | `blocked_no_official_stable_release` | 完整运行时，已登记系列没有任何官方稳定版 SHA-256 记录 | 报告阻塞项，不加入 |

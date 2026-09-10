@@ -4,8 +4,14 @@ $ErrorActionPreference = 'Stop'
 $script:RedisPrefix = 'C:\Program Files\Redis-Unofficial'
 $script:RedisServiceName = 'RedisUnofficial'
 $script:RedisStateFile = Join-Path $script:RedisPrefix '.redis-package-state.json'
-$script:RedisBackupRoot = 'C:\ProgramData\Redis-Unofficial\Backups'
+$script:RedisDataRoot = 'C:\ProgramData\Redis-Unofficial'
+$script:RedisBackupRoot = Join-Path $script:RedisDataRoot 'Backups'
 $script:LifecycleMutex = $null
+$script:RedisTrustedOwnerSids = @(
+    'S-1-5-18',
+    'S-1-5-32-544',
+    'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+)
 
 function Write-RedisInfo {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -66,6 +72,112 @@ function Assert-NoReparsePoint {
             }
         }
     }
+}
+
+function Assert-RedisTrustedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Ancestor
+    )
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Reparse points are not accepted: $Path"
+    }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($script:RedisTrustedOwnerSids -notcontains $ownerSid) {
+        throw "Path owner is not trusted for an elevated lifecycle operation: $Path"
+    }
+    $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor
+        [Security.AccessControl.FileSystemRights]::Modify -bor
+        [Security.AccessControl.FileSystemRights]::FullControl -bor
+        [Security.AccessControl.FileSystemRights]::Delete -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [Security.AccessControl.FileSystemRights]::TakeOwnership
+    if ($Ancestor) {
+        $writeMask = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor
+            [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+    }
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    foreach ($rule in $rules) {
+        if (($rule.PropagationFlags -band
+                [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+            $rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            $script:RedisTrustedOwnerSids -notcontains $rule.IdentityReference.Value -and
+            ([int64]$rule.FileSystemRights -band [int64]$writeMask) -ne 0) {
+            throw "Path grants write or replacement access to an untrusted principal: $Path"
+        }
+    }
+}
+
+function Assert-RedisTrustedTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $root = [IO.Path]::GetFullPath($Path)
+    $current = [IO.DirectoryInfo]::new($root)
+    while ($null -ne $current) {
+        Assert-RedisTrustedAcl -Path $current.FullName -Ancestor
+        $current = $current.Parent
+    }
+    Assert-RedisTrustedAcl -Path $root
+    foreach ($child in Get-ChildItem -LiteralPath $root -Force -Recurse -ErrorAction Stop) {
+        Assert-RedisTrustedAcl -Path $child.FullName
+    }
+}
+
+function Set-RedisAdministrativeAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    & icacls.exe $Path /setowner '*S-1-5-32-544' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to set the administrative owner: $Path" }
+    & icacls.exe $Path /inheritance:r /grant:r `
+        '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to secure administrative path: $Path" }
+}
+
+function Set-RedisAdministrativeTreeAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    & icacls.exe $Path /setowner '*S-1-5-32-544' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to set administrative tree ownership: $Path" }
+    & icacls.exe $Path /inheritance:r /grant:r `
+        '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to secure administrative tree: $Path" }
+}
+
+function Initialize-RedisBackupRoot {
+    foreach ($path in @($script:RedisDataRoot, $script:RedisBackupRoot)) {
+        if ([IO.Directory]::Exists($path)) {
+            Assert-RedisTrustedTree -Path $path
+        } elseif ([IO.File]::Exists($path)) {
+            throw "Backup path is not a directory: $path"
+        } else {
+            New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+            Set-RedisAdministrativeAcl -Path $path
+        }
+        Assert-RedisTrustedTree -Path $path
+    }
+}
+
+function New-RedisBackupDirectory {
+    param([Parameter(Mandatory = $true)][string]$Version)
+    Initialize-RedisBackupRoot
+    $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $name = "$Version-$timestamp-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $path = Join-Path $script:RedisBackupRoot $name
+    New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+    Set-RedisAdministrativeAcl -Path $path
+    Assert-RedisBackupDirectory -Path $path
+    return $path
+}
+
+function Assert-RedisBackupDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $root = [IO.Path]::GetFullPath($script:RedisBackupRoot).TrimEnd('\')
+    $candidate = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if (-not $candidate.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Backup directory escaped the managed backup root.'
+    }
+    Assert-RedisTrustedTree -Path $candidate
 }
 
 function Read-PackageInfo {
@@ -152,7 +264,7 @@ function Test-RedisPackage {
     if ($env:PROCESSOR_ARCHITECTURE -cne 'AMD64') {
         throw "The Windows MSYS2 package requires an x64 host; found $($env:PROCESSOR_ARCHITECTURE)."
     }
-    Assert-NoReparsePoint -Path $PackageRoot -Recurse
+    Assert-RedisTrustedTree -Path $PackageRoot
     $info = Read-PackageInfo -PackageRoot $PackageRoot
     Test-RequiredPackageFiles -PackageRoot $PackageRoot
     Assert-RedisPackageInventory -PackageRoot $PackageRoot
@@ -274,6 +386,8 @@ function Copy-RedisProgramFiles {
 }
 
 function Set-RedisAccessControl {
+    & icacls.exe $script:RedisPrefix /setowner '*S-1-5-32-544' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to set the Redis installation owner.' }
     & icacls.exe $script:RedisPrefix /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the Redis installation prefix.' }
     foreach ($directory in @('data', 'log', 'run')) {

@@ -1462,8 +1462,10 @@ redis_effective_config_value() {
 
 normalize_config_scalar() {
   local value="$1"
-  if ((${#value} >= 2)) \
-    && [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+  if ((${#value} >= 2)) && {
+    [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] \
+      || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]
+  }; then
     value="${value:1:${#value}-2}"
   fi
   printf '%s\n' "$value"
@@ -1524,6 +1526,7 @@ redis_protocol_ready() {
     configured_bind_targets=(127.0.0.1)
   fi
   for candidate in "${configured_bind_targets[@]}"; do
+    candidate="$(normalize_config_scalar "$candidate")"
     candidate="${candidate#-}"
     case "$candidate" in
       "") ;;

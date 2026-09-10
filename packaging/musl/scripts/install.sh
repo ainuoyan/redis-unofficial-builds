@@ -1,13 +1,66 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+export PATH
+unset CDPATH ENV BASH_ENV
+
+bootstrap_fail() {
+  printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable package tree.\n' >&2
+  exit 1
+}
+
+bootstrap_validate_no_extended_acl() {
+  local path="$1" permissions
+  permissions="$(LC_ALL=C /bin/ls -ld -- "$path")" || bootstrap_fail
+  permissions="${permissions%% *}"
+  [[ "${#permissions}" == 10 \
+    || ( "${#permissions}" == 11 && "${permissions: -1}" == . ) ]] \
+    || bootstrap_fail
+}
+
+bootstrap_validate_path_chain() {
+  local current="$1" first=true owner mode mode_value metadata
+  while :; do
+    [[ -d "$current" && ! -L "$current" ]] || bootstrap_fail
+    metadata="$(stat -c '%u %a' -- "$current")" || bootstrap_fail
+    read -r owner mode <<<"$metadata"
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || bootstrap_fail
+    mode_value=$((8#$mode))
+    if (( (mode_value & 0022) != 0 )); then
+      if [[ "$first" == true ]] || (( (mode_value & 01000) == 0 )); then
+        bootstrap_fail
+      fi
+    fi
+    bootstrap_validate_no_extended_acl "$current"
+    [[ "$current" == / ]] && break
+    current="$(dirname -- "$current")"
+    first=false
+  done
+}
+
+bootstrap_validate_file() {
+  local path="$1" owner mode links mode_value metadata
+  [[ -f "$path" && ! -L "$path" ]] || bootstrap_fail
+  metadata="$(stat -c '%u %a %h' -- "$path")" || bootstrap_fail
+  read -r owner mode links <<<"$metadata"
+  [[ "$owner" == 0 && "$links" == 1 && "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || bootstrap_fail
+  mode_value=$((8#$mode))
+  (( (mode_value & 0022) == 0 && (mode_value & 07000) == 0 )) || bootstrap_fail
+  bootstrap_validate_no_extended_acl "$path"
+}
+
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+bootstrap_validate_path_chain "$SCRIPT_DIR"
+bootstrap_validate_file "${BASH_SOURCE[0]}"
+bootstrap_validate_file "$SCRIPT_DIR/common.sh"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
 [[ "$#" -eq 0 ]] || die "Usage: install.sh"
 require_root
-require_commands pgrep addgroup adduser awk cat chmod chown env findmnt flock getent grep install ldd mktemp mv rc-service rc-update rm rmdir sed seq setpriv sleep stat uname
+require_commands pgrep addgroup adduser awk cat chmod chown env find findmnt flock getent grep install ldd mktemp mv rc-service rc-update rm rmdir sed seq setpriv sleep stat uname
 acquire_lock
 package_root="$(package_root_from_script)"
 validate_package "$package_root"
@@ -34,7 +87,10 @@ rollback_install() {
   stop_service || die "Install rollback could not stop Redis; installation files were preserved."
   rc-update del "$REDIS_SERVICE" default >/dev/null 2>&1 || true
   rm -f -- "$REDIS_INIT_SCRIPT"
-  [[ -d "$REDIS_PREFIX" && ! -L "$REDIS_PREFIX" ]] && rm -rf -- "$REDIS_PREFIX"
+  if [[ -d "$REDIS_PREFIX" && ! -L "$REDIS_PREFIX" ]]; then
+    refuse_nested_mounts "$REDIS_PREFIX"
+    rm -rf -- "$REDIS_PREFIX"
+  fi
   exit "$status"
 }
 trap 'finish_lifecycle "$?" rollback_install' EXIT

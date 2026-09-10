@@ -772,6 +772,7 @@ jobs:
         run: |
           ./tests/windows/Test-ManagedRedisConfig.ps1
           ./tests/windows/Test-ServicePolicy.ps1
+          ./tests/windows/Test-PathTrust.ps1
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
@@ -807,8 +808,19 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $archive = "dist/Redis-$env:REDIS_VERSION-windows-msys2-x64.zip"
-          $stage = Join-Path $env:RUNNER_TEMP 'Redis 生命周期 验收'
+          $stage = Join-Path $env:ProgramFiles "Redis 生命周期 验收-$([Guid]::NewGuid().ToString('N'))"
+          New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+          & icacls.exe $stage /setowner '*S-1-5-32-544' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to set the staging owner.' }
+          & icacls.exe $stage /inheritance:r /grant:r `
+            '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the staging directory.' }
           Expand-Archive -LiteralPath $archive -DestinationPath $stage
+          & icacls.exe $stage /setowner '*S-1-5-32-544' /T /C | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to set staging tree ownership.' }
+          & icacls.exe $stage /inheritance:r /grant:r `
+            '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the staging tree.' }
           $scripts = Join-Path $stage 'redis\scripts'
           $prefix = 'C:\Program Files\Redis-Unofficial'
           $cli = Join-Path $prefix 'bin\redis-cli.exe'

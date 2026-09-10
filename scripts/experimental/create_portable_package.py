@@ -260,34 +260,49 @@ def write_metadata(
 
 
 def package_readme(args: argparse.Namespace, backend: dict[str, object]) -> str:
+    package_archive = archive_name(args.redis_version, args.variant, args.arch)
     lifecycle = {
-        "linux-musl1.2": """Host prerequisites: bash, OpenRC, getent, util-linux (flock, findmnt,
+        "linux-musl1.2": f"""Host prerequisites: bash, OpenRC, getent, util-linux (flock, findmnt,
 setpriv), procps (pgrep), tar, and standard POSIX account/file utilities. The default service
-listens only on /usr/local/redis/data/redis.sock.
+listens only on /usr/local/redis/data/redis.sock. Lifecycle scripts accept only a root-owned,
+non-group/world-writable staging package tree.
 
-Install:   sudo ./scripts/install.sh
-Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
+Prepare:   stage="$(sudo mktemp -d /var/tmp/redis-unofficial.XXXXXX)"
+           sudo tar -xzf {package_archive} -C "$stage"
+Install:   sudo "$stage/redis/scripts/install.sh"
+Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
 主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、procps（pgrep）、tar
 及标准 POSIX 账号/文件工具。默认服务只监听
-/usr/local/redis/data/redis.sock。""",
-        "macos15": """Host prerequisites: macOS 15 or newer and an Administrator account. The
-default service listens only on /usr/local/redis/data/redis.sock.
+/usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
+        "macos15": f"""Host prerequisites: macOS 15 or newer and an Administrator account. The
+default service listens only on /usr/local/redis/data/redis.sock. Lifecycle scripts accept only
+a root-owned, non-group/world-writable staging package tree.
 
-Install:   sudo ./scripts/install.sh
-Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
+Prepare:   stage="$(sudo mktemp -d /private/var/tmp/redis-unofficial.XXXXXX)"
+           sudo tar -xzf {package_archive} -C "$stage"
+Install:   sudo "$stage/redis/scripts/install.sh"
+Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
 主机前提：macOS 15 或更高版本及管理员账号。默认服务只监听
-/usr/local/redis/data/redis.sock。""",
-        "windows-msys2": r"""Host prerequisites: x64 Windows and an elevated Windows PowerShell 5.1
-or newer session. The default service endpoint is 127.0.0.1:6379.
+/usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
+        "windows-msys2": fr"""Host prerequisites: x64 Windows and an elevated Windows PowerShell 5.1
+or newer session. The default service endpoint is 127.0.0.1:6379. Lifecycle scripts accept only
+an Administrator/SYSTEM-controlled staging tree without untrusted write access or reparse points.
 
-Install:   .\scripts\Install-Redis.ps1
-Update:    .\scripts\Update-Redis.ps1   (run from the newly extracted package)
+Prepare:   $stage = Join-Path $env:ProgramFiles ('Redis-Unofficial-Staging-' + [Guid]::NewGuid().ToString('N'))
+           New-Item -ItemType Directory -Path $stage | Out-Null
+           icacls $stage /setowner '*S-1-5-32-544'
+           icacls $stage /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+           Expand-Archive -LiteralPath .\{package_archive} -DestinationPath $stage
+           icacls $stage /setowner '*S-1-5-32-544' /T /C
+           icacls $stage /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C
+Install:   & "$stage\redis\scripts\Install-Redis.ps1"
+Update:    & "$stage\redis\scripts\Update-Redis.ps1"   (use a newly extracted package)
 Uninstall: & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1'
 Purge:     & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1' -Purge
 
@@ -314,7 +329,8 @@ and removes it from the active installation after the new wrapper self-test.
 Run Update-Redis.ps1 from the new package even if the Redis version is unchanged.
 
 主机前提：x64 Windows，以及以管理员身份运行的 Windows PowerShell 5.1 或
-更高版本。默认服务端点为 127.0.0.1:6379。只需修改
+更高版本。生命周期脚本只接受由 Administrators/SYSTEM 控制、普通用户不可写且不含
+重解析点的暂存包目录。默认服务端点为 127.0.0.1:6379。只需修改
 C:\Program Files\Redis-Unofficial\conf\redis.conf，再执行
 Restart-Service -Name RedisUnofficial。包装器直接读取 bind、port、requirepass，
 支持本机非回环 IP 和自定义端口，不再需要 RedisService.json 或独立密码文件。

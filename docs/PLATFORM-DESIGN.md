@@ -383,7 +383,11 @@ recovery, injected update rollback, and purge. The container exercises
 `rc-service`/`rc-update` with an OpenRC softlevel but does not boot OpenRC as
 PID 1; this limit is explicit and no systemd compatibility is inferred. The
 OpenRC scripts have a distinct service/state contract and cannot depend on
-glibc or systemd.
+glibc or systemd. Lifecycle entry points validate their own files before
+loading shared code and require the entire extracted package tree to be
+root-owned and not group/world-writable. The OpenRC command line forces
+`--daemonize no`; graceful stop allows 600 seconds before the final kill
+fallback.
 
 ### macOS
 
@@ -395,7 +399,10 @@ includes update/rollback/uninstall scripts. The release gate runs fresh and
 repeated install, launchd restart, saved-data reload, ordinary-uninstall
 recovery, injected update rollback, and purge for both architectures. A
 universal archive is not published; x64 and ARM64 remain independently named
-and validated.
+and validated. Lifecycle entry points apply the same pre-load and full-tree
+staging trust checks as the musl backend. The launchd job forces
+`--daemonize no` and declares both soft and hard `NumberOfFiles` limits of
+65,536.
 
 ### Windows
 
@@ -416,7 +423,14 @@ bounded graceful shutdown and process-tree fallback, keeps the password out of
 CLI arguments, redacts its literal value in captured Redis output, records
 diagnostic output, and maintains protected installation
 state under the fixed prefix. Backups use
-`C:\ProgramData\Redis-Unofficial\Backups`.
+`C:\ProgramData\Redis-Unofficial\Backups`; the data root, backup root and each
+unpredictably named backup are owned and writable only by SYSTEM or
+Administrators. Rollback revalidates that trust boundary before restoring.
+
+Windows lifecycle entry points validate ownership, ACLs and reparse points
+before loading `Common-Redis.ps1`. Run them only from a package tree extracted
+by an elevated administrator beneath a trusted system directory such as
+`Program Files`; user-owned Downloads or temporary directories are rejected.
 
 New services use LocalService, not LocalSystem. Updating a legacy LocalSystem
 installation migrates it to LocalService while retaining its service registration;
@@ -483,6 +497,8 @@ and `data`. Failure and signal exits trigger rollback; stopping must succeed and
 the dedicated service account must have no remaining processes before replacement
 or deletion. An incomplete rollback retains the installation/backup and reports an
 error. Do not force-delete the directory while investigating that error.
+Every recursive removal rejects a mount at the target or below it, including
+ordinary uninstall and install/update rollback paths.
 
 Readiness uses the private Unix socket and accepts `PONG`, `NOAUTH` or `NOPERM` as
 Redis protocol responses; it is not a credential/ACL correctness test. Each CLI

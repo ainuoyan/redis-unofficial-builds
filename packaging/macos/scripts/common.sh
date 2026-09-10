@@ -90,8 +90,39 @@ package_root_from_script() {
   printf '%s\n' "$root"
 }
 
+validate_package_tree_security() {
+  local root="$1" path owner mode links mode_value metadata permissions
+  while IFS= read -r -d '' path; do
+    [[ ! -L "$path" ]] || die "Package tree contains a symbolic link: $path"
+    if [[ -d "$path" ]]; then
+      metadata="$(stat -f '%u %p' "$path")" \
+        || die "Unable to inspect package directory: $path"
+      read -r owner mode <<<"$metadata"
+      links=1
+    elif [[ -f "$path" ]]; then
+      metadata="$(stat -f '%u %p %l' "$path")" \
+        || die "Unable to inspect package file: $path"
+      read -r owner mode links <<<"$metadata"
+    else
+      die "Package tree contains an unsupported file type: $path"
+    fi
+    [[ "$owner" == 0 && "$links" == 1 && "$mode" =~ ^[0-7]{5,6}$ ]] \
+      || die "Package tree is not exclusively root controlled: $path"
+    mode_value=$((8#$mode))
+    (( (mode_value & 07022) == 0 )) \
+      || die "Package tree contains a writable or special-mode path: $path"
+    permissions="$(LC_ALL=C /bin/ls -lde "$path")" \
+      || die "Unable to inspect package ACLs: $path"
+    permissions="${permissions%% *}"
+    [[ "${#permissions}" == 10 \
+      || ( "${#permissions}" == 11 && "${permissions: -1}" == @ ) ]] \
+      || die "Package tree contains an extended ACL: $path"
+  done < <(find "$root" -xdev -print0)
+}
+
 validate_package() {
   local root="$1" machine package_arch package_status version binary_version validation_dir validation_binary
+  validate_package_tree_security "$root"
   [[ -f "$root/PACKAGE-INFO" && ! -L "$root/PACKAGE-INFO" ]] \
     || die "PACKAGE-INFO is missing or unsafe."
   package_status="$(metadata_value "$root/PACKAGE-INFO" PACKAGE_STATUS)"
@@ -333,8 +364,17 @@ wait_ready() {
 }
 
 refuse_nested_mounts() {
-  local device unexpected
-  device="$(stat -f %d "$REDIS_PREFIX")"
-  unexpected="$(find "$REDIS_PREFIX" -type d -exec stat -f '%d %N' {} \; | awk -v expected="$device" '$1 != expected { print; exit }')"
-  [[ -z "$unexpected" ]] || die "Refusing to remove an installation containing another filesystem: $unexpected"
+  local path device parent_device unexpected
+  for path in "$@"; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    [[ -d "$path" && ! -L "$path" ]] || die "Recursive removal target is unsafe: $path"
+    device="$(stat -f %d "$path")"
+    parent_device="$(stat -f %d "$(dirname "$path")")"
+    [[ "$device" == "$parent_device" ]] \
+      || die "Refusing to remove a mounted directory: $path"
+    unexpected="$(find -x "$path" -type d -exec stat -f '%d %N' {} \; \
+      | awk -v expected="$device" '$1 != expected { print; exit }')"
+    [[ -z "$unexpected" ]] \
+      || die "Refusing to remove a directory containing another filesystem: $unexpected"
+  done
 }

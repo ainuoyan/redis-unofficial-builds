@@ -3,12 +3,12 @@
 name="Redis unofficial service"
 description="Redis server from redis-unofficial-builds"
 command="/usr/local/redis/bin/redis-server"
-command_args="/usr/local/redis/conf/redis.conf"
+command_args="/usr/local/redis/conf/redis.conf --daemonize no"
 command_user="redis:redis"
 command_background="yes"
 pidfile="/run/redis-unofficial.pid"
 start_stop_daemon_args="--make-pidfile --chdir /usr/local/redis"
-retry="TERM/30/KILL/5"
+retry="TERM/600/KILL/5"
 
 depend() {
     need localmount

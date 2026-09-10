@@ -253,6 +253,28 @@ class ResolveVersionsTests(unittest.TestCase):
         )
         self.assertEqual(complete["release_plans"][0]["action"], "skip_complete")
 
+    def test_existing_release_under_unconfigured_revision_tag_is_blocked(self) -> None:
+        releases = resolver.index_releases(
+            [{
+                "tag_name": "Redis-7.4.11-r2",
+                "assets": self.complete_assets("7.4.11"),
+            }]
+        )
+
+        plan = resolver.resolve(
+            self.release_config,
+            self.platform_config,
+            self.parse_hashes(),
+            releases,
+            dt.date(2026, 8, 20),
+            requested_series={"7.4"},
+        )
+
+        item = plan["release_plans"][0]
+        self.assertEqual(item["action"], "blocked_unexpected_release_tag")
+        self.assertTrue(item["blocked"])
+        self.assertEqual(plan["build_matrix"], {"include": []})
+
     def test_release_revision_must_be_bounded_and_tracked(self) -> None:
         for version, revision in (("7.4.11", 1), ("7.4.11", True), ("9.9.1", 2)):
             config = copy.deepcopy(self.release_config)

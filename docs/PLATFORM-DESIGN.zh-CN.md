@@ -298,7 +298,9 @@ musl 包在按摘要固定的 musllinux 1.2 镜像中构建，必须使用 musl 
 基于更新的恢复、故障注入更新回滚及彻底卸载。该容器使用 OpenRC softlevel 执行
 `rc-service`/`rc-update`，但并非以 OpenRC 作为 PID 1 引导；文档明确保留此限制，
 不会据此推断 systemd 兼容性。OpenRC 脚本使用独立服务/状态约定，不依赖 glibc 或
-systemd。
+systemd。生命周期入口在加载公共代码前先校验自身，并要求完整解压包目录由 root
+所有且组和其他用户不可写。OpenRC 命令行强制 `--daemonize no`；优雅停止允许
+600 秒，超时后才进入最终强制终止兜底。
 
 ### macOS
 
@@ -306,7 +308,9 @@ systemd。
 校验器检查 Mach-O 架构、部署目标和允许的系统动态库路径。launchd 后端管理禁止登录
 账号，保留配置/数据，验证 PING，并包含更新/回滚/卸载脚本。正式门禁测试全新和
 重复安装、launchd 重启、已保存数据重载、普通卸载后的恢复、故障注入更新回滚和彻底
-卸载。不发布 universal 包；x64 和 ARM64 始终独立命名、独立校验。
+卸载。不发布 universal 包；x64 和 ARM64 始终独立命名、独立校验。生命周期入口采用
+与 musl 相同的加载前自校验和完整暂存树信任检查。launchd 作业强制
+`--daemonize no`，并把软、硬 `NumberOfFiles` 限制都设置为 65,536。
 
 ### Windows
 
@@ -322,7 +326,12 @@ MSYS2 x64 是已实现 Windows 后端。服务包装器以前台模式运行 Red
 把启动失败和子进程退出传递给 SCM，执行真实就绪检查，采用有界优雅
 关闭和进程树兜底，不把密码放入 CLI 参数，并在捕获的 Redis 输出中遮盖其原文，
 记录诊断输出，在固定安装前缀保存受保护状态；备份位于
-`C:\ProgramData\Redis-Unofficial\Backups`。
+`C:\ProgramData\Redis-Unofficial\Backups`。数据根目录、备份根目录及每个不可预测命名
+的备份都只允许 SYSTEM 或 Administrators 拥有和写入；回滚前会重新校验该信任边界。
+
+Windows 生命周期入口在加载 `Common-Redis.ps1` 前校验所有权、ACL 和重解析点。必须
+由提升权限的管理员把包解压到 `Program Files` 等可信系统目录后运行；普通用户所有的
+Downloads 或临时目录会被拒绝。
 
 新服务使用 LocalService，而非 LocalSystem。更新旧 LocalSystem 安装时保留服务注册，
 并迁移为 LocalService；回滚恢复原账户。遇到自定义服务账户会在替换前拒绝，
@@ -367,7 +376,8 @@ Windows Server 2022 门禁覆盖含空格/非 ASCII 的解压路径、端口冲�
 
 同版本更新也刷新程序文件，并保留 `conf`、`data`。异常或信号退出会进入回滚；
 替换或删除前必须停服成功，且专用服务账户下没有残留进程。回滚不完整时保留
-安装目录和备份并报错；排查期间不要强制删除目录。
+安装目录和备份并报错；排查期间不要强制删除目录。每个递归删除都会拒绝目标自身或
+其下的挂载点，普通卸载及安装/更新回滚路径也不例外。
 
 就绪检查使用私有 Unix socket，将 `PONG`、`NOAUTH` 或 `NOPERM` 识别为 Redis
 协议响应，但不代表凭据或 ACL 配置正确。每次 CLI 探测限制为约 3 秒。开启 TCP 或

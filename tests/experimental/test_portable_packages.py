@@ -797,7 +797,8 @@ class PortablePackageTests(unittest.TestCase):
         self.assertNotIn("Start-Service -Name RedisUnofficial", windows_job)
         self.assertNotIn("Restart-Service -Name RedisUnofficial", windows_job)
         self.assertIn("redis-unofficial-acceptance-persistence", windows_job)
-        self.assertIn("Redis 生命周期 验收", windows_job)
+        self.assertIn("Redis 生命周期 验收-", windows_job)
+        self.assertIn("/inheritance:r /grant:r", windows_job)
         self.assertIn("Port-conflict installation unexpectedly succeeded", windows_job)
         self.assertIn("bgsave", windows_job.lower())
         self.assertIn("redis-benchmark.exe", windows_job)
@@ -880,6 +881,78 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("consecutive_ready", common)
         self.assertIn("consecutive_ready=$((consecutive_ready + 1))", common)
 
+    def test_portable_service_managers_force_foreground_and_safe_limits(self) -> None:
+        openrc = (ROOT / "packaging/musl/openrc/redis").read_text(encoding="utf-8")
+        self.assertIn(
+            'command_args="/usr/local/redis/conf/redis.conf --daemonize no"',
+            openrc,
+        )
+        self.assertIn('retry="TERM/600/KILL/5"', openrc)
+
+        import plistlib
+
+        with (ROOT / "packaging/macos/launchd/io.github.ainuoyan.redis-unofficial.plist").open(
+            "rb"
+        ) as handle:
+            launchd = plistlib.load(handle)
+        self.assertEqual(
+            launchd["ProgramArguments"][-2:], ["--daemonize", "no"]
+        )
+        self.assertNotIn("LimitNOFILE", launchd)
+        self.assertEqual(
+            launchd["SoftResourceLimits"]["NumberOfFiles"], 65536
+        )
+        self.assertEqual(
+            launchd["HardResourceLimits"]["NumberOfFiles"], 65536
+        )
+
+    def test_portable_lifecycle_validates_staging_before_loading_common_code(self) -> None:
+        for platform in ("musl", "macos"):
+            common = (ROOT / f"packaging/{platform}/scripts/common.sh").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("validate_package_tree_security", common)
+            self.assertLess(
+                common.index('validate_package_tree_security "$root"'),
+                common.index('metadata_value "$root/PACKAGE-INFO" PACKAGE_STATUS'),
+            )
+            for name in ("install.sh", "update.sh", "uninstall.sh"):
+                script = (ROOT / f"packaging/{platform}/scripts/{name}").read_text(
+                    encoding="utf-8"
+                )
+                with self.subTest(platform=platform, script=name):
+                    self.assertTrue(script.startswith("#!/bin/bash -p\n"))
+                    self.assertLess(
+                        script.index('bootstrap_validate_file "$SCRIPT_DIR/common.sh"'),
+                        script.index('source "$SCRIPT_DIR/common.sh"'),
+                    )
+
+        common = WINDOWS_COMMON_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("Assert-RedisTrustedTree -Path $PackageRoot", common)
+        for name in ("Install-Redis.ps1", "Update-Redis.ps1", "Uninstall-Redis.ps1"):
+            script = (ROOT / "packaging/windows/scripts" / name).read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(platform="windows", script=name):
+                self.assertLess(
+                    script.index("Assert-RedisBootstrapAcl -Path $bootstrapPath"),
+                    script.index(
+                        "\n. ([IO.Path]::Combine($PSScriptRoot, 'Common-Redis.ps1'))"
+                    ),
+                )
+
+    def test_windows_update_uses_protected_unpredictable_backups(self) -> None:
+        common = WINDOWS_COMMON_SCRIPT.read_text(encoding="utf-8")
+        update = (ROOT / "packaging/windows/scripts/Update-Redis.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("function New-RedisBackupDirectory", common)
+        self.assertIn("[Guid]::NewGuid().ToString('N')", common)
+        self.assertIn("Set-RedisAdministrativeAcl -Path $path", common)
+        self.assertIn("Set-RedisAdministrativeTreeAcl -Path $backup", update)
+        self.assertIn("Assert-RedisBackupDirectory -Path $backup", update)
+        self.assertNotIn("New-Item -ItemType Directory -Path $backup -Force", update)
+
     def test_runtime_identity_is_bound_to_install_state(self) -> None:
         musl = (ROOT / "packaging/musl/scripts/common.sh").read_text(
             encoding="utf-8"
@@ -898,7 +971,7 @@ class PortablePackageTests(unittest.TestCase):
         self.assertIn("StateFormat -ne 2", windows)
         self.assertIn("StateFormat = 2", windows)
 
-    def test_musl_mount_check_accepts_no_mount_and_rejects_errors(self) -> None:
+    def test_musl_mount_check_rejects_target_descendants_and_errors(self) -> None:
         common = ROOT / "packaging/musl/scripts/common.sh"
         command = r'''
 source "$1"
@@ -906,27 +979,55 @@ findmnt() {
   printf '%s' "$MOCK_FINDMNT_OUTPUT"
   return "$MOCK_FINDMNT_STATUS"
 }
-refuse_nested_mounts
+refuse_nested_mounts "$2"
 '''
-        cases = (
-            ("1", "", 0),
-            ("0", "/usr/local/redis\n", 0),
-            ("0", "/usr/local/redis\n/usr/local/redis/data\n", 1),
-            ("2", "", 1),
-        )
-        for status, output, expected in cases:
-            with self.subTest(status=status, output=output):
-                result = subprocess.run(
-                    ["bash", "-c", command, "bash", str(common)],
-                    env={
-                        "MOCK_FINDMNT_STATUS": status,
-                        "MOCK_FINDMNT_OUTPUT": output,
-                    },
-                    check=False,
-                    capture_output=True,
-                    text=True,
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "redis"
+            target.mkdir()
+            cases = (
+                ("0", "", 0),
+                ("0", f"{target}-other\n", 0),
+                ("0", f"{target}\n", 1),
+                ("0", f"{target}\n{target}/data\n", 1),
+                ("2", "", 1),
+            )
+            for status, output, expected in cases:
+                with self.subTest(status=status, output=output):
+                    result = subprocess.run(
+                        ["bash", "-c", command, "bash", str(common), str(target)],
+                        env={
+                            "MOCK_FINDMNT_STATUS": status,
+                            "MOCK_FINDMNT_OUTPUT": output,
+                        },
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_portable_recursive_removals_are_mount_guarded(self) -> None:
+        for platform, backend in (("musl", "openrc"), ("macos", "launchd")):
+            scripts = ROOT / f"packaging/{platform}/scripts"
+            install = (scripts / "install.sh").read_text(encoding="utf-8")
+            update = (scripts / "update.sh").read_text(encoding="utf-8")
+            uninstall = (scripts / "uninstall.sh").read_text(encoding="utf-8")
+            with self.subTest(platform=platform, operation="install"):
+                self.assertIn('refuse_nested_mounts "$REDIS_PREFIX"', install)
+                self.assertLess(
+                    install.index('refuse_nested_mounts "$REDIS_PREFIX"'),
+                    install.index('rm -rf -- "$REDIS_PREFIX"'),
                 )
-                self.assertEqual(result.returncode, expected, result.stderr)
+            managed = (
+                f'refuse_nested_mounts "$REDIS_PREFIX/bin" '
+                f'"$REDIS_PREFIX/scripts" "$REDIS_PREFIX/{backend}"'
+            )
+            with self.subTest(platform=platform, operation="update"):
+                self.assertIn(managed, update)
+                self.assertLess(update.index(managed), update.index("rm -rf --"))
+            with self.subTest(platform=platform, operation="uninstall"):
+                self.assertIn('refuse_nested_mounts "$REDIS_PREFIX"', uninstall)
+                self.assertIn(managed, uninstall)
+                self.assertLess(uninstall.index(managed), uninstall.rindex("rm -rf --"))
 
     def test_windows_build_supports_the_official_runtime_license_location(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
