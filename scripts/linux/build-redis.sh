@@ -345,6 +345,8 @@ case "$redis_test_fix_status" in
   not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   applied:redis-8.2.9-latency-and-defrag-test-stability|\
   present:redis-8.2.9-latency-and-defrag-test-stability|\
+  applied:redis-8.4.6-defrag-page-size-stability|\
+  present:redis-8.4.6-defrag-page-size-stability|\
   applied:redis-8.8.2-latency-and-defrag-test-stability|\
   present:redis-8.8.2-latency-and-defrag-test-stability|\
   applied:redis-8.10.1-hfe-test-timeout-stability|\

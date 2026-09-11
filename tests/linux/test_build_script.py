@@ -97,6 +97,8 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn(
             "present:redis-8.2.9-latency-and-defrag-test-stability", script
         )
+        self.assertIn("applied:redis-8.4.6-defrag-page-size-stability", script)
+        self.assertIn("present:redis-8.4.6-defrag-page-size-stability", script)
         self.assertIn(
             "applied:redis-8.8.2-latency-and-defrag-test-stability", script
         )

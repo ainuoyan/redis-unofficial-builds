@@ -264,7 +264,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.4.6", root)
+                status = PATCHER.apply_upstream_test_fixes("7.4.11", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -467,16 +467,69 @@ class UpstreamTestFixTests(unittest.TestCase):
                 PATCHER.apply_upstream_test_fixes("8.2.9", root)
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
 
-    def test_redis_829_defrag_uses_the_same_tested_page_size_allowance(self) -> None:
+    def test_defrag_patches_use_the_same_tested_page_size_allowance(self) -> None:
         additions = []
-        for patch_file in (PATCHER.REDIS_829_PATCH_FILE, PATCHER.REDIS_882_PATCH_FILE):
+        for patch_file in (
+            PATCHER.REDIS_829_PATCH_FILE,
+            PATCHER.REDIS_846_PATCH_FILE,
+            PATCHER.REDIS_882_PATCH_FILE,
+        ):
             defrag = patch_file.read_text(encoding="utf-8").split(
                 "diff --git a/tests/unit/memefficiency.tcl", 1
             )[1]
             threshold = defrag.split("@@", 2)[2].split("\n@@", 1)[0]
             additions.append([line for line in threshold.splitlines() if line.startswith("+")])
         self.assertTrue(additions[0])
-        self.assertEqual(additions[0], additions[1])
+        for addition in additions[1:]:
+            self.assertEqual(additions[0], addition)
+
+    def test_redis_846_patch_is_test_only_and_idempotent(self) -> None:
+        patch_text = PATCHER.REDIS_846_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [line for line in patch_text.splitlines() if line.startswith("diff --git ")],
+            ["diff --git a/tests/unit/memefficiency.tcl b/tests/unit/memefficiency.tcl"],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_882_source(root)
+            targets[1].write_text(
+                targets[1].read_text(encoding="utf-8").replace("cluster needs:debug", "cluster"),
+                encoding="utf-8",
+            )
+            original_latency = targets[0].read_bytes()
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.4.6", root),
+                f"applied:{PATCHER.REDIS_846_FIX_ID}",
+            )
+            patched = tuple(target.read_bytes() for target in targets)
+            self.assertEqual(patched[0], original_latency)
+            self.assertIn(b"512 * [$replica debug mallctl arenas.page]", patched[1])
+            self.assertIn(b"debug_defrag:skip cluster needs:debug}", patched[1])
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.4.6", root),
+                f"present:{PATCHER.REDIS_846_FIX_ID}",
+            )
+            self.assertEqual(tuple(target.read_bytes() for target in targets), patched)
+
+    def test_redis_846_unknown_source_is_not_modified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._source_tree(root, PATCHER.REDIS_846_PATCH_TARGETS)
+            original = targets[0].read_bytes()
+            with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                PATCHER.apply_upstream_test_fixes("8.4.6", root)
+            self.assertEqual(targets[0].read_bytes(), original)
+
+    def test_other_84_patch_releases_are_not_modified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
+                for version in ("8.4.5", "8.4.7"):
+                    self.assertEqual(
+                        PATCHER.apply_upstream_test_fixes(version, root),
+                        f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
+                    )
+                git_apply.assert_not_called()
 
     def test_redis_882_real_patch_is_applied_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
