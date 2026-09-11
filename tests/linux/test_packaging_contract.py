@@ -382,6 +382,43 @@ class PackagingContractTests(unittest.TestCase):
             )
 
     @requires_gnu_userland
+    def test_readiness_dequotes_configured_tcp_endpoint(self) -> None:
+        common = ROOT / "packaging/linux/scripts/common.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            redis_root = Path(directory) / "redis"
+            (redis_root / "bin").mkdir(parents=True)
+            (redis_root / "conf").mkdir()
+            (redis_root / "conf/redis.conf").write_text(
+                "unixsocket ''\nport 6401\nbind \"127.0.0.2\"\n",
+                encoding="utf-8",
+            )
+            cli = redis_root / "bin/redis-cli"
+            cli.write_text(
+                "#!/bin/sh\n"
+                '[ "$1" = "-h" ] && [ "$2" = "127.0.0.2" ] '
+                '&& [ "$3" = "-p" ] && [ "$4" = "6401" ] || exit 2\n'
+                "printf 'PONG\\n'\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; run_as_redis_user() { "$@"; }; '
+                    'resolve_trusted_config_file() { realpath -e -- "$1"; }; '
+                    'redis_protocol_ready "$2"',
+                    "bash",
+                    str(common),
+                    str(redis_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    @requires_gnu_userland
     def test_readiness_records_loading_response_for_diagnostics(self) -> None:
         common = ROOT / "packaging/linux/scripts/common.sh"
         with tempfile.TemporaryDirectory() as directory:

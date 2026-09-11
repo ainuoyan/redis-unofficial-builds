@@ -1,11 +1,27 @@
-Set-StrictMode -Version 2.0
+﻿Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:RedisPrefix = 'C:\Program Files\Redis-Unofficial'
 $script:RedisServiceName = 'RedisUnofficial'
 $script:RedisStateFile = Join-Path $script:RedisPrefix '.redis-package-state.json'
-$script:RedisBackupRoot = 'C:\ProgramData\Redis-Unofficial\Backups'
+$script:RedisDataRoot = 'C:\ProgramData\Redis-Unofficial'
+$script:RedisBackupRoot = Join-Path $script:RedisDataRoot 'Backups'
 $script:LifecycleMutex = $null
+$script:RedisTrustedOwnerSids = @(
+    'S-1-5-18',
+    'S-1-5-32-544',
+    'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+)
+
+if (-not (Get-Variable -Name RedisUiLanguage -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RedisUiLanguage = 'en'
+}
+
+function Get-RedisText {
+    param([string]$English, [string]$Chinese)
+    if ($script:RedisUiLanguage -eq 'zh') { return $Chinese }
+    return $English
+}
 
 function Write-RedisInfo {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -16,7 +32,7 @@ function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'This operation requires an elevated Administrator PowerShell session.'
+        throw (Get-RedisText 'This operation requires an elevated Administrator PowerShell session.' "此操作需要以管理员身份运行 PowerShell。")
     }
 }
 
@@ -25,7 +41,7 @@ function Enter-RedisLifecycleLock {
         -ArgumentList @($false, 'Global\RedisUnofficialLifecycle')
     try {
         if (-not $script:LifecycleMutex.WaitOne(0, $false)) {
-            throw 'Another Redis lifecycle operation is running.'
+            throw (Get-RedisText 'Another Redis lifecycle operation is running.' "另一个 Redis 生命周期操作正在运行。")
         }
     } catch [Threading.AbandonedMutexException] {
         # Ownership transfers to this process when the previous holder exited.
@@ -44,7 +60,7 @@ function Get-RedisPackageRoot {
     param([Parameter(Mandatory = $true)][string]$ScriptDirectory)
     $root = [IO.Path]::GetFullPath((Join-Path $ScriptDirectory '..'))
     if ([string]::Equals($root.TrimEnd('\'), $script:RedisPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'The package scripts must be run from a separate extracted staging directory.'
+        throw (Get-RedisText 'The package scripts must be run from a separate extracted staging directory.' "安装包脚本必须从单独解压的暂存目录运行。")
     }
     Assert-NoReparsePoint -Path $root -Recurse
     return $root
@@ -57,27 +73,133 @@ function Assert-NoReparsePoint {
     )
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Reparse points are not accepted: $Path"
+        throw (Get-RedisText "Reparse points are not accepted: $Path" "不接受重解析点：$Path")
     }
     if ($Recurse) {
         foreach ($child in Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction Stop) {
             if (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Reparse points are not accepted: $($child.FullName)"
+                throw (Get-RedisText "Reparse points are not accepted: $($child.FullName)" "不接受重解析点：$($child.FullName)")
             }
         }
     }
 }
 
+function Assert-RedisTrustedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Ancestor
+    )
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw (Get-RedisText "Reparse points are not accepted: $Path" "不接受重解析点：$Path")
+    }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($script:RedisTrustedOwnerSids -notcontains $ownerSid) {
+        throw (Get-RedisText "Path owner is not trusted for an elevated lifecycle operation: $Path" "路径所有者不符合管理员生命周期操作的信任要求：$Path")
+    }
+    $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [Security.AccessControl.FileSystemRights]::Delete -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [Security.AccessControl.FileSystemRights]::TakeOwnership
+    if ($Ancestor) {
+        $writeMask = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor
+            [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+    }
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    foreach ($rule in $rules) {
+        if (($rule.PropagationFlags -band
+                [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+            $rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            $script:RedisTrustedOwnerSids -notcontains $rule.IdentityReference.Value -and
+            ([int64]$rule.FileSystemRights -band [int64]$writeMask) -ne 0) {
+            throw (Get-RedisText "Path grants write or replacement access to an untrusted principal: $Path" "路径向不受信任的主体授予了写入或替换权限：$Path")
+        }
+    }
+}
+
+function Assert-RedisTrustedTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $root = [IO.Path]::GetFullPath($Path)
+    $current = [IO.DirectoryInfo]::new($root)
+    while ($null -ne $current) {
+        Assert-RedisTrustedAcl -Path $current.FullName -Ancestor
+        $current = $current.Parent
+    }
+    Assert-RedisTrustedAcl -Path $root
+    foreach ($child in Get-ChildItem -LiteralPath $root -Force -Recurse -ErrorAction Stop) {
+        Assert-RedisTrustedAcl -Path $child.FullName
+    }
+}
+
+function Set-RedisAdministrativeAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    & icacls.exe $Path /setowner '*S-1-5-32-544' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText "Unable to set the administrative owner: $Path" "无法设置管理员所有者：$Path") }
+    & icacls.exe $Path /inheritance:r /grant:r `
+        '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText "Unable to secure administrative path: $Path" "无法设置管理员路径的安全权限：$Path") }
+}
+
+function Set-RedisAdministrativeTreeAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    & icacls.exe $Path /setowner '*S-1-5-32-544' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText "Unable to set administrative tree ownership: $Path" "无法设置管理员目录树的所有权：$Path") }
+    # /T includes ordinary files: directory-only (OI)(CI) grants leave them unreadable.
+    & icacls.exe $Path /inheritance:r /grant:r `
+        '*S-1-5-18:F' '*S-1-5-32-544:F' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText "Unable to secure administrative tree: $Path" "无法设置管理员目录树的安全权限：$Path") }
+}
+
+function Initialize-RedisBackupRoot {
+    foreach ($path in @($script:RedisDataRoot, $script:RedisBackupRoot)) {
+        if ([IO.Directory]::Exists($path)) {
+            Assert-RedisTrustedTree -Path $path
+        } elseif ([IO.File]::Exists($path)) {
+            throw (Get-RedisText "Backup path is not a directory: $path" "备份路径不是目录：$path")
+        } else {
+            New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+            Set-RedisAdministrativeAcl -Path $path
+        }
+        Assert-RedisTrustedTree -Path $path
+    }
+}
+
+function New-RedisBackupDirectory {
+    param([Parameter(Mandatory = $true)][string]$Version)
+    Initialize-RedisBackupRoot
+    $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $name = "$Version-$timestamp-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $path = Join-Path $script:RedisBackupRoot $name
+    New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+    Set-RedisAdministrativeAcl -Path $path
+    Assert-RedisBackupDirectory -Path $path
+    return $path
+}
+
+function Assert-RedisBackupDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $root = [IO.Path]::GetFullPath($script:RedisBackupRoot).TrimEnd('\')
+    $candidate = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if (-not $candidate.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) {
+        throw (Get-RedisText 'Backup directory escaped the managed backup root.' "备份目录超出受管理备份根目录。")
+    }
+    Assert-RedisTrustedTree -Path $candidate
+}
+
 function Read-PackageInfo {
     param([Parameter(Mandatory = $true)][string]$PackageRoot)
     $path = Join-Path $PackageRoot 'PACKAGE-INFO'
-    if (-not [IO.File]::Exists($path)) { throw 'PACKAGE-INFO is missing.' }
+    if (-not [IO.File]::Exists($path)) { throw (Get-RedisText 'PACKAGE-INFO is missing.' "缺少 PACKAGE-INFO。") }
     $values = @{}
     foreach ($line in [IO.File]::ReadAllLines($path, [Text.Encoding]::UTF8)) {
         if ($line -notmatch '^([A-Z][A-Z0-9_]*)=([^\x00-\x1f\x7f]*)$') {
-            throw 'PACKAGE-INFO contains an invalid record.'
+            throw (Get-RedisText 'PACKAGE-INFO contains an invalid record.' "PACKAGE-INFO 包含无效记录。")
         }
-        if ($values.ContainsKey($Matches[1])) { throw 'PACKAGE-INFO contains a duplicate key.' }
+        if ($values.ContainsKey($Matches[1])) { throw (Get-RedisText 'PACKAGE-INFO contains a duplicate key.' "PACKAGE-INFO 包含重复键。") }
         $values[$Matches[1]] = $Matches[2]
     }
     $expected = @{
@@ -92,14 +214,14 @@ function Read-PackageInfo {
     }
     foreach ($key in $expected.Keys) {
         if (-not $values.ContainsKey($key) -or $values[$key] -cne $expected[$key]) {
-            throw "PACKAGE-INFO does not match the Windows MSYS2 contract: $key"
+            throw (Get-RedisText "PACKAGE-INFO does not match the Windows MSYS2 contract: $key" "PACKAGE-INFO 不符合 Windows MSYS2 约定：$key")
         }
     }
     if ($values['PACKAGE_STATUS'] -cnotin @('experimental', 'release')) {
-        throw 'PACKAGE-INFO has an unsupported publication status.'
+        throw (Get-RedisText 'PACKAGE-INFO has an unsupported publication status.' "PACKAGE-INFO 的发布状态不受支持。")
     }
     if ($values['REDIS_VERSION'] -notmatch '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$') {
-        throw 'PACKAGE-INFO contains an invalid Redis version.'
+        throw (Get-RedisText 'PACKAGE-INFO contains an invalid Redis version.' "PACKAGE-INFO 包含无效的 Redis 版本。")
     }
     return $values
 }
@@ -111,11 +233,14 @@ function Test-RequiredPackageFiles {
         'bin\RedisService.exe', 'bin\msys-2.0.dll', 'conf\redis.conf',
         'conf\sentinel.conf', 'scripts\Common-Redis.ps1', 'scripts\Install-Redis.ps1',
         'scripts\Update-Redis.ps1', 'scripts\Uninstall-Redis.ps1',
+        'scripts\Install-Redis.bat', 'scripts\Update-Redis.bat',
+        'scripts\Uninstall-Redis.bat', 'scripts\Purge-Redis.bat',
+        'scripts\Start-Redis.ps1', 'scripts\Start-Redis.bat',
         'MSYS2-RUNTIME-NOTICES.txt'
     )
     foreach ($relative in $required) {
         $path = Join-Path $PackageRoot $relative
-        if (-not [IO.File]::Exists($path)) { throw "Package file is missing: $relative" }
+        if (-not [IO.File]::Exists($path)) { throw (Get-RedisText "Package file is missing: $relative" "缺少安装包文件：$relative") }
         Assert-NoReparsePoint -Path $path
     }
 }
@@ -129,6 +254,9 @@ function Assert-RedisPackageInventory {
         'bin\RedisService.exe', 'conf\redis.conf', 'conf\sentinel.conf',
         'scripts\Common-Redis.ps1', 'scripts\Install-Redis.ps1',
         'scripts\Update-Redis.ps1', 'scripts\Uninstall-Redis.ps1',
+        'scripts\Install-Redis.bat', 'scripts\Update-Redis.bat',
+        'scripts\Uninstall-Redis.bat', 'scripts\Purge-Redis.bat',
+        'scripts\Start-Redis.ps1', 'scripts\Start-Redis.bat',
         'PACKAGE-INFO', 'BUILD-INFO', 'LICENSE.txt', 'README.txt',
         'THIRD_PARTY_NOTICES.md', 'UPSTREAM-CONTRIBUTOR-LICENSE.txt',
         'UPSTREAM-DEPENDENCY-NOTICES.txt', 'MSYS2-RUNTIME-NOTICES.txt'
@@ -138,11 +266,11 @@ function Assert-RedisPackageInventory {
         $relative = $item.FullName.Substring($prefixLength)
         if ($item.PSIsContainer) {
             if ($allowedDirectories -inotcontains $relative) {
-                throw "Package contains an unexpected directory: $relative"
+                throw (Get-RedisText "Package contains an unexpected directory: $relative" "安装包包含非预期目录：$relative")
             }
         } elseif ($allowedFiles -inotcontains $relative -and
             $relative -notmatch '^bin\\[A-Za-z0-9][A-Za-z0-9._+-]{0,126}\.dll$') {
-            throw "Package contains an unexpected file: $relative"
+            throw (Get-RedisText "Package contains an unexpected file: $relative" "安装包包含非预期文件：$relative")
         }
     }
 }
@@ -150,9 +278,9 @@ function Assert-RedisPackageInventory {
 function Test-RedisPackage {
     param([Parameter(Mandatory = $true)][string]$PackageRoot)
     if ($env:PROCESSOR_ARCHITECTURE -cne 'AMD64') {
-        throw "The Windows MSYS2 package requires an x64 host; found $($env:PROCESSOR_ARCHITECTURE)."
+        throw (Get-RedisText "The Windows MSYS2 package requires an x64 host; found $($env:PROCESSOR_ARCHITECTURE)." "Windows MSYS2 安装包需要 x64 主机；当前为 $($env:PROCESSOR_ARCHITECTURE)。")
     }
-    Assert-NoReparsePoint -Path $PackageRoot -Recurse
+    Assert-RedisTrustedTree -Path $PackageRoot
     $info = Read-PackageInfo -PackageRoot $PackageRoot
     Test-RequiredPackageFiles -PackageRoot $PackageRoot
     Assert-RedisPackageInventory -PackageRoot $PackageRoot
@@ -168,7 +296,7 @@ function Read-RedisState {
         $state.InstallPrefix -cne $script:RedisPrefix -or $state.PackageVariant -cne 'windows-msys2' -or
         $state.ServiceName -cne $script:RedisServiceName -or
         $state.RedisVersion -notmatch '^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$') {
-        throw 'The existing Redis installation state is invalid.'
+        throw (Get-RedisText 'The existing Redis installation state is invalid.' "现有 Redis 安装状态无效。")
     }
     return $state
 }
@@ -191,7 +319,7 @@ function Write-RedisState {
     [IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $temporary -Destination $script:RedisStateFile -Force
     & icacls.exe $script:RedisStateFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the installation state file.' }
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to secure the installation state file.' "无法设置安装状态文件的安全权限。") }
 }
 
 function Write-ManagedRedisConfig {
@@ -274,12 +402,14 @@ function Copy-RedisProgramFiles {
 }
 
 function Set-RedisAccessControl {
+    & icacls.exe $script:RedisPrefix /setowner '*S-1-5-32-544' /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to set the Redis installation owner.' "无法设置 Redis 安装的所有者。") }
     & icacls.exe $script:RedisPrefix /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to secure the Redis installation prefix.' }
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to secure the Redis installation prefix.' "无法设置 Redis 安装目录的安全权限。") }
     foreach ($directory in @('data', 'log', 'run')) {
         $path = Join-Path $script:RedisPrefix $directory
         & icacls.exe $path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Unable to secure $path." }
+        if ($LASTEXITCODE -ne 0) { throw (Get-RedisText "Unable to secure $path." "无法设置 $path 的安全权限。") }
     }
 }
 
@@ -293,14 +423,14 @@ function Assert-RedisPortAvailable {
     try {
         $listener.Start()
     } catch [Net.Sockets.SocketException] {
-        throw 'TCP port 6379 on 127.0.0.1 is already in use; no files or services were changed.'
+        throw (Get-RedisText 'TCP port 6379 on 127.0.0.1 is already in use; no files or services were changed.' "127.0.0.1 的 TCP 端口 6379 已被占用；未更改任何文件或服务。")
     } finally {
         $listener.Stop()
     }
 }
 
 function New-RedisService {
-    if ($null -ne (Get-RedisService)) { throw 'RedisUnofficial service already exists.' }
+    if ($null -ne (Get-RedisService)) { throw (Get-RedisText 'RedisUnofficial service already exists.' "RedisUnofficial 服务已存在。") }
     $wrapper = Join-Path $script:RedisPrefix 'bin\RedisService.exe'
     $binaryPath = '"' + $wrapper + '" --service'
     $credential = [Management.Automation.PSCredential]::new(
@@ -308,14 +438,14 @@ function New-RedisService {
     New-Service -Name $script:RedisServiceName -BinaryPathName $binaryPath -DisplayName 'Redis unofficial' `
         -Description 'Redis package from redis-unofficial-builds' -StartupType Automatic -Credential $credential | Out-Null
     & sc.exe config $script:RedisServiceName start= delayed-auto | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure delayed service start.' }
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to configure delayed service start.' "无法配置服务延迟启动。") }
     Set-RedisServiceRecovery
 }
 
 function Get-RedisServiceAccount {
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$script:RedisServiceName'"
     if ($null -eq $service -or $service.StartName -notin @('LocalSystem', 'NT AUTHORITY\LocalService')) {
-        throw 'Unexpected Redis service account; review the account migration before updating.'
+        throw (Get-RedisText 'Unexpected Redis service account; review the account migration before updating.' "Redis 服务账号不符合预期；请在更新前审查账号迁移。")
     }
     return $service.StartName
 }
@@ -327,13 +457,13 @@ function Set-RedisServiceAccount {
         StartName = $Account
         StartPassword = ''
     }
-    if ($result.ReturnValue -ne 0) { throw 'Unable to set the Redis service account.' }
-    if ((Get-RedisServiceAccount) -ine $Account) { throw 'Redis service account verification failed.' }
+    if ($result.ReturnValue -ne 0) { throw (Get-RedisText 'Unable to set the Redis service account.' "无法设置 Redis 服务账号。") }
+    if ((Get-RedisServiceAccount) -ine $Account) { throw (Get-RedisText 'Redis service account verification failed.' "Redis 服务账号验证失败。") }
 }
 
 function Set-RedisServiceRecovery {
     & sc.exe failure $script:RedisServiceName reset= 86400 actions= restart/5000/restart/15000/none/0 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure service recovery.' }
+    if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to configure service recovery.' "无法配置服务故障恢复。") }
 }
 
 function Remove-RedisService {
@@ -342,11 +472,11 @@ function Remove-RedisService {
     try {
         if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
             & sc.exe stop $script:RedisServiceName | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
+            if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to stop the RedisUnofficial service.' "无法停止 RedisUnofficial 服务。") }
             $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(90))
         }
         & sc.exe delete $script:RedisServiceName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to delete the RedisUnofficial service.' }
+        if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to delete the RedisUnofficial service.' "无法删除 RedisUnofficial 服务。") }
     } finally {
         $service.Dispose()
     }
@@ -357,20 +487,20 @@ function Remove-RedisService {
         $remaining.Dispose()
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'RedisUnofficial service remained marked for deletion.'
+    throw (Get-RedisText 'RedisUnofficial service remained marked for deletion.' "RedisUnofficial 服务仍处于待删除状态。")
 }
 
 function Start-RedisServiceAndWait {
     $service = $null
     try {
         & sc.exe start $script:RedisServiceName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to start the RedisUnofficial service.' }
+        if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to start the RedisUnofficial service.' "无法启动 RedisUnofficial 服务。") }
         $service = Get-RedisService
-        if ($null -eq $service) { throw 'RedisUnofficial service disappeared during startup.' }
+        if ($null -eq $service) { throw (Get-RedisText 'RedisUnofficial service disappeared during startup.' "RedisUnofficial 服务在启动过程中消失。") }
         $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(90))
         # The wrapper reports Running only after its authenticated Redis PING passes.
     } catch {
-        Write-RedisInfo 'Redis service startup failed; collecting diagnostics before rollback.'
+        Write-RedisInfo (Get-RedisText 'Redis service startup failed; collecting diagnostics before rollback.' "Redis 服务启动失败；正在回滚前收集诊断信息。")
         & sc.exe queryex $script:RedisServiceName
         foreach ($log in @(
                 (Join-Path $script:RedisPrefix 'log\service-wrapper.log'),
@@ -399,7 +529,7 @@ function Stop-RedisServiceIfRunning {
         )
         while ($service.Status -in $pendingStatuses) {
             if ([DateTime]::UtcNow -ge $deadline) {
-                throw 'Timed out waiting for the RedisUnofficial service to leave a pending state.'
+                throw (Get-RedisText 'Timed out waiting for the RedisUnofficial service to leave a pending state.' "等待 RedisUnofficial 服务结束过渡状态超时。")
             }
             Start-Sleep -Milliseconds 200
             $service.Refresh()
@@ -407,10 +537,10 @@ function Stop-RedisServiceIfRunning {
         if ($service.Status -eq [ServiceProcess.ServiceControllerStatus]::Stopped) { return }
 
         & sc.exe stop $script:RedisServiceName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the RedisUnofficial service.' }
+        if ($LASTEXITCODE -ne 0) { throw (Get-RedisText 'Unable to stop the RedisUnofficial service.' "无法停止 RedisUnofficial 服务。") }
         $remaining = $deadline - [DateTime]::UtcNow
         if ($remaining -le [TimeSpan]::Zero) {
-            throw 'Timed out stopping the RedisUnofficial service.'
+            throw (Get-RedisText 'Timed out stopping the RedisUnofficial service.' "停止 RedisUnofficial 服务超时。")
         }
         $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, $remaining)
     } finally {

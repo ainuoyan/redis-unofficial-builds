@@ -273,7 +273,14 @@ jobs:
 
           release_exists=false
           release_complete=false
-          if jq -e '.data.repository.release != null' release-state.json >/dev/null; then
+          # A build-only retry validates its new candidate, not an older Release
+          # against the current packaging tree. Publishing keeps every gate below.
+          if [[ "${FORCE_REBUILD:-false}" == true && "${PUBLISH_RELEASE:-false}" == false ]]; then
+            if jq -e '.data.repository.release != null' release-state.json >/dev/null; then
+              release_exists=true
+            fi
+            echo "Build-only force rebuild: existing Release assets are not reused."
+          elif jq -e '.data.repository.release != null' release-state.json >/dev/null; then
             release_exists=true
             mapfile -t expected_assets < <(
               python3 - "$version" <<'PY'

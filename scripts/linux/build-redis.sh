@@ -315,13 +315,20 @@ printf '%s  %s\n' "$REDIS_SOURCE_SHA256" "$SOURCE_ARCHIVE" | sha256sum --check -
 tar --no-same-owner --no-same-permissions -xzf "$SOURCE_ARCHIVE"
 cd "redis-${REDIS_VERSION}"
 
+# A build host may use 4 KiB pages while the ARM64 runtime uses 64 KiB.
+# Pin the allocator page size in the fresh source tree, including recursive make.
+make_args=(BUILD_TLS=no)
+if [[ "$PACKAGE_ARCH" == arm64 ]]; then
+  make_args+=(JEMALLOC_CONFIGURE_OPTS=--with-lg-page=16)
+fi
+
 if [[ -x scripts/build.sh ]]; then
   # Redis 8.10+ builds bundled modules by default. This backend intentionally
   # publishes the stable core profile; a full profile needs a separate variant
   # and pinned Rust/LLVM/CMake dependency chain.
-  make -j"$(nproc)" build redis BUILD_TLS=no
+  make -j"$(nproc)" build redis "${make_args[@]}"
 else
-  make -j"$(nproc)" BUILD_TLS=no
+  make -j"$(nproc)" "${make_args[@]}"
 fi
 [[ -f ./runtest && -x ./runtest && ! -L ./runtest ]] || {
   echo "Redis test runner must be a regular executable file." >&2
@@ -336,12 +343,16 @@ case "$redis_test_fix_status" in
   applied:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   present:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
-  applied:redis-8.2.9-latency-test-timeout-stability|\
-  present:redis-8.2.9-latency-test-timeout-stability|\
-  applied:redis-8.8.2-latency-test-timeout-stability|\
-  present:redis-8.8.2-latency-test-timeout-stability|\
-  applied:redis-8.10.1-hfe-test-timeout-stability|\
-  present:redis-8.10.1-hfe-test-timeout-stability) ;;
+  applied:redis-8.2.9-latency-and-defrag-test-stability|\
+  present:redis-8.2.9-latency-and-defrag-test-stability|\
+  applied:redis-8.4.6-defrag-page-size-stability|\
+  present:redis-8.4.6-defrag-page-size-stability|\
+  applied:redis-8.6.6-defrag-page-size-stability|\
+  present:redis-8.6.6-defrag-page-size-stability|\
+  applied:redis-8.8.2-latency-and-defrag-test-stability|\
+  present:redis-8.8.2-latency-and-defrag-test-stability|\
+  applied:redis-8.10.1-hfe-and-defrag-test-stability|\
+  present:redis-8.10.1-hfe-and-defrag-test-stability) ;;
   *)
     echo "Unexpected upstream test-fix status." >&2
     exit 1
@@ -405,7 +416,7 @@ smoke_pid=""
 # execute source-controlled programs, so packaging belongs in a disposable build
 # environment without a live /usr/local/redis installation or unrelated secrets.
 install -d -m 0755 "$package_root"
-make PREFIX="$package_root" BUILD_TLS=no install
+make PREFIX="$package_root" install "${make_args[@]}"
 
 install -d -m 0755 "$package_root/conf"
 awk '
@@ -584,6 +595,9 @@ EOF
   echo "Package variant: $PACKAGE_VARIANT"
   echo "Package architecture: $PACKAGE_ARCH"
   echo "Build profile: $build_profile_description"
+  if [[ "$PACKAGE_ARCH" == arm64 ]]; then
+    echo "jemalloc configure options: --with-lg-page=16 (65536 bytes)"
+  fi
   echo "Machine architecture: $actual_arch"
   echo "Install prefix: $INSTALL_PREFIX"
   echo "Build image: $BUILD_IMAGE"
@@ -638,6 +652,7 @@ Service mode: systemd by default; install supports --no-service, update supports
 No-service mode installs the complete package layout without registering or requiring systemd; stop every Redis process from /usr/local/redis manually before updating or uninstalling it
 Compatibility scope: validate the target distribution and kernel before production use
 Fresh-install default endpoint: Unix socket /usr/local/redis/data/redis.sock (TCP disabled)
+User script language: English by default; --lang zh for Chinese, --lang en for English
 
 安装包类型：${PACKAGE_VARIANT}
 CPU 架构：${PACKAGE_ARCH}
@@ -648,6 +663,7 @@ CPU 架构：${PACKAGE_ARCH}
 无服务模式会安装完整包布局，但不注册或要求 systemd；更新或卸载前必须手工停止所有来自 /usr/local/redis 的 Redis 进程
 兼容范围：生产使用前仍须在目标发行版和内核上验证
 全新安装默认端点：Unix 套接字 /usr/local/redis/data/redis.sock（TCP 已禁用）
+用户脚本默认英文；--lang zh 切换中文，--lang en 切换英文。中文需要 UTF-8 终端。
 
 New installation (extract into a root-owned, non-writable staging directory):
 新安装（解压到 root 所有且不可写的暂存目录）：

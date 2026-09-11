@@ -34,7 +34,48 @@ license and notice material from its verified source version. Redis names and
 marks remain subject to the official
 [trademark policy](https://redis.io/legal/trademark-policy/).
 
+## User script language and direct Windows startup
+
+User-facing install/update/uninstall scripts default to English, independently
+of the system locale. Shell and BAT entry points accept `--lang zh` (Chinese)
+or `--lang en`; PowerShell entry points use `-Lang zh` / `-Lang en`. Shell
+scripts retain the explicit `REDIS_INSTALL_LANG=zh_CN` override. Help, prompts,
+and script-owned errors are localized; Redis and operating-system diagnostics
+remain in their original language. Machine-readable state/configuration is
+never translated. Chinese shell output requires a UTF-8 terminal.
+
+Windows BAT files contain ASCII only. Packaged PowerShell scripts have a UTF-8
+BOM for Windows PowerShell 5.1 and Windows scripts use CRLF line endings.
+Script output temporarily uses UTF-8 console encoding (including paths in English
+messages) and restores it on exit;
+if encoding setup fails, the script falls back to English. This cannot supply
+missing terminal fonts or fix a log viewer using the wrong decoding. Use a
+UTF-8-capable terminal with CJK glyphs, or switch back to English. Do not resave
+PowerShell scripts as ANSI or remove their BOM. Redirected Chinese output
+should be decoded as UTF-8.
+
+`scripts/Start-Redis.bat [--lang en|zh]` starts `bin/redis-server.exe` with the
+existing `conf/redis.conf` and the package root as its working directory. It
+does not install a service, elevate privileges, write configuration, create a
+`portable` directory, or override Redis settings. Relative paths such as
+`dir ./` resolve from the package root. Use a writable extracted directory;
+do not share a data directory with another running Redis instance. The supplied
+default configuration runs in the foreground; use Ctrl+C to stop. Missing
+program/configuration files are errors, not a reason to generate replacements.
+BAT windows pause on completion only when input is interactive; Purge still
+requires an explicit Y confirmation before any lifecycle mutation.
+
 ## Platform matrix
+
+Linux ARM64 glibc and musl builds explicitly pass `--with-lg-page=16` (64 KiB)
+to jemalloc so a 4 KiB build host does not constrain the runtime host. Builds
+retain their pinned userland baseline and freshly extracted source tree; both
+Redis and jemalloc must be rebuilt, not just the service scripts. This option
+does not change the kernel page size or THP settings. Before publishing new
+artifacts, verify reads/writes, RDB/AOF persistence, restarts, the full service
+lifecycle and memory usage on both ARM64 4 KiB and 64 KiB kernels. Build-argument
+tests alone do not establish native acceptance. Publish a new revision without
+overwriting existing assets. x64, macOS and Windows settings are unchanged.
 
 | Variant | Architectures | Build baseline | Service backend | Status |
 | --- | --- | --- | --- | --- |
@@ -383,7 +424,11 @@ recovery, injected update rollback, and purge. The container exercises
 `rc-service`/`rc-update` with an OpenRC softlevel but does not boot OpenRC as
 PID 1; this limit is explicit and no systemd compatibility is inferred. The
 OpenRC scripts have a distinct service/state contract and cannot depend on
-glibc or systemd.
+glibc or systemd. Lifecycle entry points validate their own files before
+loading shared code and require the entire extracted package tree to be
+root-owned and not group/world-writable. The OpenRC command line forces
+`--daemonize no`; graceful stop allows 600 seconds before the final kill
+fallback.
 
 ### macOS
 
@@ -395,7 +440,10 @@ includes update/rollback/uninstall scripts. The release gate runs fresh and
 repeated install, launchd restart, saved-data reload, ordinary-uninstall
 recovery, injected update rollback, and purge for both architectures. A
 universal archive is not published; x64 and ARM64 remain independently named
-and validated.
+and validated. Lifecycle entry points apply the same pre-load and full-tree
+staging trust checks as the musl backend. The launchd job forces
+`--daemonize no` and declares both soft and hard `NumberOfFiles` limits of
+65,536.
 
 ### Windows
 
@@ -416,7 +464,20 @@ bounded graceful shutdown and process-tree fallback, keeps the password out of
 CLI arguments, redacts its literal value in captured Redis output, records
 diagnostic output, and maintains protected installation
 state under the fixed prefix. Backups use
-`C:\ProgramData\Redis-Unofficial\Backups`.
+`C:\ProgramData\Redis-Unofficial\Backups`; the data root, backup root and each
+unpredictably named backup are owned and writable only by SYSTEM or
+Administrators. Rollback revalidates that trust boundary before restoring.
+
+Windows lifecycle entry points validate ownership, ACLs and reparse points
+before loading `Common-Redis.ps1`. Run them only from a package tree extracted
+by an elevated administrator beneath a trusted system directory such as
+`Program Files`; user-owned Downloads or temporary directories are rejected.
+
+The `scripts` directory also includes `Install-Redis.bat`, `Update-Redis.bat`,
+`Uninstall-Redis.bat`, and `Purge-Redis.bat` for Explorer/cmd.exe users. Run as
+administrator after preparing the protected staging tree. These call the same
+PowerShell lifecycle scripts, preserve their exit codes, and keep the window open
+to show the result. `Purge-Redis.bat` asks for confirmation before deleting data.
 
 New services use LocalService, not LocalSystem. Updating a legacy LocalSystem
 installation migrates it to LocalService while retaining its service registration;
@@ -483,6 +544,8 @@ and `data`. Failure and signal exits trigger rollback; stopping must succeed and
 the dedicated service account must have no remaining processes before replacement
 or deletion. An incomplete rollback retains the installation/backup and reports an
 error. Do not force-delete the directory while investigating that error.
+Every recursive removal rejects a mount at the target or below it, including
+ordinary uninstall and install/update rollback paths.
 
 Readiness uses the private Unix socket and accepts `PONG`, `NOAUTH` or `NOPERM` as
 Redis protocol responses; it is not a credential/ACL correctness test. Each CLI

@@ -5,8 +5,42 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 unset CDPATH ENV BASH_ENV
 
+
+# Parse only UI options before loading package code; preserve operation arguments.
+REDIS_UI_LANGUAGE="${REDIS_INSTALL_LANG:-en}"
+redis_operation_args=()
+while (( $# > 0 )); do
+  case "$1" in
+    --lang)
+      if (( $# < 2 )); then
+        printf 'Usage: --lang en|zh\n' >&2
+        exit 2
+      fi
+      REDIS_UI_LANGUAGE="$2"
+      shift
+      ;;
+    *) redis_operation_args+=("$1") ;;
+  esac
+  shift
+done
+case "$REDIS_UI_LANGUAGE" in
+  en) ;;
+  zh|zh_CN) REDIS_UI_LANGUAGE=zh ;;
+  *) printf 'Invalid language. Use --lang en or --lang zh.\n' >&2; exit 2 ;;
+esac
+if (( ${#redis_operation_args[@]} > 0 )); then
+  set -- "${redis_operation_args[@]}"
+else
+  set --
+fi
+unset redis_operation_args
+
 bootstrap_fail() {
-  printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable package tree. / 生命周期脚本必须从 root 控制且不可写的安装包目录运行。\n' >&2
+  if [[ "$REDIS_UI_LANGUAGE" == zh ]]; then
+    printf '[redis-package] 错误：生命周期脚本必须从 root 控制且不可写的安装包目录运行。\n' >&2
+  else
+    printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable package tree.\n' >&2
+  fi
   exit 1
 }
 
@@ -76,6 +110,7 @@ show_help() {
   --force-service  仅替换其他软件管理但未运行的 redis.service；正在运行的外部服务始终拒绝替换。
   --allow-downgrade
                    明确允许安装比当前受管理版本更旧的 Redis；执行前必须另做数据快照。
+  --lang en|zh    选择提示语言（默认英文）。
   -h, --help       显示帮助。
 EOF
   else
@@ -98,6 +133,7 @@ Options:
   --allow-downgrade
                    Explicitly install an older Redis version; take a separate
                    data snapshot first.
+  --lang en|zh    Select the display language (default: English).
   -h, --help       Show this help message.
 EOF
   fi
@@ -202,7 +238,7 @@ fi
 if [[ "$was_managed" == true ]]; then
   old_version="$(state_value REDIS_VERSION)"
   [[ "$(state_value PACKAGE_VARIANT)" == "$(package_info_value "$PACKAGE_ROOT" PACKAGE_VARIANT)" ]] \
-    || die "Refusing to update across package variants; use a separately reviewed migration."
+    || die "Refusing to update across package variants; use a separately reviewed migration." "拒绝跨安装包变体更新；请使用单独审查的迁移方案。"
 else
   old_version="unmanaged"
 fi
@@ -216,7 +252,7 @@ if [[ "$was_managed" == true ]] \
       die "Refusing to downgrade Redis $old_version to $new_version by default; after taking a separate data snapshot, re-run with --allow-downgrade."
     fi
   fi
-  warn "Redis downgrade explicitly authorized: $old_version -> $new_version. / 已明确允许 Redis 降级：$old_version -> $new_version。"
+  warn "Redis downgrade explicitly authorized: $old_version -> $new_version." "已明确允许 Redis 降级：$old_version -> $new_version。"
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -266,7 +302,7 @@ if [[ "$service_manager" == "systemd" ]]; then
       case "$service_enablement_state" in
         disabled|static|indirect|generated|transient) service_was_disabled=true ;;
         enabled|enabled-runtime|linked|linked-runtime|alias) ;;
-        *) die "Refusing to replace $REDIS_SERVICE_NAME with an unsupported enablement state: ${service_enablement_state:-unknown}." ;;
+        *) die "Refusing to replace $REDIS_SERVICE_NAME with an unsupported enablement state: ${service_enablement_state:-unknown}." "拒绝替换启用状态不受支持的 $REDIS_SERVICE_NAME：${service_enablement_state:-unknown}。" ;;
       esac
     fi
   fi
@@ -278,7 +314,7 @@ if [[ "$service_manager" == "systemd" ]]; then
   case "$service_active_state" in
     active|reloading) service_was_active=true ;;
     inactive|failed) ;;
-    *) die "Refusing to update $REDIS_SERVICE_NAME while its state is ${service_active_state:-unknown}." ;;
+    *) die "Refusing to update $REDIS_SERVICE_NAME while its state is ${service_active_state:-unknown}." "拒绝在 $REDIS_SERVICE_NAME 状态为 ${service_active_state:-unknown} 时更新。" ;;
   esac
   if [[ "$service_was_active" == true ]]; then
     if [[ "$service_was_foreign" == true ]]; then

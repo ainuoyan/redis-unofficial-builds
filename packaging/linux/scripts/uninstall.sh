@@ -5,8 +5,42 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 unset CDPATH ENV BASH_ENV
 
+
+# Parse only UI options before loading package code; preserve operation arguments.
+REDIS_UI_LANGUAGE="${REDIS_INSTALL_LANG:-en}"
+redis_operation_args=()
+while (( $# > 0 )); do
+  case "$1" in
+    --lang)
+      if (( $# < 2 )); then
+        printf 'Usage: --lang en|zh\n' >&2
+        exit 2
+      fi
+      REDIS_UI_LANGUAGE="$2"
+      shift
+      ;;
+    *) redis_operation_args+=("$1") ;;
+  esac
+  shift
+done
+case "$REDIS_UI_LANGUAGE" in
+  en) ;;
+  zh|zh_CN) REDIS_UI_LANGUAGE=zh ;;
+  *) printf 'Invalid language. Use --lang en or --lang zh.\n' >&2; exit 2 ;;
+esac
+if (( ${#redis_operation_args[@]} > 0 )); then
+  set -- "${redis_operation_args[@]}"
+else
+  set --
+fi
+unset redis_operation_args
+
 bootstrap_fail() {
-  printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable installation. / 生命周期脚本必须从 root 控制且不可写的安装目录运行。\n' >&2
+  if [[ "$REDIS_UI_LANGUAGE" == zh ]]; then
+    printf '[redis-package] 错误：生命周期脚本必须从 root 控制且不可写的安装目录运行。\n' >&2
+  else
+    printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable installation.\n' >&2
+  fi
   exit 1
 }
 
@@ -72,6 +106,7 @@ show_help() {
               任何其他文件。只有在安装状态明确记录账号由本项目创建且
               UID/GID 仍一致时，才删除 redis 用户和组。
               /usr/local/redis-backups 中的备份始终保留。
+  --lang en|zh  选择提示语言（默认英文）。
   -h, --help  显示帮助。
 EOF
   else
@@ -87,6 +122,7 @@ Options:
               removed only when state proves this project created them and their
               UID/GID still match. Backups under /usr/local/redis-backups are
               always retained.
+  --lang en|zh  Select the display language (default: English).
   -h, --help  Show this help message.
 EOF
   fi
@@ -179,19 +215,19 @@ if [[ "$service_manager" == "systemd" ]]; then
     case "$service_active_state" in
       active|reloading) service_was_active=true ;;
       inactive|failed) ;;
-      *) die "Refusing to remove files while $REDIS_SERVICE_NAME is ${service_active_state:-unknown}." ;;
+      *) die "Refusing to remove files while $REDIS_SERVICE_NAME is ${service_active_state:-unknown}." "拒绝在 $REDIS_SERVICE_NAME 状态为 ${service_active_state:-unknown} 时删除文件。" ;;
     esac
     systemctl stop "$REDIS_SERVICE_NAME"
     service_active_state="$(LC_ALL=C systemctl show \
       --property=ActiveState --value "$REDIS_SERVICE_NAME")"
     case "$service_active_state" in
       inactive|failed) ;;
-      *) die "Refusing to remove files while $REDIS_SERVICE_NAME is ${service_active_state:-unknown}." ;;
+      *) die "Refusing to remove files while $REDIS_SERVICE_NAME is ${service_active_state:-unknown}." "拒绝在 $REDIS_SERVICE_NAME 状态为 ${service_active_state:-unknown} 时删除文件。" ;;
     esac
     if ! assert_no_live_install_redis_server; then
       if [[ "$service_was_active" == true ]]; then
         systemctl start "$REDIS_SERVICE_NAME" \
-          || warn "Unable to restart $REDIS_SERVICE_NAME after the process-safety check failed."
+          || warn "Unable to restart $REDIS_SERVICE_NAME after the process-safety check failed." "进程安全检查失败后，无法重新启动 $REDIS_SERVICE_NAME。"
       fi
       exit 1
     fi
@@ -218,29 +254,29 @@ if [[ "$purge" == true ]]; then
   user_deleted=false
   if [[ "$created_user" == "1" ]] && id "$REDIS_USER" >/dev/null 2>&1; then
     if [[ "$state_format" != 3 ]]; then
-      warn "The retained state predates exact account home/shell tracking; the redis user and group were preserved. / 保留的状态早于账号 home/shell 精确记录；redis 用户和组均已保留。"
+      warn "The retained state predates exact account home/shell tracking; the redis user and group were preserved." "保留的状态早于账号 home/shell 精确记录；redis 用户和组均已保留。"
     elif redis_account_matches_recorded_identity \
       "$recorded_uid" "$recorded_gid" "$recorded_home" "$recorded_shell"; then
       if userdel "$REDIS_USER"; then
         user_deleted=true
       else
-        warn "Unable to remove user $REDIS_USER; the user and group were preserved. / 无法删除 redis 用户；用户和组均已保留。"
+        warn "Unable to remove user $REDIS_USER; the user and group were preserved." "无法删除 redis 用户；用户和组均已保留。"
       fi
     else
-      warn "The redis user identity changed (UID, primary GID, home, shell, or supplementary groups); the user and group were preserved. / redis 用户身份（UID、主 GID、home、shell 或附加组）已变化；用户和组均已保留。"
+      warn "The redis user identity changed (UID, primary GID, home, shell, or supplementary groups); the user and group were preserved." "redis 用户身份（UID、主 GID、home、shell 或附加组）已变化；用户和组均已保留。"
     fi
   elif [[ "$created_user" == "1" ]]; then
-    warn "The recorded redis user no longer exists; the recorded group was preserved. / 状态中记录的 redis 用户已不存在；用户组已保留。"
+    warn "The recorded redis user no longer exists; the recorded group was preserved." "状态中记录的 redis 用户已不存在；用户组已保留。"
   fi
   if [[ "$created_group" == "1" ]] && getent group "$REDIS_GROUP" >/dev/null 2>&1; then
     if [[ "$user_deleted" == true ]] \
       && redis_group_matches_recorded_identity "$recorded_gid"; then
       groupdel "$REDIS_GROUP" \
-        || warn "Unable to remove group $REDIS_GROUP; it was preserved. / 无法删除 redis 用户组；该组已保留。"
+        || warn "Unable to remove group $REDIS_GROUP; it was preserved." "无法删除 redis 用户组；该组已保留。"
     elif [[ "$user_deleted" == true ]]; then
-      warn "The redis group identity or membership changed; the group was preserved. / redis 用户组身份或成员已变化；该组已保留。"
+      warn "The redis group identity or membership changed; the group was preserved." "redis 用户组身份或成员已变化；该组已保留。"
     else
-      warn "The redis group was preserved because the recorded service-user identity could not be safely removed. / 因无法安全删除状态中记录的服务用户身份，redis 用户组已保留。"
+      warn "The redis group was preserved because the recorded service-user identity could not be safely removed." "因无法安全删除状态中记录的服务用户身份，redis 用户组已保留。"
     fi
   fi
 

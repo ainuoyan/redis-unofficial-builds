@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -127,6 +129,42 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn('if [[ -n "${PROVIDED_HASHES_COMMIT:-}" ]]', self.workflow)
         self.assertIn("REDIS_HASHES_COMMIT", self.workflow)
         self.assertIn("[0-9]{0,5}", self.workflow)
+
+    def test_windows_lifecycle_calls_check_exit_codes(self) -> None:
+        self.assertIn('Test-LifecycleInvocation.ps1', self.experimental_workflow)
+        self.assertIn('function Invoke-RedisLifecycleScript', self.experimental_workflow)
+        self.assertIn('throw "$Name-Redis.ps1 failed with exit code $LASTEXITCODE."',
+                      self.experimental_workflow)
+        self.assertNotRegex(self.experimental_workflow,
+                            r"& \(Join-Path \$scripts '(?:Install|Update|Uninstall)-Redis.ps1'\)")
+
+    def test_only_explicit_build_only_force_rebuild_bypasses_old_assets(self) -> None:
+        prepare = self.workflow.split("          release_exists=false\n", 1)[1]
+        bypass, existing = prepare.split("          elif jq -e", 1)
+        condition = re.search(
+            r"^          if (\[\[ .* \]\]); then$", bypass, re.MULTILINE
+        )
+        self.assertIsNotNone(condition)
+        self.assertIn("existing-release-assets/manifest.json", existing)
+        self.assertIn(' --packaging-root "$GITHUB_WORKSPACE"', existing)
+        for force in (None, "false", "true", "invalid"):
+            for publish in (None, "false", "true", "invalid"):
+                with self.subTest(force=force, publish=publish):
+                    env = os.environ.copy()
+                    for name, value in (
+                        ("FORCE_REBUILD", force), ("PUBLISH_RELEASE", publish)
+                    ):
+                        env.pop(name, None)
+                        if value is not None:
+                            env[name] = value
+                    result = subprocess.run(
+                        ["bash", "-c", f"{condition.group(1)}"],
+                        env=env, check=False,
+                    )
+                    self.assertEqual(
+                        result.returncode == 0,
+                        force == "true" and publish in (None, "false"),
+                    )
 
     def test_linux_build_has_time_for_one_complete_serial_test_retry(self) -> None:
         build_job = self.workflow.split("\n  build:\n", 1)[1].split(

@@ -5,8 +5,42 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 unset CDPATH ENV BASH_ENV
 
+
+# Parse only UI options before loading package code; preserve operation arguments.
+REDIS_UI_LANGUAGE="${REDIS_INSTALL_LANG:-en}"
+redis_operation_args=()
+while (( $# > 0 )); do
+  case "$1" in
+    --lang)
+      if (( $# < 2 )); then
+        printf 'Usage: --lang en|zh\n' >&2
+        exit 2
+      fi
+      REDIS_UI_LANGUAGE="$2"
+      shift
+      ;;
+    *) redis_operation_args+=("$1") ;;
+  esac
+  shift
+done
+case "$REDIS_UI_LANGUAGE" in
+  en) ;;
+  zh|zh_CN) REDIS_UI_LANGUAGE=zh ;;
+  *) printf 'Invalid language. Use --lang en or --lang zh.\n' >&2; exit 2 ;;
+esac
+if (( ${#redis_operation_args[@]} > 0 )); then
+  set -- "${redis_operation_args[@]}"
+else
+  set --
+fi
+unset redis_operation_args
+
 bootstrap_fail() {
-  printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable package tree. / 生命周期脚本必须从 root 控制且不可写的安装包目录运行。\n' >&2
+  if [[ "$REDIS_UI_LANGUAGE" == zh ]]; then
+    printf '[redis-package] 错误：生命周期脚本必须从 root 控制且不可写的安装包目录运行。\n' >&2
+  else
+    printf '[redis-package] ERROR: lifecycle scripts must be run from a root-controlled, non-writable package tree.\n' >&2
+  fi
   exit 1
 }
 
@@ -75,10 +109,11 @@ show_help() {
   --force-service  仅替换其他软件管理但未运行的 redis.service；正在运行的外部服务始终拒绝替换。
   --allow-downgrade
                    仅在保留了旧安装状态的重装中，明确允许安装更旧的 Redis；执行前必须另做数据快照。
+  --lang en|zh    选择提示语言（默认英文）。
   -h, --help       显示帮助。
 
-语言由 LC_ALL、LC_MESSAGES 或 LANG 自动选择，也可设置
-REDIS_INSTALL_LANG=en 或 REDIS_INSTALL_LANG=zh_CN。
+默认英文；使用 --lang zh 切换中文，--lang en 切换英文。
+也兼容 REDIS_INSTALL_LANG=en 或 REDIS_INSTALL_LANG=zh_CN。
 EOF
   else
     cat <<'EOF'
@@ -98,10 +133,11 @@ Options:
   --allow-downgrade
                    Explicitly reinstall an older Redis version when retained
                    project state exists; take a separate data snapshot first.
+  --lang en|zh    Select the display language (default: English).
   -h, --help       Show this help message.
 
-The language is selected from LC_ALL, LC_MESSAGES, or LANG. Override it with
-REDIS_INSTALL_LANG=en or REDIS_INSTALL_LANG=zh_CN.
+English is the default. Use --lang zh for Chinese or --lang en for English.
+REDIS_INSTALL_LANG=en or REDIS_INSTALL_LANG=zh_CN is also supported.
 EOF
   fi
 }
@@ -141,7 +177,7 @@ if managed_install_exists; then
   retained_version="$(state_value REDIS_VERSION)"
   package_version="$(package_info_value "$PACKAGE_ROOT" REDIS_VERSION)"
   [[ "$(state_value PACKAGE_VARIANT)" == "$(package_info_value "$PACKAGE_ROOT" PACKAGE_VARIANT)" ]] \
-    || die "Refusing to reinstall a different package variant over retained lifecycle state."
+    || die "Refusing to reinstall a different package variant over retained lifecycle state." "拒绝在保留的生命周期状态上重新安装不同变体的软件包。"
   if ! redis_version_is_at_least "$package_version" "$retained_version" \
     && [[ "$allow_downgrade" != true ]]; then
     if [[ "$REDIS_UI_LANGUAGE" == "zh" ]]; then
@@ -288,7 +324,7 @@ if [[ "$service_manager" == "systemd" ]]; then
     case "$service_enablement_state" in
       disabled|static|indirect|generated|transient) service_was_disabled=true ;;
       enabled|enabled-runtime|linked|linked-runtime|alias) ;;
-      *) die "Refusing to replace $REDIS_SERVICE_NAME with an unsupported enablement state: ${service_enablement_state:-unknown}." ;;
+      *) die "Refusing to replace $REDIS_SERVICE_NAME with an unsupported enablement state: ${service_enablement_state:-unknown}." "拒绝替换启用状态不受支持的 $REDIS_SERVICE_NAME：${service_enablement_state:-unknown}。" ;;
     esac
     cp -a "$existing_unit" "$install_backup_dir/redis.service.fragment"
     backup_has_prior_content=true
@@ -306,7 +342,7 @@ if [[ "$service_manager" == "systemd" ]]; then
   case "$service_active_state" in
     active|reloading) service_was_active=true ;;
     inactive|failed) ;;
-    *) die "Refusing to replace $REDIS_SERVICE_NAME while its state is ${service_active_state:-unknown}." ;;
+    *) die "Refusing to replace $REDIS_SERVICE_NAME while its state is ${service_active_state:-unknown}." "拒绝在 $REDIS_SERVICE_NAME 状态为 ${service_active_state:-unknown} 时替换服务。" ;;
   esac
   if [[ "$service_was_active" == true ]]; then
     if [[ "$service_was_foreign" == true ]]; then
@@ -331,7 +367,7 @@ rollback_install() {
   fi
 
   set +e
-  warn "Installation failed; restoring the previous host state from $install_backup_dir. / 安装失败，正在恢复先前的主机状态。"
+  warn "Installation failed; restoring the previous host state from $install_backup_dir." "安装失败，正在恢复先前的主机状态。"
 
   if [[ "$service_manager" == "systemd" \
     && "$service_start_attempted" == true ]]; then
@@ -417,10 +453,10 @@ rollback_install() {
   fi
 
   if [[ "$rollback_failed" == true ]]; then
-    warn "Installation rollback was incomplete; retain $install_backup_dir and inspect the host manually. / 安装回滚不完整，请保留备份并手工检查。"
+    warn "Installation rollback was incomplete; retain $install_backup_dir and inspect the host manually." "安装回滚不完整，请保留备份并手工检查。"
     exit 2
   fi
-  warn "Installation was rolled back. / 安装已回滚。"
+  warn "Installation was rolled back." "安装已回滚。"
   [[ "$status" -ne 0 ]] || status=1
   exit "$status"
 }

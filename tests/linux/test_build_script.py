@@ -62,8 +62,9 @@ class BuildScriptTests(unittest.TestCase):
     def test_build_and_test_are_explicitly_unprivileged_and_tls_free(self) -> None:
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("if (( EUID == 0 )); then", script)
-        self.assertIn('make -j"$(nproc)" build redis BUILD_TLS=no', script)
-        self.assertIn('make -j"$(nproc)" BUILD_TLS=no', script)
+        self.assertIn('make_args=(BUILD_TLS=no)', script)
+        self.assertIn('make -j"$(nproc)" build redis "${make_args[@]}"', script)
+        self.assertIn('make -j"$(nproc)" "${make_args[@]}"', script)
         self.assertIn("./runtest --clients 1 --timeout 1200", script)
         self.assertIn("Redis test runner must be a regular executable file", script)
         self.assertIn(
@@ -74,7 +75,7 @@ class BuildScriptTests(unittest.TestCase):
             script,
         )
         self.assertLess(
-            script.index('make -j"$(nproc)" BUILD_TLS=no'),
+            script.index('make -j"$(nproc)" "${make_args[@]}"'),
             script.index('python3.11 "$UPSTREAM_TEST_FIX_HELPER"'),
         )
         self.assertLess(
@@ -85,24 +86,28 @@ class BuildScriptTests(unittest.TestCase):
             'echo "Redis upstream test fix: $redis_test_fix_status"', script
         )
         self.assertIn(
-            "applied:redis-8.10.1-hfe-test-timeout-stability", script
+            "applied:redis-8.10.1-hfe-and-defrag-test-stability", script
         )
         self.assertIn(
-            "present:redis-8.10.1-hfe-test-timeout-stability", script
+            "present:redis-8.10.1-hfe-and-defrag-test-stability", script
         )
         self.assertIn(
-            "applied:redis-8.2.9-latency-test-timeout-stability", script
+            "applied:redis-8.2.9-latency-and-defrag-test-stability", script
         )
         self.assertIn(
-            "present:redis-8.2.9-latency-test-timeout-stability", script
+            "present:redis-8.2.9-latency-and-defrag-test-stability", script
+        )
+        self.assertIn("applied:redis-8.4.6-defrag-page-size-stability", script)
+        self.assertIn("present:redis-8.4.6-defrag-page-size-stability", script)
+        self.assertIn("applied:redis-8.6.6-defrag-page-size-stability", script)
+        self.assertIn("present:redis-8.6.6-defrag-page-size-stability", script)
+        self.assertIn(
+            "applied:redis-8.8.2-latency-and-defrag-test-stability", script
         )
         self.assertIn(
-            "applied:redis-8.8.2-latency-test-timeout-stability", script
+            "present:redis-8.8.2-latency-and-defrag-test-stability", script
         )
-        self.assertIn(
-            "present:redis-8.8.2-latency-test-timeout-stability", script
-        )
-        self.assertIn('make PREFIX="$package_root" BUILD_TLS=no install', script)
+        self.assertIn('make PREFIX="$package_root" install "${make_args[@]}"', script)
         self.assertNotIn("--daemonize yes", script)
         self.assertIn("smoke_pid=$!", script)
         self.assertIn('wait "$smoke_pid"', script)

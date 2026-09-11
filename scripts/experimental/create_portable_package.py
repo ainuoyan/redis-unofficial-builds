@@ -21,6 +21,7 @@ from portable_contract import (
     EXPERIMENTAL_WORKFLOW,
     archive_name,
     backend_assets,
+    packaged_asset_bytes,
     packaging_patchset_sha256,
     require_regular_file,
     validate_identity,
@@ -260,36 +261,81 @@ def write_metadata(
 
 
 def package_readme(args: argparse.Namespace, backend: dict[str, object]) -> str:
+    package_archive = archive_name(args.redis_version, args.variant, args.arch)
     lifecycle = {
-        "linux-musl1.2": """Host prerequisites: bash, OpenRC, getent, util-linux (flock, findmnt,
+        "linux-musl1.2": f"""Host prerequisites: bash, OpenRC, getent, util-linux (flock, findmnt,
 setpriv), procps (pgrep), tar, and standard POSIX account/file utilities. The default service
-listens only on /usr/local/redis/data/redis.sock.
+listens only on /usr/local/redis/data/redis.sock. Lifecycle scripts accept only a root-owned,
+non-group/world-writable staging package tree.
 
-Install:   sudo ./scripts/install.sh
-Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
+Prepare:   stage="$(sudo mktemp -d /var/tmp/redis-unofficial.XXXXXX)"
+           sudo tar -xzf {package_archive} -C "$stage"
+Install:   sudo "$stage/redis/scripts/install.sh"
+Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
+
+English is the default. Add --lang zh for Chinese, --lang en for English.
+默认英文；添加 --lang zh 切换中文。中文需要 UTF-8 终端，显示异常时切回 --lang en。
 
 主机前提：bash、OpenRC、getent、util-linux（flock、findmnt、setpriv）、procps（pgrep）、tar
 及标准 POSIX 账号/文件工具。默认服务只监听
-/usr/local/redis/data/redis.sock。""",
-        "macos15": """Host prerequisites: macOS 15 or newer and an Administrator account. The
-default service listens only on /usr/local/redis/data/redis.sock.
+/usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
+        "macos15": f"""Host prerequisites: macOS 15 or newer and an Administrator account. The
+default service listens only on /usr/local/redis/data/redis.sock. Lifecycle scripts accept only
+a root-owned, non-group/world-writable staging package tree.
 
-Install:   sudo ./scripts/install.sh
-Update:    sudo ./scripts/update.sh   (run from the newly extracted package)
+Prepare:   stage="$(sudo mktemp -d /private/var/tmp/redis-unofficial.XXXXXX)"
+           sudo tar -xzf {package_archive} -C "$stage"
+Install:   sudo "$stage/redis/scripts/install.sh"
+Update:    sudo "$stage/redis/scripts/update.sh"   (use a newly extracted package)
 Uninstall: sudo /usr/local/redis/scripts/uninstall.sh
 Purge:     sudo /usr/local/redis/scripts/uninstall.sh --purge
 
-主机前提：macOS 15 或更高版本及管理员账号。默认服务只监听
-/usr/local/redis/data/redis.sock。""",
-        "windows-msys2": r"""Host prerequisites: x64 Windows and an elevated Windows PowerShell 5.1
-or newer session. The default service endpoint is 127.0.0.1:6379.
+English is the default. Add --lang zh for Chinese, --lang en for English.
+默认英文；添加 --lang zh 切换中文。中文需要 UTF-8 终端，显示异常时切回 --lang en。
 
-Install:   .\scripts\Install-Redis.ps1
-Update:    .\scripts\Update-Redis.ps1   (run from the newly extracted package)
+主机前提：macOS 15 或更高版本及管理员账号。默认服务只监听
+/usr/local/redis/data/redis.sock。生命周期脚本只接受 root 控制且不可写的暂存包目录。""",
+        "windows-msys2": fr"""Host prerequisites: x64 Windows and an elevated Windows PowerShell 5.1
+or newer session. The default service endpoint is 127.0.0.1:6379. Lifecycle scripts accept only
+an Administrator/SYSTEM-controlled staging tree without untrusted write access or reparse points.
+
+Prepare:   $stage = Join-Path $env:ProgramFiles ('Redis-Unofficial-Staging-' + [Guid]::NewGuid().ToString('N'))
+           New-Item -ItemType Directory -Path $stage | Out-Null
+           icacls $stage /setowner '*S-1-5-32-544'
+           icacls $stage /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+           Expand-Archive -LiteralPath .\{package_archive} -DestinationPath $stage
+           icacls $stage /setowner '*S-1-5-32-544' /T /C
+           icacls $stage /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' /T /C
+Install:   & "$stage\redis\scripts\Install-Redis.ps1"
+Update:    & "$stage\redis\scripts\Update-Redis.ps1"   (use a newly extracted package)
 Uninstall: & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1'
 Purge:     & 'C:\Program Files\Redis-Unofficial\scripts\Uninstall-Redis.ps1' -Purge
+
+For Explorer or cmd.exe, use Install-Redis.bat, Update-Redis.bat,
+Uninstall-Redis.bat or Purge-Redis.bat in scripts (Run as administrator).
+The window stays open to show the result. Purge asks for confirmation before
+removing configuration, data and logs. The same protected staging rules apply.
+资源管理器或 cmd.exe 可使用 scripts 中同名 .bat 入口（以管理员身份运行）。
+Purge-Redis.bat 会先确认，再彻底删除配置、数据和日志。
+
+English is the default. BAT: --lang zh / --lang en; PowerShell: -Lang zh / -Lang en.
+默认英文。BAT 使用 --lang zh 切换中文，PowerShell 使用 -Lang zh；en 切回英文。
+BAT stays ASCII; PowerShell scripts use UTF-8 with BOM. Do not save them as ANSI.
+中文需要支持 UTF-8 和中文字形的终端。请保留 PowerShell 脚本的 UTF-8 BOM；不要另存为 ANSI。
+Script output temporarily uses UTF-8 (also for paths in English messages), then restores the previous encoding.
+Redirected Chinese output must be read as UTF-8; if display is unreadable, select English.
+
+Direct start (no installation): scripts\Start-Redis.bat [--lang en|zh]
+Run from a writable extracted package as a normal user. Uses the existing
+conf\redis.conf with the package root as working directory. No configuration
+is generated or overridden; data paths follow that file (dir ./ means package root).
+Do not share data with another running Redis instance. Press Ctrl+C to stop.
+免安装启动：运行 scripts\Start-Redis.bat，中文可加 --lang zh，无需管理员权限。
+使用当前用户可写的解压目录，直接加载现有 conf\redis.conf；不生成或覆盖配置。
+工作目录为包根目录，数据路径按配置执行；不创建 portable 目录。不要与其他运行中的
+Redis 共用数据目录。前台运行时按 Ctrl+C 停止。
 
 Edit only C:\Program Files\Redis-Unofficial\conf\redis.conf, then run:
 Restart-Service -Name RedisUnofficial
@@ -314,7 +360,8 @@ and removes it from the active installation after the new wrapper self-test.
 Run Update-Redis.ps1 from the new package even if the Redis version is unchanged.
 
 主机前提：x64 Windows，以及以管理员身份运行的 Windows PowerShell 5.1 或
-更高版本。默认服务端点为 127.0.0.1:6379。只需修改
+更高版本。生命周期脚本只接受由 Administrators/SYSTEM 控制、普通用户不可写且不含
+重解析点的暂存包目录。默认服务端点为 127.0.0.1:6379。只需修改
 C:\Program Files\Redis-Unofficial\conf\redis.conf，再执行
 Restart-Service -Name RedisUnofficial。包装器直接读取 bind、port、requirepass，
 支持本机非回环 IP 和自定义端口，不再需要 RedisService.json 或独立密码文件。
@@ -546,6 +593,12 @@ def main() -> int:
             for relative, mode in backend_assets(args.variant).items():
                 source = require_regular_file(packaging_root, asset_root / relative)
                 copy_regular(source, package_root / relative, mode)
+                if args.variant == "windows-msys2" and relative.endswith((".bat", ".ps1")):
+                    # cmd.exe stays ASCII; Windows PowerShell 5.1 needs a BOM
+                    # to distinguish UTF-8 Chinese source from the system ANSI page.
+                    (package_root / relative).write_bytes(
+                        packaged_asset_bytes(source, args.variant, relative)
+                    )
             package_root.joinpath("README.txt").write_text(
                 package_readme(args, backend), encoding="utf-8"
             )

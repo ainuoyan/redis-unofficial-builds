@@ -71,6 +71,10 @@ Redis。工作流先把版本绑定到不可变的 `redis/redis-hashes` 提交�
 Windows 包当前为兼容 MSYS2 使用 `-O0`，不运行完整上游 Redis 测试套件，
 而是运行协议冒烟与原生生命周期验收；优化构建仍未完成验收。
 
+Redis 8.8.2 的测试专用补丁按 jemalloc 页大小调整副本清空用例的碎片容忍阈值
+（4 KiB 页为 2 MiB，64 KiB 页为 32 MiB），保留整理启动、同步、整理停止及空数据库
+断言；不跳过该用例，也不改变 Redis 运行时默认配置。
+
 验收覆盖真实二进制架构与运行时、glibc 符号上限、Redis 构建测试与协议冒烟、
 安装/更新/卸载幂等性、持久化数据恢复、OpenRC/launchd/Windows 故障注入更新回滚、
 原生 macOS 15 launchd，以及 Windows 端口冲突、非 ASCII 暂存路径、BGSAVE、

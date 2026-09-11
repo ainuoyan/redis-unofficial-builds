@@ -37,8 +37,10 @@ COMMON_PATCHSET_PATHS = (
 UPSTREAM_TEST_FIX_PATHS = (
     "packaging/linux/patches/apply_upstream_test_fixes.py",
     "packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch",
-    "packaging/linux/patches/redis-8.2.9-latency-test-timeout.patch",
-    "packaging/linux/patches/redis-8.8.2-latency-test-timeout.patch",
+    "packaging/linux/patches/redis-8.2.9-test-stability.patch",
+    "packaging/linux/patches/redis-8.4.6-defrag-page-size.patch",
+    "packaging/linux/patches/redis-8.6.6-defrag-page-size.patch",
+    "packaging/linux/patches/redis-8.8.2-test-stability.patch",
     "packaging/linux/patches/redis-8.10.1-hfe-test-timeout.patch",
 )
 
@@ -97,6 +99,12 @@ BACKENDS = {
             "scripts/Install-Redis.ps1": 0o644,
             "scripts/Update-Redis.ps1": 0o644,
             "scripts/Uninstall-Redis.ps1": 0o644,
+            "scripts/Start-Redis.ps1": 0o644,
+            "scripts/Install-Redis.bat": 0o644,
+            "scripts/Update-Redis.bat": 0o644,
+            "scripts/Uninstall-Redis.bat": 0o644,
+            "scripts/Purge-Redis.bat": 0o644,
+            "scripts/Start-Redis.bat": 0o644,
         },
     },
 }
@@ -115,6 +123,18 @@ GENERATED_REGULAR_MEMBERS = {
 
 class ContractError(RuntimeError):
     """Raised when a portable package violates its checked-in contract."""
+
+
+def packaged_asset_bytes(source: Path, variant: str, relative: str) -> bytes:
+    """Canonical script bytes, shared by packaging and exact-byte validation."""
+    if variant == "windows-msys2" and relative.endswith((".bat", ".ps1")):
+        encoding = "ascii" if relative.endswith(".bat") else "utf-8-sig"
+        try:
+            content = source.read_text(encoding=encoding)
+        except UnicodeError as exc:
+            raise ContractError(f"invalid Windows script encoding: {relative}") from exc
+        return content.replace("\n", "\r\n").encode(encoding)
+    return source.read_bytes()
 
 
 def validate_source_archive(

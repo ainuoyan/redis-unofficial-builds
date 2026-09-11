@@ -26,7 +26,7 @@ readonly REDIS_READY_TIMEOUT_DEFAULT=30
 
 detect_ui_language() {
   local requested_locale
-  requested_locale="${REDIS_INSTALL_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}}"
+  requested_locale="${REDIS_UI_LANGUAGE:-${REDIS_INSTALL_LANG:-en}}"
   case "$requested_locale" in
     zh*|ZH*) printf 'zh\n' ;;
     *) printf 'en\n' ;;
@@ -133,16 +133,25 @@ message() {
   printf "$format" "$@"
 }
 
+# Keep text separate from printf formats: paths may contain percent signs.
+ui_text() {
+  if [[ "${REDIS_UI_LANGUAGE:-en}" == zh && $# -ge 2 ]]; then
+    printf '%s' "$2"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 info() {
-  printf '[redis-package] %s\n' "$*"
+  printf '[redis-package] %s\n' "$(ui_text "$@")"
 }
 
 warn() {
-  printf '[redis-package] WARNING: %s\n' "$*" >&2
+  printf '[redis-package] %s: %s\n' "$(ui_text WARNING 警告)" "$(ui_text "$@")" >&2
 }
 
 die() {
-  printf '[redis-package] ERROR: %s\n' "$*" >&2
+  printf '[redis-package] %s: %s\n' "$(ui_text ERROR 错误)" "$(ui_text "$@")" >&2
   exit 1
 }
 
@@ -441,9 +450,9 @@ assert_no_live_install_redis_server() {
   local pids
   pids="$(live_install_redis_server_pids)"
   if [[ -n "$pids" ]]; then
-    printf '[redis-package] ERROR: Redis processes from %s are still running (PID(s): %s). Stop them before changing or deleting the installation. / 仍有来自 %s 的 Redis 进程正在运行（PID：%s）；请先停止进程，再修改或删除安装。\n' \
-      "$REDIS_INSTALL_PREFIX" "${pids//$'\n'/, }" \
-      "$REDIS_INSTALL_PREFIX" "${pids//$'\n'/, }" >&2
+    printf '[redis-package] %s\n' "$(ui_text \
+      "ERROR: Redis processes from $REDIS_INSTALL_PREFIX are still running (PID(s): ${pids//$'\n'/, }). Stop them before changing or deleting the installation." \
+      "错误：仍有来自 $REDIS_INSTALL_PREFIX 的 Redis 进程正在运行（PID：${pids//$'\n'/, }）；请先停止进程，再修改或删除安装。")" >&2
     return 1
   fi
 }
@@ -1126,14 +1135,14 @@ remove_stale_managed_service_enablement_links() {
     assert_no_symlink_path_components "$link_directory"
     assert_strict_root_path_chain "$link_directory"
     if [[ "$(stat -c '%u:%g' -- "$link_path")" != "0:0" ]]; then
-      warn "Preserving non-root service enablement link: $link_path"
+      warn "Preserving non-root service enablement link: $link_path" "保留非 root 所有的服务启用链接：$link_path"
       continue
     fi
     if service_enablement_link_targets_unit \
       "$link_path" "$REDIS_SERVICE_UNIT"; then
       rm -f -- "$link_path"
     else
-      warn "Preserving third-party service enablement link: $link_path"
+      warn "Preserving third-party service enablement link: $link_path" "保留第三方服务启用链接：$link_path"
     fi
   done < <(find -P /etc/systemd/system -xdev -mindepth 2 -maxdepth 2 \
     -type l -name "$REDIS_SERVICE_NAME" -print0)
@@ -1462,8 +1471,10 @@ redis_effective_config_value() {
 
 normalize_config_scalar() {
   local value="$1"
-  if ((${#value} >= 2)) \
-    && [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+  if ((${#value} >= 2)) && {
+    [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] \
+      || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]
+  }; then
     value="${value:1:${#value}-2}"
   fi
   printf '%s\n' "$value"
@@ -1524,6 +1535,7 @@ redis_protocol_ready() {
     configured_bind_targets=(127.0.0.1)
   fi
   for candidate in "${configured_bind_targets[@]}"; do
+    candidate="$(normalize_config_scalar "$candidate")"
     candidate="${candidate#-}"
     case "$candidate" in
       "") ;;
@@ -1611,16 +1623,16 @@ wait_for_service() {
     (( remaining > 0 )) && sleep 1
   done
   if [[ "$loading_seen" == true ]]; then
-    printf '[redis-package] ERROR: %s\n' \
+    printf '[redis-package] %s: %s\n' "$(ui_text ERROR 错误)" \
       "$(message service_loading "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
     return 1
   fi
   if [[ "$active_seen" == true ]]; then
-    printf '[redis-package] ERROR: %s\n' \
+    printf '[redis-package] %s: %s\n' "$(ui_text ERROR 错误)" \
       "$(message service_unready "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
     return 1
   fi
-  printf '[redis-package] ERROR: %s\n' \
+  printf '[redis-package] %s: %s\n' "$(ui_text ERROR 错误)" \
     "$(message service_failed "$REDIS_SERVICE_NAME" "$REDIS_SERVICE_NAME")" >&2
   return 1
 }
