@@ -11,8 +11,8 @@ expiration test. That window repeatedly expired before its immediate HEXISTS
 assertion on GitHub-hosted macOS runners. The second reviewed patch widens only
 that test window and its wait bound. Redis 8.2.9 and 8.8.2 latency-monitor
 tests likewise need bounded scheduling headroom on hosted macOS runners; their
-lower bounds and cross-command consistency checks remain unchanged. Redis 8.8.2's
-replica-flush defrag test also scales its fragmentation allowance with jemalloc's
+lower bounds and cross-command consistency checks remain unchanged. Their
+replica-flush defrag tests also scale the fragmentation allowance with jemalloc's
 page size, retaining the original 2 MB at 4 KB and all lifecycle assertions.
 Every applicable patch fails closed for unknown source states.
 """
@@ -34,11 +34,14 @@ UPSTREAM_PATCH_TARGETS = (
     Path("tests/unit/maxmemory.tcl"),
     Path("tests/unit/memefficiency.tcl"),
 )
-REDIS_829_FIX_ID = "redis-8.2.9-latency-test-timeout-stability"
+REDIS_829_FIX_ID = "redis-8.2.9-latency-and-defrag-test-stability"
 REDIS_829_PATCH_FILE = Path(__file__).with_name(
-    "redis-8.2.9-latency-test-timeout.patch"
+    "redis-8.2.9-test-stability.patch"
 )
-REDIS_829_PATCH_TARGETS = (Path("tests/unit/latency-monitor.tcl"),)
+REDIS_829_PATCH_TARGETS = (
+    Path("tests/unit/latency-monitor.tcl"),
+    Path("tests/unit/memefficiency.tcl"),
+)
 REDIS_882_FIX_ID = "redis-8.8.2-latency-and-defrag-test-stability"
 REDIS_882_PATCH_FILE = Path(__file__).with_name(
     "redis-8.8.2-test-stability.patch"

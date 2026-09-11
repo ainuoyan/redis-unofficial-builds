@@ -352,7 +352,7 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("r hpexpire mix$h 6000", patch_text)
         self.assertIn("wait_for_condition 500 20", patch_text)
 
-    def test_redis_829_patch_only_widens_latency_upper_bounds(self) -> None:
+    def test_redis_829_patch_only_changes_reviewed_tests(self) -> None:
         patch_text = PATCHER.REDIS_829_PATCH_FILE.read_text(encoding="utf-8")
         headers = [
             line
@@ -363,7 +363,9 @@ class UpstreamTestFixTests(unittest.TestCase):
             headers,
             [
                 "diff --git a/tests/unit/latency-monitor.tcl "
-                "b/tests/unit/latency-monitor.tcl"
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
             ],
         )
         self.assertNotIn("../", patch_text)
@@ -424,6 +426,57 @@ class UpstreamTestFixTests(unittest.TestCase):
             encoding="utf-8",
         )
         return targets
+
+    def _redis_829_source(self, root: Path) -> tuple[Path, Path]:
+        # The relevant bodies match 8.8.2, but 8.2.9 has older test tags.
+        targets = self._redis_882_source(root)
+        text = targets[1].read_text(encoding="utf-8")
+        targets[1].write_text(
+            text.replace("debug_defrag:skip ", "").replace(
+                "cluster needs:debug", "cluster"
+            ),
+            encoding="utf-8",
+        )
+        return targets
+
+    def test_redis_829_real_patch_is_applied_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_829_source(root)
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.2.9", root),
+                f"applied:{PATCHER.REDIS_829_FIX_ID}",
+            )
+            patched = tuple(target.read_bytes() for target in targets)
+            self.assertIn(b"set max 950", patched[0])
+            self.assertIn(b"512 * [$replica debug mallctl arenas.page]", patched[1])
+            self.assertIn(b"tsan:skip cluster needs:debug}", patched[1])
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.2.9", root),
+                f"present:{PATCHER.REDIS_829_FIX_ID}",
+            )
+            self.assertEqual(tuple(target.read_bytes() for target in targets), patched)
+
+    def test_redis_829_unknown_defrag_source_leaves_both_files_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_829_source(root)
+            targets[1].write_text("unreviewed defrag test\n", encoding="utf-8")
+            original = tuple(target.read_bytes() for target in targets)
+            with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                PATCHER.apply_upstream_test_fixes("8.2.9", root)
+            self.assertEqual(tuple(target.read_bytes() for target in targets), original)
+
+    def test_redis_829_defrag_uses_the_same_tested_page_size_allowance(self) -> None:
+        additions = []
+        for patch_file in (PATCHER.REDIS_829_PATCH_FILE, PATCHER.REDIS_882_PATCH_FILE):
+            defrag = patch_file.read_text(encoding="utf-8").split(
+                "diff --git a/tests/unit/memefficiency.tcl", 1
+            )[1]
+            threshold = defrag.split("@@", 2)[2].split("\n@@", 1)[0]
+            additions.append([line for line in threshold.splitlines() if line.startswith("+")])
+        self.assertTrue(additions[0])
+        self.assertEqual(additions[0], additions[1])
 
     def test_redis_882_real_patch_is_applied_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

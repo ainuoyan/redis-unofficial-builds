@@ -92,10 +92,10 @@ class BuildScriptTests(unittest.TestCase):
             "present:redis-8.10.1-hfe-test-timeout-stability", script
         )
         self.assertIn(
-            "applied:redis-8.2.9-latency-test-timeout-stability", script
+            "applied:redis-8.2.9-latency-and-defrag-test-stability", script
         )
         self.assertIn(
-            "present:redis-8.2.9-latency-test-timeout-stability", script
+            "present:redis-8.2.9-latency-and-defrag-test-stability", script
         )
         self.assertIn(
             "applied:redis-8.8.2-latency-and-defrag-test-stability", script
