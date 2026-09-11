@@ -330,7 +330,7 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set batch_size 1000", patch_text)
         self.assertIn("if {($j + 1) % 500 == 0}", patch_text)
 
-    def test_redis_810_patch_only_widens_the_reviewed_test_window(self) -> None:
+    def test_redis_810_patch_only_changes_the_reviewed_tests(self) -> None:
         patch_text = PATCHER.REDIS_810_PATCH_FILE.read_text(encoding="utf-8")
         headers = [
             line
@@ -341,7 +341,8 @@ class UpstreamTestFixTests(unittest.TestCase):
             headers,
             [
                 "diff --git a/tests/unit/type/hash-field-expire.tcl "
-                "b/tests/unit/type/hash-field-expire.tcl"
+                "b/tests/unit/type/hash-field-expire.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl b/tests/unit/memefficiency.tcl",
             ],
         )
         self.assertNotIn("../", patch_text)
@@ -472,7 +473,9 @@ class UpstreamTestFixTests(unittest.TestCase):
         for patch_file in (
             PATCHER.REDIS_829_PATCH_FILE,
             PATCHER.REDIS_846_PATCH_FILE,
+            PATCHER.REDIS_866_PATCH_FILE,
             PATCHER.REDIS_882_PATCH_FILE,
+            PATCHER.REDIS_810_PATCH_FILE,
         ):
             defrag = patch_file.read_text(encoding="utf-8").split(
                 "diff --git a/tests/unit/memefficiency.tcl", 1
@@ -482,6 +485,48 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertTrue(additions[0])
         for addition in additions[1:]:
             self.assertEqual(additions[0], addition)
+
+    def test_redis_866_patch_is_test_only_and_idempotent(self) -> None:
+        patch_text = PATCHER.REDIS_866_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [line for line in patch_text.splitlines() if line.startswith("diff --git ")],
+            ["diff --git a/tests/unit/memefficiency.tcl b/tests/unit/memefficiency.tcl"],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_882_source(root)
+            original_latency = targets[0].read_bytes()
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.6.6", root),
+                f"applied:{PATCHER.REDIS_866_FIX_ID}",
+            )
+            patched = tuple(target.read_bytes() for target in targets)
+            self.assertEqual(patched[0], original_latency)
+            self.assertIn(b"512 * [$replica debug mallctl arenas.page]", patched[1])
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.6.6", root),
+                f"present:{PATCHER.REDIS_866_FIX_ID}",
+            )
+            self.assertEqual(tuple(target.read_bytes() for target in targets), patched)
+
+    def test_redis_866_unknown_source_is_not_modified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._source_tree(root, PATCHER.REDIS_866_PATCH_TARGETS)
+            original = targets[0].read_bytes()
+            with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                PATCHER.apply_upstream_test_fixes("8.6.6", root)
+            self.assertEqual(targets[0].read_bytes(), original)
+
+    def test_other_86_patch_releases_are_not_modified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
+                for version in ("8.6.5", "8.6.7"):
+                    self.assertEqual(
+                        PATCHER.apply_upstream_test_fixes(version, Path(temp_dir)),
+                        f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
+                    )
+                git_apply.assert_not_called()
 
     def test_redis_846_patch_is_test_only_and_idempotent(self) -> None:
         patch_text = PATCHER.REDIS_846_PATCH_FILE.read_text(encoding="utf-8")

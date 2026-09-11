@@ -8,12 +8,13 @@ test-only patch to Redis 8.0.x.
 
 Redis 8.10.1 also uses a 70-100 ms expiration window in a hash-field active
 expiration test. That window repeatedly expired before its immediate HEXISTS
-assertion on GitHub-hosted macOS runners. The second reviewed patch widens only
-that test window and its wait bound. Redis 8.2.9 and 8.8.2 latency-monitor
+assertion on GitHub-hosted macOS runners. Its reviewed patch widens that test
+window and its wait bound. Redis 8.2.9 and 8.8.2 latency-monitor
 tests likewise need bounded scheduling headroom on hosted macOS runners; their
 lower bounds and cross-command consistency checks remain unchanged. The 8.2.9,
-8.4.6 and 8.8.2 replica-flush defrag tests scale the allowance with jemalloc's
-page size, retaining the original 2 MB at 4 KB and all lifecycle assertions.
+8.4.6, 8.6.6, 8.8.2 and 8.10.1 replica-flush defrag tests scale the allowance
+with jemalloc's page size, retaining the original 2 MB at 4 KB and all lifecycle
+assertions.
 Every applicable patch fails closed for unknown source states.
 """
 
@@ -47,6 +48,11 @@ REDIS_846_PATCH_FILE = Path(__file__).with_name(
     "redis-8.4.6-defrag-page-size.patch"
 )
 REDIS_846_PATCH_TARGETS = (Path("tests/unit/memefficiency.tcl"),)
+REDIS_866_FIX_ID = "redis-8.6.6-defrag-page-size-stability"
+REDIS_866_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.6.6-defrag-page-size.patch"
+)
+REDIS_866_PATCH_TARGETS = (Path("tests/unit/memefficiency.tcl"),)
 REDIS_882_FIX_ID = "redis-8.8.2-latency-and-defrag-test-stability"
 REDIS_882_PATCH_FILE = Path(__file__).with_name(
     "redis-8.8.2-test-stability.patch"
@@ -55,11 +61,14 @@ REDIS_882_PATCH_TARGETS = (
     Path("tests/unit/latency-monitor.tcl"),
     Path("tests/unit/memefficiency.tcl"),
 )
-REDIS_810_FIX_ID = "redis-8.10.1-hfe-test-timeout-stability"
+REDIS_810_FIX_ID = "redis-8.10.1-hfe-and-defrag-test-stability"
 REDIS_810_PATCH_FILE = Path(__file__).with_name(
     "redis-8.10.1-hfe-test-timeout.patch"
 )
-REDIS_810_PATCH_TARGETS = (Path("tests/unit/type/hash-field-expire.tcl"),)
+REDIS_810_PATCH_TARGETS = (
+    Path("tests/unit/type/hash-field-expire.tcl"),
+    Path("tests/unit/memefficiency.tcl"),
+)
 MAX_TEST_FILE_BYTES = 4 * 1024 * 1024
 MAX_PATCH_FILE_BYTES = 1024 * 1024
 VERSION_PATTERN = re.compile(
@@ -202,6 +211,13 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
             REDIS_846_PATCH_FILE,
             REDIS_846_PATCH_TARGETS,
             REDIS_846_FIX_ID,
+        )
+    if (major, minor, patch) == (8, 6, 6):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_866_PATCH_FILE,
+            REDIS_866_PATCH_TARGETS,
+            REDIS_866_FIX_ID,
         )
     if (major, minor, patch) == (8, 8, 2):
         return _apply_reviewed_patch(

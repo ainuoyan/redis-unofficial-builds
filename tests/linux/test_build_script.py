@@ -86,10 +86,10 @@ class BuildScriptTests(unittest.TestCase):
             'echo "Redis upstream test fix: $redis_test_fix_status"', script
         )
         self.assertIn(
-            "applied:redis-8.10.1-hfe-test-timeout-stability", script
+            "applied:redis-8.10.1-hfe-and-defrag-test-stability", script
         )
         self.assertIn(
-            "present:redis-8.10.1-hfe-test-timeout-stability", script
+            "present:redis-8.10.1-hfe-and-defrag-test-stability", script
         )
         self.assertIn(
             "applied:redis-8.2.9-latency-and-defrag-test-stability", script
@@ -99,6 +99,8 @@ class BuildScriptTests(unittest.TestCase):
         )
         self.assertIn("applied:redis-8.4.6-defrag-page-size-stability", script)
         self.assertIn("present:redis-8.4.6-defrag-page-size-stability", script)
+        self.assertIn("applied:redis-8.6.6-defrag-page-size-stability", script)
+        self.assertIn("present:redis-8.6.6-defrag-page-size-stability", script)
         self.assertIn(
             "applied:redis-8.8.2-latency-and-defrag-test-stability", script
         )
