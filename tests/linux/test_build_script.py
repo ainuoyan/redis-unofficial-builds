@@ -109,9 +109,9 @@ class BuildScriptTests(unittest.TestCase):
         )
         for fix_id in (
             "redis-8.2.10-latency-and-defrag-test-stability",
-            "redis-8.4.7-defrag-page-size-stability",
+            "redis-8.4.7-latency-and-defrag-test-stability",
             "redis-8.6.7-defrag-page-size-stability",
-            "redis-8.8.3-latency-and-defrag-test-stability",
+            "redis-8.8.3-latency-defrag-and-hotkeys-test-stability",
             "redis-8.10.2-hfe-and-defrag-test-stability",
         ):
             self.assertIn(f"applied:{fix_id}", script)

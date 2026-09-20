@@ -180,8 +180,8 @@ class UpstreamTestFixTests(unittest.TestCase):
             ),
             (
                 "8.4.7",
-                PATCHER.REDIS_846_PATCH_FILE,
-                PATCHER.REDIS_846_PATCH_TARGETS,
+                PATCHER.REDIS_847_PATCH_FILE,
+                PATCHER.REDIS_847_PATCH_TARGETS,
                 PATCHER.REDIS_847_FIX_ID,
             ),
             (
@@ -192,8 +192,8 @@ class UpstreamTestFixTests(unittest.TestCase):
             ),
             (
                 "8.8.3",
-                PATCHER.REDIS_882_PATCH_FILE,
-                PATCHER.REDIS_882_PATCH_TARGETS,
+                PATCHER.REDIS_883_PATCH_FILE,
+                PATCHER.REDIS_883_PATCH_TARGETS,
                 PATCHER.REDIS_883_FIX_ID,
             ),
             (
@@ -451,6 +451,48 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set min 250", patch_text)
         self.assertIn("set max 950", patch_text)
         self.assertIn("$max >= 450 & $max <= 1150", patch_text)
+
+    def test_redis_847_patch_adds_only_reviewed_latency_and_defrag_fixes(self) -> None:
+        patch_text = PATCHER.REDIS_847_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in patch_text.splitlines()
+                if line.startswith("diff --git ")
+            ],
+            [
+                "diff --git a/tests/unit/latency-monitor.tcl "
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertIn("set max 950", patch_text)
+        self.assertIn("$max >= 450 & $max <= 1150", patch_text)
+        self.assertIn("512 * [$replica debug mallctl arenas.page]", patch_text)
+
+    def test_redis_883_patch_backports_upstream_hotkeys_fix(self) -> None:
+        patch_text = PATCHER.REDIS_883_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in patch_text.splitlines()
+                if line.startswith("diff --git ")
+            ],
+            [
+                "diff --git a/tests/unit/hotkeys.tcl b/tests/unit/hotkeys.tcl",
+                "diff --git a/tests/unit/latency-monitor.tcl "
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertIn("foreach sample_ratio {1 100 500}", patch_text)
+        self.assertIn("foreach sample_ratio {1 100 500 1000}", patch_text)
+        self.assertIn("set max 950", patch_text)
+        self.assertIn("512 * [$replica debug mallctl arenas.page]", patch_text)
 
     def _redis_882_source(self, root: Path) -> tuple[Path, Path]:
         targets = self._source_tree(root, PATCHER.REDIS_882_PATCH_TARGETS)
