@@ -345,14 +345,24 @@ case "$redis_test_fix_status" in
   not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   applied:redis-8.2.9-latency-and-defrag-test-stability|\
   present:redis-8.2.9-latency-and-defrag-test-stability|\
+  applied:redis-8.2.10-latency-and-defrag-test-stability|\
+  present:redis-8.2.10-latency-and-defrag-test-stability|\
   applied:redis-8.4.6-defrag-page-size-stability|\
   present:redis-8.4.6-defrag-page-size-stability|\
+  applied:redis-8.4.7-defrag-page-size-stability|\
+  present:redis-8.4.7-defrag-page-size-stability|\
   applied:redis-8.6.6-defrag-page-size-stability|\
   present:redis-8.6.6-defrag-page-size-stability|\
+  applied:redis-8.6.7-defrag-page-size-stability|\
+  present:redis-8.6.7-defrag-page-size-stability|\
   applied:redis-8.8.2-latency-and-defrag-test-stability|\
   present:redis-8.8.2-latency-and-defrag-test-stability|\
+  applied:redis-8.8.3-latency-and-defrag-test-stability|\
+  present:redis-8.8.3-latency-and-defrag-test-stability|\
   applied:redis-8.10.1-hfe-and-defrag-test-stability|\
-  present:redis-8.10.1-hfe-and-defrag-test-stability) ;;
+  present:redis-8.10.1-hfe-and-defrag-test-stability|\
+  applied:redis-8.10.2-hfe-and-defrag-test-stability|\
+  present:redis-8.10.2-hfe-and-defrag-test-stability) ;;
   *)
     echo "Unexpected upstream test-fix status." >&2
     exit 1
