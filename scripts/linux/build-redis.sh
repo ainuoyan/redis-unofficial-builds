@@ -353,8 +353,8 @@ case "$redis_test_fix_status" in
   present:redis-8.4.7-latency-and-defrag-test-stability|\
   applied:redis-8.6.6-defrag-page-size-stability|\
   present:redis-8.6.6-defrag-page-size-stability|\
-  applied:redis-8.6.7-defrag-page-size-stability|\
-  present:redis-8.6.7-defrag-page-size-stability|\
+  applied:redis-8.6.7-latency-and-defrag-test-stability|\
+  present:redis-8.6.7-latency-and-defrag-test-stability|\
   applied:redis-8.8.2-latency-and-defrag-test-stability|\
   present:redis-8.8.2-latency-and-defrag-test-stability|\
   applied:redis-8.8.3-latency-defrag-and-hotkeys-test-stability|\
