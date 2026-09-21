@@ -9,12 +9,16 @@ test-only patch to Redis 8.0.x.
 Redis 8.10.1 also uses a 70-100 ms expiration window in a hash-field active
 expiration test. That window repeatedly expired before its immediate HEXISTS
 assertion on GitHub-hosted macOS runners. Its reviewed patch widens that test
-window and its wait bound. Redis 8.2.9 and 8.8.2 latency-monitor
-tests likewise need bounded scheduling headroom on hosted macOS runners; their
-lower bounds and cross-command consistency checks remain unchanged. The 8.2.9,
-8.4.6, 8.6.6, 8.8.2 and 8.10.1 replica-flush defrag tests scale the allowance
-with jemalloc's page size, retaining the original 2 MB at 4 KB and all lifecycle
-assertions.
+window and its wait bound. Redis 8.2.9/8.2.10, 8.4.7 and 8.8.2/8.8.3
+latency-monitor tests likewise need bounded scheduling headroom on hosted macOS
+runners; their lower bounds and cross-command consistency checks remain
+unchanged. Redis 8.8.3 also backports upstream commit
+230c651c8907c88d43c0ba51d29f75e8eb353f66, which removes only the statistically
+unstable HOTKEYS SAMPLE 1000 case while retaining the 1, 100 and 500 sampling
+checks. The 8.2.9,
+8.2.10, 8.4.6, 8.4.7, 8.6.6, 8.6.7, 8.8.2, 8.8.3, 8.10.1 and 8.10.2
+replica-flush defrag tests scale the allowance with jemalloc's page size,
+retaining the original 2 MB at 4 KB and all lifecycle assertions.
 Every applicable patch fails closed for unknown source states.
 """
 
@@ -36,6 +40,7 @@ UPSTREAM_PATCH_TARGETS = (
     Path("tests/unit/memefficiency.tcl"),
 )
 REDIS_829_FIX_ID = "redis-8.2.9-latency-and-defrag-test-stability"
+REDIS_8210_FIX_ID = "redis-8.2.10-latency-and-defrag-test-stability"
 REDIS_829_PATCH_FILE = Path(__file__).with_name(
     "redis-8.2.9-test-stability.patch"
 )
@@ -44,16 +49,26 @@ REDIS_829_PATCH_TARGETS = (
     Path("tests/unit/memefficiency.tcl"),
 )
 REDIS_846_FIX_ID = "redis-8.4.6-defrag-page-size-stability"
+REDIS_847_FIX_ID = "redis-8.4.7-latency-and-defrag-test-stability"
 REDIS_846_PATCH_FILE = Path(__file__).with_name(
     "redis-8.4.6-defrag-page-size.patch"
 )
 REDIS_846_PATCH_TARGETS = (Path("tests/unit/memefficiency.tcl"),)
+REDIS_847_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.4.7-test-stability.patch"
+)
+REDIS_847_PATCH_TARGETS = (
+    Path("tests/unit/latency-monitor.tcl"),
+    Path("tests/unit/memefficiency.tcl"),
+)
 REDIS_866_FIX_ID = "redis-8.6.6-defrag-page-size-stability"
+REDIS_867_FIX_ID = "redis-8.6.7-defrag-page-size-stability"
 REDIS_866_PATCH_FILE = Path(__file__).with_name(
     "redis-8.6.6-defrag-page-size.patch"
 )
 REDIS_866_PATCH_TARGETS = (Path("tests/unit/memefficiency.tcl"),)
 REDIS_882_FIX_ID = "redis-8.8.2-latency-and-defrag-test-stability"
+REDIS_883_FIX_ID = "redis-8.8.3-latency-defrag-and-hotkeys-test-stability"
 REDIS_882_PATCH_FILE = Path(__file__).with_name(
     "redis-8.8.2-test-stability.patch"
 )
@@ -61,7 +76,16 @@ REDIS_882_PATCH_TARGETS = (
     Path("tests/unit/latency-monitor.tcl"),
     Path("tests/unit/memefficiency.tcl"),
 )
+REDIS_883_PATCH_FILE = Path(__file__).with_name(
+    "redis-8.8.3-test-stability.patch"
+)
+REDIS_883_PATCH_TARGETS = (
+    Path("tests/unit/hotkeys.tcl"),
+    Path("tests/unit/latency-monitor.tcl"),
+    Path("tests/unit/memefficiency.tcl"),
+)
 REDIS_810_FIX_ID = "redis-8.10.1-hfe-and-defrag-test-stability"
+REDIS_8102_FIX_ID = "redis-8.10.2-hfe-and-defrag-test-stability"
 REDIS_810_PATCH_FILE = Path(__file__).with_name(
     "redis-8.10.1-hfe-test-timeout.patch"
 )
@@ -205,12 +229,26 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
             REDIS_829_PATCH_TARGETS,
             REDIS_829_FIX_ID,
         )
+    if (major, minor, patch) == (8, 2, 10):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_829_PATCH_FILE,
+            REDIS_829_PATCH_TARGETS,
+            REDIS_8210_FIX_ID,
+        )
     if (major, minor, patch) == (8, 4, 6):
         return _apply_reviewed_patch(
             source_root,
             REDIS_846_PATCH_FILE,
             REDIS_846_PATCH_TARGETS,
             REDIS_846_FIX_ID,
+        )
+    if (major, minor, patch) == (8, 4, 7):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_847_PATCH_FILE,
+            REDIS_847_PATCH_TARGETS,
+            REDIS_847_FIX_ID,
         )
     if (major, minor, patch) == (8, 6, 6):
         return _apply_reviewed_patch(
@@ -219,6 +257,13 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
             REDIS_866_PATCH_TARGETS,
             REDIS_866_FIX_ID,
         )
+    if (major, minor, patch) == (8, 6, 7):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_866_PATCH_FILE,
+            REDIS_866_PATCH_TARGETS,
+            REDIS_867_FIX_ID,
+        )
     if (major, minor, patch) == (8, 8, 2):
         return _apply_reviewed_patch(
             source_root,
@@ -226,12 +271,26 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
             REDIS_882_PATCH_TARGETS,
             REDIS_882_FIX_ID,
         )
+    if (major, minor, patch) == (8, 8, 3):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_883_PATCH_FILE,
+            REDIS_883_PATCH_TARGETS,
+            REDIS_883_FIX_ID,
+        )
     if (major, minor, patch) == (8, 10, 1):
         return _apply_reviewed_patch(
             source_root,
             REDIS_810_PATCH_FILE,
             REDIS_810_PATCH_TARGETS,
             REDIS_810_FIX_ID,
+        )
+    if (major, minor, patch) == (8, 10, 2):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_810_PATCH_FILE,
+            REDIS_810_PATCH_TARGETS,
+            REDIS_8102_FIX_ID,
         )
     return f"not-required:{UPSTREAM_FIX_COMMIT}"
 

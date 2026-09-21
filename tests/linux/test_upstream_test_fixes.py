@@ -170,6 +170,59 @@ class UpstreamTestFixTests(unittest.TestCase):
                 ],
             )
 
+    def test_new_patch_releases_use_reviewed_source_states(self) -> None:
+        cases = (
+            (
+                "8.2.10",
+                PATCHER.REDIS_829_PATCH_FILE,
+                PATCHER.REDIS_829_PATCH_TARGETS,
+                PATCHER.REDIS_8210_FIX_ID,
+            ),
+            (
+                "8.4.7",
+                PATCHER.REDIS_847_PATCH_FILE,
+                PATCHER.REDIS_847_PATCH_TARGETS,
+                PATCHER.REDIS_847_FIX_ID,
+            ),
+            (
+                "8.6.7",
+                PATCHER.REDIS_866_PATCH_FILE,
+                PATCHER.REDIS_866_PATCH_TARGETS,
+                PATCHER.REDIS_867_FIX_ID,
+            ),
+            (
+                "8.8.3",
+                PATCHER.REDIS_883_PATCH_FILE,
+                PATCHER.REDIS_883_PATCH_TARGETS,
+                PATCHER.REDIS_883_FIX_ID,
+            ),
+            (
+                "8.10.2",
+                PATCHER.REDIS_810_PATCH_FILE,
+                PATCHER.REDIS_810_PATCH_TARGETS,
+                PATCHER.REDIS_8102_FIX_ID,
+            ),
+        )
+        for version, patch_file, patch_targets, fix_id in cases:
+            with (
+                self.subTest(version=version),
+                tempfile.TemporaryDirectory() as temp_dir,
+            ):
+                root = Path(temp_dir)
+                self._source_tree(root, patch_targets)
+                with mock.patch.object(
+                    PATCHER,
+                    "_run_git_apply",
+                    side_effect=[_result(0), _result(0), _result(0)],
+                ) as git_apply:
+                    status = PATCHER.apply_upstream_test_fixes(version, root)
+
+                self.assertEqual(status, f"applied:{fix_id}")
+                self.assertEqual(
+                    git_apply.call_args_list[0],
+                    mock.call(root.resolve(), patch_file, "--check"),
+                )
+
     def test_redis_829_unknown_source_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -216,7 +269,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_882_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.8.3", root)
+                status = PATCHER.apply_upstream_test_fixes("8.8.4", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -228,7 +281,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_829_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.2.10", root)
+                status = PATCHER.apply_upstream_test_fixes("8.2.11", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -252,7 +305,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_810_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.10.2", root)
+                status = PATCHER.apply_upstream_test_fixes("8.10.3", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -399,6 +452,48 @@ class UpstreamTestFixTests(unittest.TestCase):
         self.assertIn("set max 950", patch_text)
         self.assertIn("$max >= 450 & $max <= 1150", patch_text)
 
+    def test_redis_847_patch_adds_only_reviewed_latency_and_defrag_fixes(self) -> None:
+        patch_text = PATCHER.REDIS_847_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in patch_text.splitlines()
+                if line.startswith("diff --git ")
+            ],
+            [
+                "diff --git a/tests/unit/latency-monitor.tcl "
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertIn("set max 950", patch_text)
+        self.assertIn("$max >= 450 & $max <= 1150", patch_text)
+        self.assertIn("512 * [$replica debug mallctl arenas.page]", patch_text)
+
+    def test_redis_883_patch_backports_upstream_hotkeys_fix(self) -> None:
+        patch_text = PATCHER.REDIS_883_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in patch_text.splitlines()
+                if line.startswith("diff --git ")
+            ],
+            [
+                "diff --git a/tests/unit/hotkeys.tcl b/tests/unit/hotkeys.tcl",
+                "diff --git a/tests/unit/latency-monitor.tcl "
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertIn("foreach sample_ratio {1 100 500}", patch_text)
+        self.assertIn("foreach sample_ratio {1 100 500 1000}", patch_text)
+        self.assertIn("set max 950", patch_text)
+        self.assertIn("512 * [$replica debug mallctl arenas.page]", patch_text)
+
     def _redis_882_source(self, root: Path) -> tuple[Path, Path]:
         targets = self._source_tree(root, PATCHER.REDIS_882_PATCH_TARGETS)
         targets[0].write_text(
@@ -521,7 +616,7 @@ class UpstreamTestFixTests(unittest.TestCase):
     def test_other_86_patch_releases_are_not_modified(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                for version in ("8.6.5", "8.6.7"):
+                for version in ("8.6.5", "8.6.8"):
                     self.assertEqual(
                         PATCHER.apply_upstream_test_fixes(version, Path(temp_dir)),
                         f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
@@ -569,7 +664,7 @@ class UpstreamTestFixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                for version in ("8.4.5", "8.4.7"):
+                for version in ("8.4.5", "8.4.8"):
                     self.assertEqual(
                         PATCHER.apply_upstream_test_fixes(version, root),
                         f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
