@@ -719,6 +719,10 @@ class PortablePackageTests(unittest.TestCase):
             portable_contract.patchset_paths("macos15"),
         )
         self.assertIn(
+            Path("packaging/linux/patches/redis-8.6.7-test-stability.patch"),
+            portable_contract.patchset_paths("macos15"),
+        )
+        self.assertIn(
             Path("packaging/linux/patches/redis-8.8.2-test-stability.patch"),
             portable_contract.patchset_paths("macos15"),
         )
@@ -748,6 +752,10 @@ class PortablePackageTests(unittest.TestCase):
         )
         self.assertNotIn(
             Path("packaging/linux/patches/redis-8.6.6-defrag-page-size.patch"),
+            portable_contract.patchset_paths("windows-msys2"),
+        )
+        self.assertNotIn(
+            Path("packaging/linux/patches/redis-8.6.7-test-stability.patch"),
             portable_contract.patchset_paths("windows-msys2"),
         )
         self.assertNotIn(

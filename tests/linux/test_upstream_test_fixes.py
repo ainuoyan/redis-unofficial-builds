@@ -186,8 +186,8 @@ class UpstreamTestFixTests(unittest.TestCase):
             ),
             (
                 "8.6.7",
-                PATCHER.REDIS_866_PATCH_FILE,
-                PATCHER.REDIS_866_PATCH_TARGETS,
+                PATCHER.REDIS_867_PATCH_FILE,
+                PATCHER.REDIS_867_PATCH_TARGETS,
                 PATCHER.REDIS_867_FIX_ID,
             ),
             (
@@ -535,6 +535,32 @@ class UpstreamTestFixTests(unittest.TestCase):
         )
         return targets
 
+    def _redis_867_source(self, root: Path) -> tuple[Path, Path]:
+        targets = self._redis_882_source(root)
+        targets[0].write_text(
+            "        set min 250\n"
+            "        set max 450\n"
+            "        foreach event $res {\n"
+            "            lassign $event time latency\n"
+            "            if {!$::no_latency} {\n"
+            "                assert {$latency >= $min && $latency <= $max}\n"
+            "            }\n"
+            "            incr min 100\n"
+            "            incr max 100\n"
+            "            set last_time $time\n"
+            "        }\n"
+            "\n"
+            "        foreach event $res {\n"
+            "            lassign $event eventname time latency max\n"
+            "            assert {$eventname eq \"command\"}\n"
+            "            if {!$::no_latency} {\n"
+            "                assert {$max >= 450 & $max <= 650}\n"
+            "                assert {$time == $last_time}\n"
+            "            }\n",
+            encoding="utf-8",
+        )
+        return targets
+
     def test_redis_829_real_patch_is_applied_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -569,6 +595,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             PATCHER.REDIS_829_PATCH_FILE,
             PATCHER.REDIS_846_PATCH_FILE,
             PATCHER.REDIS_866_PATCH_FILE,
+            PATCHER.REDIS_867_PATCH_FILE,
             PATCHER.REDIS_882_PATCH_FILE,
             PATCHER.REDIS_810_PATCH_FILE,
         ):
@@ -612,6 +639,64 @@ class UpstreamTestFixTests(unittest.TestCase):
             with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
                 PATCHER.apply_upstream_test_fixes("8.6.6", root)
             self.assertEqual(targets[0].read_bytes(), original)
+
+    def test_redis_867_patch_adds_only_reviewed_latency_and_defrag_fixes(self) -> None:
+        patch_text = PATCHER.REDIS_867_PATCH_FILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in patch_text.splitlines()
+                if line.startswith("diff --git ")
+            ],
+            [
+                "diff --git a/tests/unit/latency-monitor.tcl "
+                "b/tests/unit/latency-monitor.tcl",
+                "diff --git a/tests/unit/memefficiency.tcl "
+                "b/tests/unit/memefficiency.tcl",
+            ],
+        )
+        self.assertNotIn("../", patch_text)
+        self.assertIn("set max 950", patch_text)
+        self.assertIn("$max >= 450 & $max <= 1150", patch_text)
+        self.assertIn(
+            "$time >= $last_time && $time <= [clock seconds]", patch_text
+        )
+        self.assertIn(
+            "512 * [$replica debug mallctl arenas.page]", patch_text
+        )
+
+    def test_redis_867_real_patch_is_applied_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_867_source(root)
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.6.7", root),
+                f"applied:{PATCHER.REDIS_867_FIX_ID}",
+            )
+            patched = tuple(target.read_bytes() for target in targets)
+            self.assertIn(b"set max 950", patched[0])
+            self.assertIn(
+                b"$time >= $last_time && $time <= [clock seconds]",
+                patched[0],
+            )
+            self.assertIn(
+                b"512 * [$replica debug mallctl arenas.page]", patched[1]
+            )
+            self.assertEqual(
+                PATCHER.apply_upstream_test_fixes("8.6.7", root),
+                f"present:{PATCHER.REDIS_867_FIX_ID}",
+            )
+            self.assertEqual(tuple(target.read_bytes() for target in targets), patched)
+
+    def test_redis_867_unknown_source_leaves_both_files_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            targets = self._redis_867_source(root)
+            targets[0].write_text("unreviewed latency test\n", encoding="utf-8")
+            original = tuple(target.read_bytes() for target in targets)
+            with self.assertRaisesRegex(PATCHER.FixError, "reviewed patch"):
+                PATCHER.apply_upstream_test_fixes("8.6.7", root)
+            self.assertEqual(tuple(target.read_bytes() for target in targets), original)
 
     def test_other_86_patch_releases_are_not_modified(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

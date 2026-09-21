@@ -41,6 +41,7 @@ UPSTREAM_TEST_FIX_PATHS = (
     "packaging/linux/patches/redis-8.4.6-defrag-page-size.patch",
     "packaging/linux/patches/redis-8.4.7-test-stability.patch",
     "packaging/linux/patches/redis-8.6.6-defrag-page-size.patch",
+    "packaging/linux/patches/redis-8.6.7-test-stability.patch",
     "packaging/linux/patches/redis-8.8.2-test-stability.patch",
     "packaging/linux/patches/redis-8.8.3-test-stability.patch",
     "packaging/linux/patches/redis-8.10.1-hfe-test-timeout.patch",
