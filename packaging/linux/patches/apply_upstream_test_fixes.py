@@ -222,6 +222,20 @@ def apply_upstream_test_fixes(redis_version: str, source_root: Path) -> str:
     if match is None:
         raise FixError("Redis version must be canonical major.minor.patch")
     major, minor, patch = (int(component) for component in match.groups())
+    if redis_version == "8.2.11":
+        return _apply_reviewed_patch(
+            source_root,
+            Path(__file__).with_name("redis-8.2.11-test-stability.patch"),
+            (Path("tests/unit/memefficiency.tcl"), Path("tests/integration/replication.tcl")),
+            "redis-8.2.11-defrag-and-replication-test-stability",
+        )
+    if redis_version in ("8.4.8", "8.6.8", "8.8.4", "8.10.3"):
+        return _apply_reviewed_patch(
+            source_root,
+            REDIS_846_PATCH_FILE if redis_version == "8.4.8" else REDIS_866_PATCH_FILE,
+            REDIS_866_PATCH_TARGETS,
+            f"redis-{redis_version}-defrag-page-size-stability",
+        )
     if (major, minor) == (8, 0):
         return _apply_reviewed_patch(
             source_root,

@@ -1,0 +1,42 @@
+diff --git a/tests/unit/memefficiency.tcl b/tests/unit/memefficiency.tcl
+--- a/tests/unit/memefficiency.tcl
++++ b/tests/unit/memefficiency.tcl
+@@ -1223,6 +1223,12 @@ run_solo {defrag} {
+                 $replica config set active-defrag-cycle-max 75
+                 $replica config set active-defrag-ignore-bytes 2mb
+
++                # Keep the same 512-page allowance as 2 MB on a 4 KB allocator.
++                # Larger pages retain more slab fragmentation even with no keys.
++                if {[string match {*jemalloc*} [s mem_allocator]]} {
++                    set ignore_bytes [expr {max(2 * 1024 * 1024, 512 * [$replica debug mallctl arenas.page])}]
++                    $replica config set active-defrag-ignore-bytes $ignore_bytes
++                }
+                 # add a mass of string keys
+                 set count 0
+                 for {set j 0} {$j < 500000} {incr j} {
+@@ -1048,4 +1054,4 @@ run_solo {defrag} {
+         }
+-    } {} {defrag external:skip tsan:skip cluster}
++    } {} {defrag external:skip tsan:skip cluster needs:debug}
+
+     start_cluster 1 0 {tags {"defrag external:skip tsan:skip cluster"} overrides {appendonly yes auto-aof-rewrite-percentage 0 save "" loglevel notice}} {
+diff --git a/tests/integration/replication.tcl b/tests/integration/replication.tcl
+--- a/tests/integration/replication.tcl
++++ b/tests/integration/replication.tcl
+@@ -1766,2 +1766,3 @@
+             # Restore real master
++            set reconnect_started [clock milliseconds]
+             $slave slaveof $master_host $master_port
+@@ -1779,5 +1780,10 @@
+-            #  total_disconnect_time did not change after reconnect to real master
++            # Disconnection keeps accumulating until the link is actually restored.
+             set total_disconnect_time_reconnect [status $slave total_disconnect_time_sec]
+-            assert {$total_disconnect_time == $total_disconnect_time_reconnect}
++            set reconnect_budget [expr {int(ceil(([clock milliseconds] - $reconnect_started) / 1000.0)) + 1}]
++            assert {$total_disconnect_time_reconnect >= $total_disconnect_time}
++            assert {$total_disconnect_time_reconnect <= $total_disconnect_time + $reconnect_budget}
++            after 1100
++            assert_equal up [status $slave master_link_status]
++            assert_equal $total_disconnect_time_reconnect [status $slave total_disconnect_time_sec]
+
+         }

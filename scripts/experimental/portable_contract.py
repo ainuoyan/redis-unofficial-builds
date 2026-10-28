@@ -35,6 +35,7 @@ COMMON_PATCHSET_PATHS = (
 )
 
 UPSTREAM_TEST_FIX_PATHS = (
+    "packaging/linux/patches/redis-8.2.11-test-stability.patch",
     "packaging/linux/patches/apply_upstream_test_fixes.py",
     "packaging/linux/patches/redis-8.0-test-tcp-deadlock.patch",
     "packaging/linux/patches/redis-8.2.9-test-stability.patch",
