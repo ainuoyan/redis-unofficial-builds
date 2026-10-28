@@ -488,7 +488,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install \
+          # Mirrors can expose a newer compiler before its matching runtime RPMs.
+          # Let the solver select a complete compatible set; missing deps still fail.
+          dnf -y --nobest install \
             binutils \
             curl \
             file \

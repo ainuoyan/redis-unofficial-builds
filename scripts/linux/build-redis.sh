@@ -340,6 +340,16 @@ redis_test_fix_status="$(
     --source-root "$PWD"
 )"
 case "$redis_test_fix_status" in
+  applied:redis-8.2.11-defrag-and-replication-test-stability|\
+  present:redis-8.2.11-defrag-and-replication-test-stability|\
+  applied:redis-8.4.8-defrag-page-size-stability|\
+  present:redis-8.4.8-defrag-page-size-stability|\
+  applied:redis-8.6.8-defrag-page-size-stability|\
+  present:redis-8.6.8-defrag-page-size-stability|\
+  applied:redis-8.8.4-defrag-page-size-stability|\
+  present:redis-8.8.4-defrag-page-size-stability|\
+  applied:redis-8.10.3-defrag-page-size-stability|\
+  present:redis-8.10.3-defrag-page-size-stability) ;;
   applied:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   present:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\
   not-required:5400b6ac65d59c6c11c119cfcb547ed0d74a9c8a|\

@@ -26,6 +26,48 @@ def _result(returncode: int) -> subprocess.CompletedProcess[str]:
 
 
 class UpstreamTestFixTests(unittest.TestCase):
+    def test_october_versions_apply_and_fail_closed_on_unknown_sources(self) -> None:
+        for version in ("8.2.11", "8.4.8", "8.6.8", "8.8.4", "8.10.3"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                if version == "8.2.11":
+                    self._redis_829_source(root)
+                else:
+                    targets = self._redis_882_source(root)
+                    if version == "8.4.8":
+                        targets[1].write_text(
+                            targets[1].read_text().replace("cluster needs:debug", "cluster"),
+                            encoding="utf-8",
+                        )
+                if version == "8.2.11":
+                    replication = root / "tests/integration/replication.tcl"
+                    replication.parent.mkdir(parents=True)
+                    replication.write_text(
+                        "            # Restore real master\n"
+                        "            $slave slaveof $master_host $master_port\n"
+                        "\n"
+                        "            #  total_disconnect_time did not change after reconnect to real master\n"
+                        "            set total_disconnect_time_reconnect [status $slave total_disconnect_time_sec]\n"
+                        "            assert {$total_disconnect_time == $total_disconnect_time_reconnect}\n"
+                        "\n        }\n",
+                        encoding="utf-8",
+                    )
+                first = PATCHER.apply_upstream_test_fixes(version, root)
+                self.assertTrue(first.startswith(f"applied:redis-{version}-"))
+                self.assertEqual(
+                    PATCHER.apply_upstream_test_fixes(version, root),
+                    first.replace("applied:", "present:", 1),
+                )
+                memory = root / "tests/unit/memefficiency.tcl"
+                self.assertIn("512 * [$replica debug mallctl arenas.page]", memory.read_text())
+                memory.write_text("unknown upstream source\n", encoding="utf-8")
+                if version == "8.2.11":
+                    original = replication.read_bytes()
+                with self.assertRaises(PATCHER.FixError):
+                    PATCHER.apply_upstream_test_fixes(version, root)
+                if version == "8.2.11":
+                    self.assertEqual(replication.read_bytes(), original)
+
     def _source_tree(
         self,
         root: Path,
@@ -269,7 +311,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_882_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.8.4", root)
+                status = PATCHER.apply_upstream_test_fixes("8.8.5", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -281,7 +323,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_829_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.2.11", root)
+                status = PATCHER.apply_upstream_test_fixes("8.2.12", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -305,7 +347,7 @@ class UpstreamTestFixTests(unittest.TestCase):
             targets = self._source_tree(root, PATCHER.REDIS_810_PATCH_TARGETS)
             original = tuple(target.read_bytes() for target in targets)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                status = PATCHER.apply_upstream_test_fixes("8.10.3", root)
+                status = PATCHER.apply_upstream_test_fixes("8.10.4", root)
 
             self.assertEqual(status, f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}")
             self.assertEqual(tuple(target.read_bytes() for target in targets), original)
@@ -701,7 +743,7 @@ class UpstreamTestFixTests(unittest.TestCase):
     def test_other_86_patch_releases_are_not_modified(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                for version in ("8.6.5", "8.6.8"):
+                for version in ("8.6.5", "8.6.9"):
                     self.assertEqual(
                         PATCHER.apply_upstream_test_fixes(version, Path(temp_dir)),
                         f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
@@ -749,7 +791,7 @@ class UpstreamTestFixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             with mock.patch.object(PATCHER, "_run_git_apply") as git_apply:
-                for version in ("8.4.5", "8.4.8"):
+                for version in ("8.4.5", "8.4.9"):
                     self.assertEqual(
                         PATCHER.apply_upstream_test_fixes(version, root),
                         f"not-required:{PATCHER.UPSTREAM_FIX_COMMIT}",
